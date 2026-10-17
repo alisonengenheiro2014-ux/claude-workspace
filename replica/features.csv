@@ -25,7 +25,7 @@ Proporção do quadro (9:16 16:9 1:1 4:5 4:3 original),formato,must,yes,yes,S15
 Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,partial,só cor; desfocado chega com o motor WebGL
 Transições entre clipes com duração,transição,must,yes,no,S06; recriar os tipos com código próprio
 Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,yes,"escolhe H.264/HEVC no iPhone, VP9/AV1 onde não houver"
-Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,partial,folha de compartilhamento do iOS + baixar arquivo; falta testar no iPhone
+Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,yes,folha de compartilhamento do iOS; testado no iPhone em 2026-10-17
 Legendas automáticas a partir da fala,legendas,should,yes,no,S10; Whisper no aparelho ou API própria
 Editar legendas em lote (texto e estilo),legendas,should,yes,no,
 Animações de texto (entrada saída loop),texto,should,yes,no,

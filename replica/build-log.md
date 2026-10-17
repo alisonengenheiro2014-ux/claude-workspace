@@ -6,7 +6,13 @@ the design system is at `#/design`. Unit tests: `npx vitest run`.
 Everything below was checked in Chromium at 440×956 (iPhone Pro Max size) and
 1440×900 with an end-to-end script: import, split, delete, undo/redo, speed,
 format, playback, export, rename, duplicate, delete project, reopen. No console
-errors. **None of it has run on an iPhone yet.** That is the next real test.
+errors.
+
+**First iPhone test (2026-10-17, Safari, https://garagem-edits.pages.dev):**
+import of a 3 s video from the camera roll, preview with sound, split,
+delete, export at 1080p (2 MB) and save to the camera roll all worked. Still
+untested on the device: running as an installed home-screen app, offline,
+pinch zoom, and a long (2–3 min) or 4K export.
 
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
