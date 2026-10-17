@@ -14,6 +14,19 @@ delete, export at 1080p (2 MB) and save to the camera roll all worked. Still
 untested on the device: running as an installed home-screen app, offline,
 pinch zoom, and a long (2–3 min) or 4K export.
 
+**Second iPhone test (2026-10-17, home-screen app, a ~1:38 4K video from
+the camera):** import took about a minute, the preview stayed black, and the
+4K export was very slow and then failed with "Decoder failure". Likely cause:
+the iPhone records 4K HDR (Dolby Vision, 10-bit) by default. Fixes in the
+next commit: the `<video>` element is now the preview (Safari shows HDR
+there; painting HDR onto a canvas can come out black), thumbnails decode key
+frames only, copying and reading the file run in parallel, the preview
+releases its hardware decoder during export, export decodes frames in order
+and draws them straight to the output (no intermediate canvas), decoder
+errors name the file and suggest 1080p, and the export shows time left. In
+Chromium a 15 s 4K60 clip now imports in 1.7 s and exports in 29 s (1080p)
+and 37 s (4K); the iPhone HEVC/HDR case still needs a retest.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

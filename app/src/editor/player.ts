@@ -1,20 +1,19 @@
-// Preview playback. One <video> element plays whichever clip is under the
-// playhead and is painted onto the preview canvas. A single element matters
-// on iOS: once the user has started it with a tap, later play() calls on the
-// same element are allowed, even after its source changes.
+// Preview playback. The <video> element itself is the preview for video
+// clips: Safari shows HDR (the iPhone's default recording) correctly there,
+// while copying an HDR frame onto a canvas can come out black. Image clips
+// are drawn on a canvas that sits in the same place.
 //
-// This is the first version. The WebGL compositor (overlays, filters,
-// transitions) replaces the paint step later; the clock logic stays.
+// One <video> element plays every clip. On iOS, once the user has started it
+// with a tap, later play() calls on the same element are allowed, even after
+// its source changes.
 import type { AssetRow, Id, MediaClip, TimelineDoc, Us } from "../data/db";
 import { readFile } from "../data/opfs";
 import { useEditor } from "./store";
 import { durationOf, frameSize, mainClips, sourceTimeUs } from "./timeline";
 
-type Drawable = HTMLVideoElement | ImageBitmap;
-
 export function drawContain(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  src: Drawable | HTMLCanvasElement | OffscreenCanvas,
+  src: CanvasImageSource,
   srcW: number,
   srcH: number,
   bg: string,
@@ -28,10 +27,6 @@ export function drawContain(
   const w = srcW * s;
   const h = srcH * s;
   ctx.drawImage(src, (W - w) / 2, (H - h) / 2, w, h);
-}
-
-function bgOf(doc: TimelineDoc) {
-  return doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
 }
 
 export class Player {
@@ -51,30 +46,29 @@ export class Player {
     video.playsInline = true;
     video.preload = "auto";
     video.addEventListener("seeked", this.onSeeked);
-    video.addEventListener("loadeddata", this.onSeeked);
   }
 
   dispose() {
     this.disposed = true;
     cancelAnimationFrame(this.raf);
-    this.video.pause();
+    this.release();
     this.video.removeEventListener("seeked", this.onSeeked);
-    this.video.removeEventListener("loadeddata", this.onSeeked);
-    this.video.removeAttribute("src");
-    this.video.load();
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     for (const b of this.images.values()) b.close();
   }
 
-  // Preview resolution: the project shape at 720p, scaled for the screen.
-  resize() {
-    const { doc, assets } = useEditor.getState();
-    if (!doc) return;
-    const { width, height } = frameSize(doc, assets, 720);
-    if (this.canvas.width !== width || this.canvas.height !== height) {
-      this.canvas.width = width;
-      this.canvas.height = height;
-    }
+  // Frees the hardware decoder (the export needs it). showAt() reloads.
+  release() {
+    this.pause();
+    this.video.removeAttribute("src");
+    this.video.load();
+    this.seeking = false;
+    this.seekTarget = null;
+  }
+
+  private show(which: "video" | "image" | "none") {
+    this.video.style.visibility = which === "video" ? "visible" : "hidden";
+    this.canvas.style.visibility = which === "image" ? "visible" : "hidden";
   }
 
   private async urlFor(asset: AssetRow) {
@@ -108,21 +102,19 @@ export class Player {
     return last ? { clip: last, offsetUs: last.durationUs - 1 } : null;
   }
 
-  private paint(src: Drawable | null, w: number, h: number) {
-    const { doc, draft } = useEditor.getState();
+  private async paintImage(asset: AssetRow) {
+    const bmp = await this.imageFor(asset);
+    const { doc, draft, assets } = useEditor.getState();
     const d = draft ?? doc;
-    if (!d) return;
-    this.resize();
-    const ctx = this.canvas.getContext("2d")!;
-    if (src) drawContain(ctx, src, w, h, bgOf(d));
-    else {
-      ctx.fillStyle = bgOf(d);
-      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    if (!bmp || !d || this.disposed) return;
+    const { width, height } = frameSize(d, assets, 720);
+    if (this.canvas.width !== width || this.canvas.height !== height) {
+      this.canvas.width = width;
+      this.canvas.height = height;
     }
-  }
-
-  private paintVideo() {
-    if (this.video.readyState >= 2) this.paint(this.video, this.video.videoWidth, this.video.videoHeight);
+    const bg = d.canvas.background.type === "color" ? d.canvas.background.color : "#000000";
+    drawContain(this.canvas.getContext("2d")!, bmp, bmp.width, bmp.height, bg);
+    this.show("image");
   }
 
   private onSeeked = () => {
@@ -131,9 +123,7 @@ export class Player {
       const t = this.seekTarget;
       this.seekTarget = null;
       this.seekVideo(t);
-      return;
     }
-    if (!useEditor.getState().playing) this.paintVideo();
   };
 
   // Coalesces seeks: while one is running, only the latest target is kept.
@@ -152,22 +142,18 @@ export class Player {
     const d = draft ?? doc;
     if (!d) return;
     const hit = this.current(d, atUs);
-    if (!hit) return this.paint(null, 0, 0);
-    const asset = assets.get(hit.clip.assetId);
-    if (!asset) return this.paint(null, 0, 0);
+    const asset = hit && assets.get(hit.clip.assetId);
+    if (!hit || !asset) return this.show("none");
     this.clipId = hit.clip.id;
-    if (asset.kind === "image") {
-      const bmp = await this.imageFor(asset);
-      if (!this.disposed && bmp) this.paint(bmp, bmp.width, bmp.height);
-      return;
-    }
+    if (asset.kind === "image") return this.paintImage(asset);
     const url = await this.urlFor(asset);
-    if (!url || this.disposed) return;
-    if (this.video.src !== url) {
+    if (!url || this.disposed) return this.show("none");
+    if (this.video.getAttribute("src") !== url) {
       this.seeking = false;
       this.seekTarget = null;
       this.video.src = url;
     }
+    this.show("video");
     this.seekVideo(sourceTimeUs(hit.clip, hit.offsetUs) / 1e6);
   }
 
@@ -199,17 +185,19 @@ export class Player {
     if (!asset || asset.kind === "image") {
       this.video.pause();
       this.imageClock = { wall: performance.now(), t: clip.startUs + offsetUs };
-      if (asset) void this.imageFor(asset).then((b) => b && this.paint(b, b.width, b.height));
+      if (asset) void this.paintImage(asset);
+      else this.show("none");
       return;
     }
     const url = this.urls.get(asset.id);
     const go = () => {
+      this.show("video");
       this.video.playbackRate = clip.speed;
       this.video.muted = clip.volume === 0;
       this.video.currentTime = sourceTimeUs(clip, offsetUs) / 1e6;
       void this.video.play().catch(() => this.pause());
     };
-    if (url && this.video.src === url) go();
+    if (url && this.video.getAttribute("src") === url) go();
     else if (url) {
       this.video.src = url;
       go();
@@ -240,7 +228,6 @@ export class Player {
       const srcUs = this.video.currentTime * 1e6;
       t = clip.startUs + (srcUs - clip.inUs) / clip.speed;
       done = srcUs >= clip.outUs - 1000 || this.video.ended;
-      this.paintVideo();
     }
 
     if (done) {

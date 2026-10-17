@@ -31,7 +31,7 @@ import { readFile } from "../data/opfs";
 import { Player } from "../editor/player";
 import { useEditor } from "../editor/store";
 import { TimelineView } from "../editor/TimelineView";
-import { canSplit, clipAt, durationOf, duplicate, findClip, insertMedia, remove, setClip, split } from "../editor/timeline";
+import { canSplit, clipAt, durationOf, duplicate, findClip, frameSize, insertMedia, remove, setClip, split } from "../editor/timeline";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../media/import";
 import { Button } from "../ui/Button";
@@ -77,6 +77,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const stageBox = useRef<HTMLDivElement>(null);
+  const [box, setBox] = useState({ w: 0, h: 0 });
   const player = useRef<Player | null>(null);
   const addPicker = useRef<HTMLInputElement>(null);
   const replacePicker = useRef<HTMLInputElement>(null);
@@ -141,6 +143,14 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [state]);
 
   useEffect(() => {
+    const el = stageBox.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [state, fullscreen]);
+
+  useEffect(() => {
     try {
       localStorage.setItem(`export:${projectId}`, JSON.stringify(exportOptions));
     } catch {
@@ -163,6 +173,10 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selected = doc && selectedId ? findClip(doc, selectedId) : undefined;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
   const totalUs = doc ? durationOf(doc) : 0;
+  const frame = doc ? frameSize(doc, assets, 1080) : { width: 9, height: 16 };
+  const fit = Math.min(box.w / frame.width, box.h / frame.height) || 0;
+  const stage = { w: Math.floor(frame.width * fit), h: Math.floor(frame.height * fit) };
+  const bg = doc?.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
 
   function togglePlay() {
     if (!player.current) return;
@@ -261,13 +275,21 @@ export function Editor({ projectId }: { projectId: Id }) {
         }}
       />
 
-      <div className="relative flex min-h-0 flex-1 items-center justify-center bg-canvas" onClick={() => setFullscreen(false)}>
+      <div ref={stageBox} className="relative flex min-h-0 flex-1 items-center justify-center bg-canvas" onClick={() => setFullscreen(false)}>
         {state === "loading" && <span className="text-sm text-text-muted">Abrindo projeto…</span>}
-        <canvas
-          ref={canvasRef}
-          aria-label="Prévia do vídeo"
-          className={cn("max-h-full max-w-full", state !== "ready" && "hidden")}
-        />
+        {/* the project frame: its shape follows the aspect ratio */}
+        <div
+          className={cn("relative overflow-hidden", state !== "ready" && "hidden")}
+          style={{ width: stage.w, height: stage.h, background: bg }}
+        >
+          <video
+            ref={videoRef}
+            aria-label="Prévia do vídeo"
+            playsInline
+            className="pointer-events-none absolute inset-0 size-full object-contain"
+          />
+          <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+        </div>
         {state === "ready" && totalUs === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
             <p className="text-sm">Projeto vazio</p>
@@ -276,8 +298,6 @@ export function Editor({ projectId }: { projectId: Id }) {
             </Button>
           </div>
         )}
-        {/* the element that actually plays; painted onto the canvas */}
-        <video ref={videoRef} aria-hidden className="pointer-events-none absolute size-px opacity-0" />
         {saveState === "error" && (
           <span role="alert" className="absolute left-2 top-2 rounded-sm bg-danger px-2 py-1 text-xs text-on-danger">
             Não foi possível salvar
@@ -459,6 +479,8 @@ export function Editor({ projectId }: { projectId: Id }) {
         onOpenChange={(o) => !o && setPanel(null)}
         options={exportOptions}
         onOptionsChange={setExportOptions}
+        onBeforeExport={() => player.current?.release()}
+        onAfterExport={() => void player.current?.showAt(useEditor.getState().playheadUs)}
       />
 
       {importing && <ImportOverlay progress={importing} />}

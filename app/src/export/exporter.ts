@@ -7,15 +7,16 @@ import {
   AudioBufferSource,
   BlobSource,
   BufferTarget,
-  CanvasSink,
   CanvasSource,
   Input,
   Mp4OutputFormat,
   Output,
+  VideoSampleSink,
   getFirstEncodableAudioCodec,
   getFirstEncodableVideoCodec,
   type AudioCodec,
   type VideoCodec,
+  type VideoSample,
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { readFile } from "../data/opfs";
@@ -35,6 +36,16 @@ export interface ExportResult {
 }
 
 export class ExportCancelled extends Error {}
+
+// Turns a decoder error into something that says which file and what to try.
+function readError(asset: AssetRow, err: unknown) {
+  const raw = err instanceof Error ? err.message : String(err);
+  const what = `${asset.width}×${asset.height}${asset.hdr ? " HDR" : ""}`;
+  return new Error(
+    `O iPhone não conseguiu ler "${asset.name}" (${what}) durante a exportação. ` +
+      `Tente exportar em 1080p ou com menos quadros por segundo. Detalhe: ${raw}`,
+  );
+}
 
 const SAMPLE_RATE = 48_000;
 const BITS_PER_PIXEL = { low: 0.05, recommended: 0.09, high: 0.15 } as const;
@@ -173,23 +184,47 @@ export async function exportTimeline(
       } else {
         const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
         if (!track) throw new Error(`Sem vídeo em ${asset.name}`);
-        // decode at the output size: less memory than full 4K frames
-        const s = Math.min(1, Math.max(width / track.displayWidth, height / track.displayHeight));
-        const sink = new CanvasSink(track, {
-          width: Math.max(2, Math.round(track.displayWidth * s)),
-          height: Math.max(2, Math.round(track.displayHeight * s)),
-          fit: "fill",
-          poolSize: 2,
-        });
-        const times = function* () {
-          for (let f = first; f < last; f++) {
-            const offsetS = (f - first) * frameS;
-            yield Math.min(clip.outUs / 1e6 - 1e-4, clip.inUs / 1e6 + offsetS * clip.speed);
+        // Decode the clip's frames in order and, for each output frame, draw
+        // the latest decoded frame at or before its source time. Each frame is
+        // closed as soon as it is replaced: 4K frames are large.
+        const sink = new VideoSampleSink(track);
+        const inS = clip.inUs / 1e6;
+        const outS = clip.outUs / 1e6;
+        const samples = sink.samples(inS, outS);
+        let current: VideoSample | null = null;
+        let next: VideoSample | null = null;
+        let ended = false;
+        const pull = async () => {
+          const r = await samples.next();
+          if (r.done) {
+            ended = true;
+            return null;
           }
+          return r.value;
         };
-        for await (const wc of sink.canvasesAtTimestamps(times())) {
-          if (wc) drawContain(ctx, wc.canvas, wc.canvas.width, wc.canvas.height, bg);
-          await emit();
+        try {
+          next = await pull();
+          for (let f = first; f < last; f++) {
+            const srcS = Math.min(outS - 1e-4, inS + (f - first) * frameS * clip.speed);
+            while (next && next.timestamp <= srcS + 1e-6) {
+              current?.close();
+              current = next;
+              next = ended ? null : await pull();
+            }
+            if (current) {
+              ctx.fillStyle = bg;
+              ctx.fillRect(0, 0, width, height);
+              current.drawWithFit(ctx, { fit: "contain" });
+            }
+            await emit();
+          }
+        } catch (err) {
+          if (err instanceof ExportCancelled) throw err;
+          throw readError(asset, err);
+        } finally {
+          current?.close();
+          next?.close();
+          await samples.return(undefined);
         }
       }
     }

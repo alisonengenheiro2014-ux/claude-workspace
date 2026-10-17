@@ -1,5 +1,5 @@
 // Importing media: copy into OPFS, read its metadata, make thumbnails.
-import { ALL_FORMATS, BlobSource, CanvasSink, Input } from "mediabunny";
+import { ALL_FORMATS, BlobSource, CanvasSink, EncodedPacketSink, Input } from "mediabunny";
 import { db, type AssetKind, type AssetRow, type Id } from "../data/db";
 import { readFile, removeFile, writeFile } from "../data/opfs";
 
@@ -33,8 +33,16 @@ async function probeVideo(file: File) {
     const width = video.displayWidth;
     const height = video.displayHeight;
 
+    // Thumbnails come from key frames only: each one decodes a single frame
+    // instead of everything since the previous key frame (slow in 4K).
     const count = Math.min(30, Math.max(2, Math.ceil(duration)));
-    const times = Array.from({ length: count }, (_, i) => (duration * i) / count);
+    const packets = new EncodedPacketSink(video);
+    const keyTimes = new Set<number>();
+    for (let i = 0; i < count; i++) {
+      const kp = await packets.getKeyPacket((duration * i) / count, { metadataOnly: true });
+      if (kp) keyTimes.add(kp.timestamp);
+    }
+    const times = [...keyTimes].sort((a, b) => a - b);
     const sink = new CanvasSink(video, { height: THUMB_H, fit: "contain", poolSize: 1 });
     const blobs: Blob[] = [];
     const usedTimes: number[] = [];
@@ -51,6 +59,7 @@ async function probeVideo(file: File) {
       rotation: video.rotation,
       hasAudio: !!audio && (await audio.canDecode()),
       codec: await video.getCodecParameterString(),
+      hdr: await video.hasHighDynamicRange(),
       thumbs: { times: usedTimes, blobs },
     };
   } finally {
@@ -98,11 +107,14 @@ export async function importFiles(
     const now = Date.now();
     try {
       report(0);
-      await writeFile(opfsPath, file, (p) => report(p * 0.7));
-      const stored = await readFile(opfsPath);
-      if (!stored) throw new ImportError("Não foi possível guardar o arquivo.");
-      report(0.75);
-      const meta = kind === "video" ? await probeVideo(stored) : { ...(await probeImage(stored)), durationUs: 0, fps: null, rotation: 0 as const, hasAudio: false, codec: null };
+      // copy into the app and read the metadata at the same time
+      const [, meta] = await Promise.all([
+        writeFile(opfsPath, file, (p) => report(p * 0.95)),
+        kind === "video"
+          ? probeVideo(file)
+          : probeImage(file).then((m) => ({ ...m, durationUs: 0, fps: null, rotation: 0 as const, hasAudio: false, codec: null, hdr: false })),
+      ]);
+      if (!(await readFile(opfsPath))) throw new ImportError("Não foi possível guardar o arquivo.");
       const row: AssetRow = {
         id,
         projectId,
@@ -118,6 +130,7 @@ export async function importFiles(
         rotation: meta.rotation,
         hasAudio: meta.hasAudio,
         codec: meta.codec,
+        hdr: meta.hdr,
         status: "ready",
         error: null,
         createdAt: now,

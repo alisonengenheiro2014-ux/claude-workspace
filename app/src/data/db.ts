@@ -51,6 +51,7 @@ export interface AssetRow {
   rotation: 0 | 90 | 180 | 270;
   hasAudio: boolean;
   codec: string | null; // e.g. "hvc1.2.4.L153.B0"
+  hdr?: boolean; // iPhone default recording (Dolby Vision / HLG)
   status: AssetStatus;
   error: string | null;
   createdAt: number;

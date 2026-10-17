@@ -27,6 +27,14 @@ export function resolutionLabel(shortSide: number) {
   return RESOLUTIONS.find((r) => r.value === shortSide)?.label ?? `${shortSide}p`;
 }
 
+// "1:20 decorridos · cerca de 3:05 restantes", once there is enough progress to guess.
+function timeLeft(fraction: number, startedAt: number) {
+  const elapsed = (Date.now() - startedAt) / 1000;
+  const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
+  if (fraction < 0.03 || elapsed < 5) return `${mmss(elapsed)} decorridos`;
+  return `${mmss(elapsed)} decorridos · cerca de ${mmss((elapsed / fraction) * (1 - fraction))} restantes`;
+}
+
 function formatBytes(n: number) {
   return n < 1e9 ? `${Math.max(1, Math.round(n / 1e6))} MB` : `${(n / 1e9).toFixed(1)} GB`;
 }
@@ -70,7 +78,7 @@ function Choice<T extends string | number>({
 
 type Phase =
   | { name: "settings" }
-  | { name: "running"; fraction: number; stage: string }
+  | { name: "running"; fraction: number; stage: string; startedAt: number }
   | { name: "done"; file: File }
   | { name: "error"; message: string };
 
@@ -79,11 +87,15 @@ export function ExportSheet({
   onOpenChange,
   options,
   onOptionsChange,
+  onBeforeExport,
+  onAfterExport,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   options: ExportOptions;
   onOptionsChange: (o: ExportOptions) => void;
+  onBeforeExport?: () => void;
+  onAfterExport?: () => void;
 }) {
   const toast = useToast();
   const doc = useEditor((s) => s.doc);
@@ -114,7 +126,9 @@ export function ExportSheet({
     await useEditor.getState().flush();
     const ctl = new AbortController();
     abort.current = ctl;
-    setPhase({ name: "running", fraction: 0, stage: "Preparando o áudio" });
+    const startedAt = Date.now();
+    setPhase({ name: "running", fraction: 0, stage: "Preparando o áudio", startedAt });
+    onBeforeExport?.();
     let lock: WakeLockSentinel | null = null;
     try {
       lock = await navigator.wakeLock?.request("screen").catch(() => null);
@@ -126,6 +140,7 @@ export function ExportSheet({
           setPhase({
             name: "running",
             fraction,
+            startedAt,
             stage: stage === "audio" ? "Preparando o áudio" : stage === "video" ? "Gerando o vídeo" : "Finalizando",
           }),
         ctl.signal,
@@ -142,6 +157,7 @@ export function ExportSheet({
     } finally {
       await lock?.release().catch(() => {});
       abort.current = null;
+      onAfterExport?.();
     }
   }
 
@@ -198,6 +214,7 @@ export function ExportSheet({
           <Choice label="Qualidade" value={options.quality} onChange={(quality) => onOptionsChange({ ...options, quality })} options={QUALITY} />
           <p className="text-xs text-text-muted">
             {size.width}×{size.height} · cerca de {formatBytes(estimate)}
+            {options.shortSide > 1080 && " · em 2K e 4K a exportação demora bem mais"}
           </p>
           <Button variant="primary" size="lg" disabled={totalUs === 0} onClick={() => void run()}>
             Exportar vídeo
@@ -211,6 +228,7 @@ export function ExportSheet({
           <p className="text-sm" aria-live="polite">
             {phase.stage}
           </p>
+          <p className="font-mono text-xs text-text-muted tabular-nums">{timeLeft(phase.fraction, phase.startedAt)}</p>
           <p className="text-xs text-text-muted">Mantenha o app aberto e a tela ligada até terminar.</p>
           <Button variant="ghost" onClick={() => abort.current?.abort()}>
             Cancelar
