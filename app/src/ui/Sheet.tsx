@@ -19,10 +19,10 @@ export function Sheet({
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 bg-scrim/30" />
+        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/30" />
         <Dialog.Content
           aria-describedby={undefined}
-          className="pb-safe fixed inset-x-0 bottom-0 flex max-h-[var(--layout-sheet-max)] flex-col rounded-t-lg bg-surface shadow-sheet outline-none"
+          className="pb-safe fixed inset-x-0 bottom-0 z-50 flex max-h-[var(--layout-sheet-max)] flex-col rounded-t-lg bg-surface shadow-sheet outline-none"
         >
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border pl-4 pr-1">
             <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>

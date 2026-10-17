@@ -1,0 +1,221 @@
+// Pure operations on the timeline document. Every function takes a doc and
+// returns a new one; the store keeps the old one for undo.
+import type { AspectRatio, AssetRow, Clip, Id, MediaClip, TimelineDoc, Track, Us } from "../data/db";
+
+export const IMAGE_DEFAULT_US: Us = 3_000_000;
+export const MIN_CLIP_US: Us = 100_000; // shortest clip a split or trim may leave
+
+const uid = () => crypto.randomUUID();
+
+export function emptyDoc(aspectRatio: AspectRatio = "original"): TimelineDoc {
+  return {
+    version: 1,
+    canvas: { aspectRatio, width: 1080, height: 1920, background: { type: "color", color: "#000000" } },
+    tracks: [{ id: uid(), kind: "main", muted: false, hidden: false, locked: false, items: [] }],
+    transitions: [],
+  };
+}
+
+export function mainTrack(doc: TimelineDoc): Track {
+  return doc.tracks.find((t) => t.kind === "main")!;
+}
+
+export function mainClips(doc: TimelineDoc): MediaClip[] {
+  return mainTrack(doc).items.filter((c): c is MediaClip => c.type === "media");
+}
+
+export function newMediaClip(asset: AssetRow): MediaClip {
+  const outUs = asset.kind === "image" ? IMAGE_DEFAULT_US : asset.durationUs;
+  return {
+    id: uid(),
+    type: "media",
+    assetId: asset.id,
+    startUs: 0,
+    durationUs: outUs,
+    inUs: 0,
+    outUs,
+    speed: 1,
+    speedCurve: null,
+    keepPitch: true,
+    reverse: false,
+    volume: 1,
+    fadeInUs: 0,
+    fadeOutUs: 0,
+    crop: null,
+    mask: null,
+    chroma: null,
+    filter: null,
+    adjust: null,
+    freeze: false,
+    stabilize: 0,
+    denoise: false,
+    transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0 },
+    opacity: 1,
+    blendMode: "normal",
+    animation: { in: null, out: null, loop: null },
+    keyframes: [],
+  };
+}
+
+export function clipDuration(c: MediaClip): Us {
+  return Math.round((c.outUs - c.inUs) / c.speed);
+}
+
+// The main track is magnetic: clips sit end to end from zero.
+function relayout(track: Track) {
+  let at = 0;
+  for (const c of track.items) {
+    c.startUs = at;
+    if (c.type === "media") c.durationUs = clipDuration(c);
+    at += c.durationUs;
+  }
+}
+
+function edit(doc: TimelineDoc, fn: (draft: TimelineDoc) => void): TimelineDoc {
+  const draft = structuredClone(doc);
+  fn(draft);
+  relayout(mainTrack(draft));
+  // drop transitions whose clips are gone or no longer adjacent
+  const items = mainTrack(draft).items;
+  draft.transitions = draft.transitions.filter((t) => {
+    const i = items.findIndex((c) => c.id === t.fromClipId);
+    return i >= 0 && items[i + 1]?.id === t.toClipId;
+  });
+  return draft;
+}
+
+export function durationOf(doc: TimelineDoc): Us {
+  const items = mainTrack(doc).items;
+  const last = items[items.length - 1];
+  return last ? last.startUs + last.durationUs : 0;
+}
+
+export function findClip(doc: TimelineDoc, clipId: Id): MediaClip | undefined {
+  return mainClips(doc).find((c) => c.id === clipId);
+}
+
+// The clip under a timeline position, and how far into it the position is.
+export function clipAt(doc: TimelineDoc, atUs: Us): { clip: MediaClip; offsetUs: Us } | null {
+  const clips = mainClips(doc);
+  for (const clip of clips) {
+    if (atUs >= clip.startUs && atUs < clip.startUs + clip.durationUs) return { clip, offsetUs: atUs - clip.startUs };
+  }
+  const last = clips[clips.length - 1];
+  if (last && atUs >= last.startUs + last.durationUs) return { clip: last, offsetUs: last.durationUs };
+  return null;
+}
+
+// Where in the source media a timeline position lands.
+export function sourceTimeUs(clip: MediaClip, offsetUs: Us): Us {
+  return Math.min(clip.outUs, clip.inUs + Math.round(offsetUs * clip.speed));
+}
+
+// Inserts at the clip boundary nearest to atUs.
+export function insertMedia(doc: TimelineDoc, assets: AssetRow[], atUs: Us): { doc: TimelineDoc; ids: Id[] } {
+  const clips = assets.map(newMediaClip);
+  const next = edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    let index = items.length;
+    for (let i = 0; i < items.length; i++) {
+      const mid = items[i].startUs + items[i].durationUs / 2;
+      if (atUs < mid) {
+        index = i;
+        break;
+      }
+    }
+    items.splice(index, 0, ...clips);
+  });
+  return { doc: next, ids: clips.map((c) => c.id) };
+}
+
+export function canSplit(doc: TimelineDoc, clipId: Id, atUs: Us): boolean {
+  const c = findClip(doc, clipId);
+  if (!c) return false;
+  return atUs - c.startUs >= MIN_CLIP_US && c.startUs + c.durationUs - atUs >= MIN_CLIP_US;
+}
+
+export function split(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: TimelineDoc; rightId: Id } | null {
+  if (!canSplit(doc, clipId, atUs)) return null;
+  const rightId = uid();
+  const next = edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    const i = items.findIndex((c) => c.id === clipId);
+    const left = items[i] as MediaClip;
+    const cut = sourceTimeUs(left, atUs - left.startUs);
+    const right: MediaClip = { ...structuredClone(left), id: rightId, inUs: cut };
+    left.outUs = cut;
+    items.splice(i + 1, 0, right);
+  });
+  return { doc: next, rightId };
+}
+
+// Moves one edge of a clip by deltaUs of timeline time. Clamped so the clip
+// stays at least MIN_CLIP_US long and inside its media.
+export function trim(doc: TimelineDoc, clipId: Id, edge: "start" | "end", deltaUs: Us, mediaUs: Us | null): TimelineDoc {
+  return edit(doc, (d) => {
+    const c = mainTrack(d).items.find((x) => x.id === clipId) as MediaClip | undefined;
+    if (!c) return;
+    const delta = Math.round(deltaUs * c.speed);
+    const min = Math.round(MIN_CLIP_US * c.speed);
+    if (edge === "start") c.inUs = Math.max(0, Math.min(c.outUs - min, c.inUs + delta));
+    else c.outUs = Math.max(c.inUs + min, Math.min(mediaUs ?? Number.POSITIVE_INFINITY, c.outUs + delta));
+  });
+}
+
+export function remove(doc: TimelineDoc, clipId: Id): TimelineDoc {
+  return edit(doc, (d) => {
+    const t = mainTrack(d);
+    t.items = t.items.filter((c) => c.id !== clipId);
+  });
+}
+
+export function duplicate(doc: TimelineDoc, clipId: Id): { doc: TimelineDoc; id: Id } {
+  const id = uid();
+  const next = edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    const i = items.findIndex((c) => c.id === clipId);
+    if (i >= 0) items.splice(i + 1, 0, { ...structuredClone(items[i]), id });
+  });
+  return { doc: next, id };
+}
+
+export function move(doc: TimelineDoc, clipId: Id, toIndex: number): TimelineDoc {
+  return edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    const i = items.findIndex((c) => c.id === clipId);
+    if (i < 0) return;
+    const [c] = items.splice(i, 1);
+    items.splice(Math.max(0, Math.min(items.length, toIndex)), 0, c);
+  });
+}
+
+export function setClip(doc: TimelineDoc, clipId: Id, patch: Partial<MediaClip>): TimelineDoc {
+  return edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    const i = items.findIndex((c) => c.id === clipId);
+    if (i >= 0) items[i] = { ...(items[i] as MediaClip), ...patch } as Clip;
+  });
+}
+
+export const ASPECTS: Record<Exclude<AspectRatio, "original">, number> = {
+  "9:16": 9 / 16,
+  "16:9": 16 / 9,
+  "1:1": 1,
+  "4:5": 4 / 5,
+  "4:3": 4 / 3,
+};
+
+// Output frame size for a short-side resolution (720, 1080, 2160...).
+// "original" follows the first clip's shape. Always even numbers.
+export function frameSize(doc: TimelineDoc, assets: Map<Id, AssetRow>, shortSide: number) {
+  let ratio: number;
+  if (doc.canvas.aspectRatio === "original") {
+    const first = mainClips(doc)[0];
+    const a = first && assets.get(first.assetId);
+    ratio = a && a.width && a.height ? a.width / a.height : 9 / 16;
+  } else ratio = ASPECTS[doc.canvas.aspectRatio];
+  const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+  return ratio >= 1
+    ? { width: even(shortSide * ratio), height: even(shortSide) }
+    : { width: even(shortSide), height: even(shortSide / ratio) };
+}

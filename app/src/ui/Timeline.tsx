@@ -59,7 +59,11 @@ export function TimelineClip({
           ))}
         </span>
       )}
-      {label && <span className="relative block truncate px-2 pt-0.5 text-2xs">{label}</span>}
+      {label && (
+        <span className={cn("relative block truncate px-2 pt-0.5 text-2xs", !!thumbs && "m-0.5 w-fit max-w-[calc(100%-4px)] rounded-xs bg-scrim/60 px-1 pt-0")}>
+          {label}
+        </span>
+      )}
       {missing && (
         <span className="absolute inset-0 flex items-center justify-center gap-1 bg-scrim/60 text-2xs text-warning">
           <AlertTriangle aria-hidden className="size-3.5" /> Mídia ausente

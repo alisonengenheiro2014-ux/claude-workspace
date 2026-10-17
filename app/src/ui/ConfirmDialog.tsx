@@ -21,8 +21,8 @@ export function ConfirmDialog({
   return (
     <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
       <AlertDialog.Portal>
-        <AlertDialog.Overlay className="fixed inset-0 bg-scrim/60" />
-        <AlertDialog.Content className="fixed left-1/2 top-1/2 w-[min(320px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-surface-2 p-5 shadow-pop">
+        <AlertDialog.Overlay className="fixed inset-0 z-40 bg-scrim/60" />
+        <AlertDialog.Content className="fixed left-1/2 top-1/2 z-50 w-[min(320px,calc(100vw-32px))] -translate-x-1/2 -translate-y-1/2 rounded-lg bg-surface-2 p-5 shadow-pop">
           <AlertDialog.Title className="text-lg">{title}</AlertDialog.Title>
           <AlertDialog.Description className="mt-2 text-sm text-text-muted">{description}</AlertDialog.Description>
           <div className="mt-5 flex justify-end gap-2">
