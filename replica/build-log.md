@@ -27,6 +27,17 @@ errors name the file and suggest 1080p, and the export shows time left. In
 Chromium a 15 s 4K60 clip now imports in 1.7 s and exports in 29 s (1080p)
 and 37 s (4K); the iPhone HEVC/HDR case still needs a retest.
 
+**Instant editing (2026-10-17):** after the iOS picker hands over the
+files, the app now reads only their metadata and opens the editor (0.38 s in
+Chromium for a 15 s 4K60 clip plus a short one). Thumbnails and the copy into
+OPFS run in the background, one file at a time; the preview and the export
+use the picked file from memory until the copy is done. A pill on the preview
+shows "Guardando vídeo no app… n%". If the app is closed mid-copy, that clip
+shows as missing next time and can be replaced. The wait inside the iOS
+picker (it converts HDR/HEVC to a compatible format before handing the file
+over) is outside the app: choosing "Atual" in the picker's options, if
+present, or picking from the Files app avoids it.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

@@ -7,7 +7,7 @@
 // with a tap, later play() calls on the same element are allowed, even after
 // its source changes.
 import type { AssetRow, Id, MediaClip, TimelineDoc, Us } from "../data/db";
-import { readFile } from "../data/opfs";
+import { assetFile } from "../media/import";
 import { useEditor } from "./store";
 import { durationOf, frameSize, mainClips, sourceTimeUs } from "./timeline";
 
@@ -74,7 +74,7 @@ export class Player {
   private async urlFor(asset: AssetRow) {
     let url = this.urls.get(asset.id);
     if (!url) {
-      const file = await readFile(asset.opfsPath);
+      const file = await assetFile(asset);
       if (!file) return null;
       url = URL.createObjectURL(file);
       this.urls.set(asset.id, url);
@@ -85,7 +85,7 @@ export class Player {
   private async imageFor(asset: AssetRow) {
     let bmp = this.images.get(asset.id);
     if (!bmp) {
-      const file = await readFile(asset.opfsPath);
+      const file = await assetFile(asset);
       if (!file) return null;
       bmp = await createImageBitmap(file);
       this.images.set(asset.id, bmp);

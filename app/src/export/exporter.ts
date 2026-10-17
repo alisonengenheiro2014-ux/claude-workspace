@@ -19,7 +19,7 @@ import {
   type VideoSample,
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
-import { readFile } from "../data/opfs";
+import { assetFile } from "../media/import";
 import { drawContain } from "../editor/player";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
 
@@ -78,7 +78,7 @@ export async function pickCodecs(width: number, height: number, bitrate: number)
 async function openInput(asset: AssetRow, cache: Map<Id, Input>) {
   let input = cache.get(asset.id);
   if (!input) {
-    const file = await readFile(asset.opfsPath);
+    const file = await assetFile(asset);
     if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
     input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
     cache.set(asset.id, input);
@@ -175,7 +175,7 @@ export async function exportTimeline(
         ctx.fillRect(0, 0, width, height);
         for (let f = first; f < last; f++) await emit();
       } else if (asset.kind === "image") {
-        const file = await readFile(asset.opfsPath);
+        const file = await assetFile(asset);
         if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
         const bmp = await createImageBitmap(file);
         drawContain(ctx, bmp, bmp.width, bmp.height, bg);

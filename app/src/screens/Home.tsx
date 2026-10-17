@@ -18,7 +18,8 @@ import {
   thumbsFor,
 } from "../data/projects";
 import { insertMedia } from "../editor/timeline";
-import type { ImportProgress } from "../media/import";
+import type { ImportProgress } from "../app/importFlow";
+import { importsInProgress } from "../media/import";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { DraftCard } from "../ui/DraftCard";
@@ -81,6 +82,7 @@ export function Home() {
 
   async function onDuplicate(p: ProjectRow) {
     setMenuFor(null);
+    if (importsInProgress()) return toast("Espere terminar de guardar os vídeos para duplicar.");
     await duplicateProject(p.id);
     toast("Projeto duplicado");
     await refresh();

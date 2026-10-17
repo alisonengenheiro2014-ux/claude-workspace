@@ -5,6 +5,7 @@ import type { AssetRow, Id, TimelineDoc, Us } from "../data/db";
 import { loadProject, saveDoc, thumbsFor } from "../data/projects";
 import { HISTORY_LIMIT } from "../data/db";
 import { durationOf } from "./timeline";
+import { onImportEvent } from "../media/import";
 
 export interface Thumbs {
   times: number[]; // source time (s) of each image
@@ -27,6 +28,7 @@ interface EditorState {
   future: { doc: TimelineDoc; label: string }[];
   draft: TimelineDoc | null; // live preview of a gesture (trim) before it commits
   saveState: SaveState;
+  copying: Map<Id, number>; // assets still being copied into the app, 0..1
 
   open(projectId: Id): Promise<boolean>;
   close(): void;
@@ -85,6 +87,7 @@ export const useEditor = create<EditorState>((set, get) => {
     future: [],
     draft: null,
     saveState: "saved",
+    copying: new Map(),
 
     async open(projectId) {
       const loaded = await loadProject(projectId);
@@ -104,6 +107,7 @@ export const useEditor = create<EditorState>((set, get) => {
         future: [],
         draft: null,
         saveState: "saved",
+        copying: new Map(loaded.assets.filter((a) => a.status === "importing").map((a) => [a.id, 0])),
       });
       return true;
     },
@@ -118,6 +122,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set((s) => ({
         assets: new Map([...s.assets, ...assets.map((a) => [a.id, a] as const)]),
         thumbs: new Map([...s.thumbs, ...thumbs]),
+        copying: new Map([...s.copying, ...assets.filter((a) => a.status === "importing").map((a) => [a.id, 0] as const)]),
       }));
     },
 
@@ -181,6 +186,28 @@ export const useEditor = create<EditorState>((set, get) => {
       }
     },
   };
+});
+
+// Background imports report here: thumbnails appear and copies finish while
+// the project is open.
+onImportEvent((e) => {
+  const s = useEditor.getState();
+  if (e.type === "thumbs") {
+    if (!s.assets.has(e.assetId)) return;
+    const thumbs = new Map(s.thumbs);
+    thumbs.set(e.assetId, { times: e.times, urls: e.blobs.map((b) => URL.createObjectURL(b)) });
+    useEditor.setState({ thumbs });
+  } else if (e.type === "progress") {
+    if (!s.assets.has(e.assetId)) return;
+    useEditor.setState({ copying: new Map(s.copying).set(e.assetId, e.fraction) });
+  } else if (e.type === "ready" || e.type === "error") {
+    const id = e.type === "ready" ? e.asset.id : e.assetId;
+    if (!s.assets.has(id)) return;
+    const copying = new Map(s.copying);
+    copying.delete(id);
+    const assets = e.type === "ready" ? new Map(s.assets).set(id, e.asset) : s.assets;
+    useEditor.setState({ copying, assets });
+  }
 });
 
 // Save before the page goes away (app switch, tab close).

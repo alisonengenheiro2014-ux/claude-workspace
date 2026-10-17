@@ -27,13 +27,13 @@ import { ImportOverlay } from "../app/ImportOverlay";
 import { runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
 import type { AspectRatio, Id } from "../data/db";
-import { readFile } from "../data/opfs";
+import { assetFile, onImportEvent } from "../media/import";
 import { Player } from "../editor/player";
 import { useEditor } from "../editor/store";
 import { TimelineView } from "../editor/TimelineView";
 import { canSplit, clipAt, durationOf, duplicate, findClip, frameSize, insertMedia, remove, setClip, split } from "../editor/timeline";
 import type { ExportOptions } from "../export/exporter";
-import type { ImportProgress } from "../media/import";
+import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { Sheet } from "../ui/Sheet";
@@ -97,6 +97,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const canUndo = useEditor((s) => s.past.length > 0);
   const canRedo = useEditor((s) => s.future.length > 0);
   const saveState = useEditor((s) => s.saveState);
+  const copying = useEditor((s) => s.copying);
   const ed = useEditor.getState();
 
   useEffect(() => {
@@ -108,7 +109,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       if (!ok) return;
       // media deleted behind our back (storage cleared, etc.)
       const gone = new Set<Id>();
-      for (const a of useEditor.getState().assets.values()) if (!(await readFile(a.opfsPath))) gone.add(a.id);
+      for (const a of useEditor.getState().assets.values()) if (!(await assetFile(a))) gone.add(a.id);
       if (alive) setMissing(gone);
     });
     return () => {
@@ -141,6 +142,15 @@ export function Editor({ projectId }: { projectId: Id }) {
       player.current = null;
     };
   }, [state]);
+
+  useEffect(
+    () =>
+      onImportEvent((e) => {
+        if (e.type === "error" && useEditor.getState().assets.has(e.assetId))
+          toast(`${e.name}: ${e.reason} Você pode editar e exportar agora, mas ele não fica guardado no app.`, "error");
+      }),
+    [toast],
+  );
 
   useEffect(() => {
     const el = stageBox.current;
@@ -297,6 +307,12 @@ export function Editor({ projectId }: { projectId: Id }) {
               Adicionar mídia
             </Button>
           </div>
+        )}
+        {copying.size > 0 && (
+          <span role="status" className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-pill bg-surface-3/90 px-3 py-1 text-xs text-text">
+            Guardando {copying.size > 1 ? `${copying.size} vídeos` : "vídeo"} no app…{" "}
+            {Math.round(([...copying.values()].reduce((a, b) => a + b, 0) / copying.size) * 100)}%
+          </span>
         )}
         {saveState === "error" && (
           <span role="alert" className="absolute left-2 top-2 rounded-sm bg-danger px-2 py-1 text-xs text-on-danger">
