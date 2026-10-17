@@ -1,0 +1,70 @@
+feature,area,priority,original,clone,notes
+Instalar como PWA na tela de início (tela cheia; ícone próprio),app,must,no,no,"o original é app nativo; no clone isso substitui a instalação"
+Funcionar offline depois de instalado,app,must,yes,no,service worker
+Lista de rascunhos com miniatura duração e data,início,must,yes,no,S01
+Renomear duplicar e excluir rascunho,início,must,yes,no,S01
+Salvar o projeto automaticamente a cada mudança,projeto,must,yes,no,IndexedDB
+Importar vídeos e fotos do iPhone (seleção múltipla),mídia,must,yes,no,"S02; no PWA via seletor de arquivos, copiando para o OPFS"
+Avisar quando a mídia de um rascunho sumiu e permitir substituir,mídia,must,yes,no,F02
+Prévia com play/pausa e tempo atual/total,editor,must,yes,no,S03
+Linha do tempo com cursor fixo no centro e rolagem,editor,must,yes,no,S03
+Zoom da linha do tempo com pinça,editor,must,yes,no,fonte 9
+Miniaturas dos quadros e forma de onda na linha do tempo,editor,must,yes,no,
+Desfazer e refazer,editor,must,yes,no,
+Dividir clipe no cursor,clipe,must,yes,no,F03
+Aparar arrastando as bordas do clipe,clipe,must,yes,no,fonte 10
+Excluir e duplicar clipe,clipe,must,yes,no,
+Reordenar clipes arrastando,clipe,must,yes,no,
+Velocidade constante 0.1x a 100x,clipe,must,yes,no,S05
+Volume do clipe e silenciar a faixa,áudio,must,yes,no,
+Adicionar música a partir do app Arquivos,áudio,must,yes,no,F04; sem a biblioteca licenciada
+Aparecer e sumir gradualmente (fade) no áudio,áudio,must,yes,no,S08
+Adicionar texto com fonte cor contorno sombra e fundo,texto,must,yes,no,S09; fontes abertas
+Mover girar e escalar texto na prévia,texto,must,yes,no,
+Proporção do quadro (9:16 16:9 1:1 4:5 4:3 original),formato,must,yes,no,S15
+Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,no,S15
+Transições entre clipes com duração,transição,must,yes,no,S06; recriar os tipos com código próprio
+Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,no,S17; WebCodecs
+Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,no,Web Share API com arquivo
+Legendas automáticas a partir da fala,legendas,should,yes,no,S10; Whisper no aparelho ou API própria
+Editar legendas em lote (texto e estilo),legendas,should,yes,no,
+Animações de texto (entrada saída loop),texto,should,yes,no,
+Narração gravada pelo microfone,áudio,should,yes,no,S07
+Extrair o áudio de um vídeo,áudio,should,yes,no,
+Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,no,S12
+Modo de mistura e opacidade,sobrepor,should,yes,no,
+Filtros de cor com intensidade,cor,should,yes,no,S14; filtros próprios em shader
+Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,no,S14
+Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,no,
+Keyframes de posição escala rotação e opacidade,keyframes,should,yes,no,S16
+Recortar (crop) e girar o clipe,clipe,should,yes,no,
+Inverter clipe (reverso),clipe,should,yes,no,
+Congelar quadro,clipe,should,yes,no,
+Substituir mídia de um clipe mantendo as edições,clipe,should,yes,no,
+Animações de clipe (entrada saída),clipe,should,yes,no,
+Ocultar a faixa e trancar,editor,should,yes,no,
+Tela cheia na prévia,editor,should,yes,no,
+Encaixe magnético dos itens no cursor e nas bordas,editor,should,yes,no,
+Mostrar tamanho estimado do arquivo e não oferecer 4K sem mídia 4K,exportar,should,yes,no,fonte 3
+Curvas de velocidade (presets e pontos),clipe,could,yes,no,S05
+Câmera lenta suave com fluxo óptico,clipe,could,yes,no,"pesado em PWA; avaliar depois"
+Máscaras (linear espelho círculo retângulo coração estrela),clipe,could,yes,no,
+Chroma key,clipe,could,yes,no,shader
+Remover fundo automático (sem tela verde),IA,could,yes,no,"modelo de segmentação aberto via WebGPU"
+Estabilizar vídeo,clipe,could,yes,no,caro em processamento
+Redução de ruído de áudio,áudio,could,yes,no,
+Texto para fala,IA,could,yes,no,"voz do sistema (speechSynthesis) não grava; precisa de API própria"
+Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,no,"recriar com shaders próprios; não os arquivos deles"
+Stickers (imagens e emoji),stickers,could,yes,no,"seus PNGs e emoji do sistema"
+Marcar batidas da música,áudio,could,yes,no,
+Templates próprios reutilizáveis,templates,could,no,no,"diferente dos templates da comunidade CapCut"
+Backup e restauração do projeto em arquivo,projeto,could,no,no,"protege contra o Safari apagar o armazenamento"
+Biblioteca de músicas e efeitos sonoros,áudio,skip,yes,skip,conteúdo licenciado da CapCut
+Templates da comunidade,templates,skip,yes,skip,é a rede de usuários deles
+Efeitos stickers filtros e fontes prontos da CapCut,efeitos,skip,yes,skip,"arquivos deles; recriamos os tipos com código e fontes abertas"
+Login e conta,conta,skip,yes,skip,uso de uma pessoa só
+Nuvem e espaço de equipe,nuvem,skip,yes,skip,"uso pessoal, armazenamento local"
+Publicar direto no TikTok,compartilhar,skip,yes,skip,"API de parceiro; a folha de compartilhamento do iOS cobre"
+Assinatura Pro e marca d'água,cobrança,skip,yes,skip,"não há cobrança num app pessoal"
+Feed de inspiração e tutoriais dentro do app,início,skip,yes,skip,conteúdo deles
+Modelos de IA da CapCut,IA,skip,yes,skip,"recursos de IA usam modelos abertos ou APIs próprias"
