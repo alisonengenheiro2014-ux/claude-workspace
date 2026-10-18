@@ -5,6 +5,7 @@ import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
 import { markImport, runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
+import { applyUpdate, useUpdateReady } from "../app/updates";
 import type { Id, ProjectRow } from "../data/db";
 import { requestPersistence, storageInfo } from "../data/opfs";
 import {
@@ -37,6 +38,7 @@ function formatBytes(n: number) {
 export function Home() {
   const toast = useToast();
   const picker = useRef<HTMLInputElement>(null);
+  const updateReady = useUpdateReady();
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
   const [thumbs, setThumbs] = useState<Map<Id, string>>(new Map());
@@ -152,6 +154,15 @@ export function Home() {
       <header className="px-4 pb-4 pt-6">
         <h1 className="text-xl">Editor</h1>
       </header>
+
+      {updateReady && (
+        <div role="status" className="mx-4 mb-4 flex items-center gap-3 rounded-lg bg-surface-2 py-2 pl-4 pr-2">
+          <span className="flex-1 text-sm">Nova versão do app</span>
+          <Button variant="primary" onClick={applyUpdate}>
+            Atualizar
+          </Button>
+        </div>
+      )}
 
       <div className="px-4">
         <Button
