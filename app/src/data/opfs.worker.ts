@@ -36,7 +36,7 @@ self.onmessage = async (e: MessageEvent<WriteRequest>) => {
         if (done) break;
         access.write(value, { at });
         at += value.byteLength;
-        if (at - lastReport > 8 * 1024 * 1024) {
+        if (at - lastReport > 2 * 1024 * 1024) {
           lastReport = at;
           self.postMessage({ id, progress: at / file.size });
         }

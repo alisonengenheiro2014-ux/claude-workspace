@@ -122,6 +122,10 @@ export function Home() {
           Novo projeto
         </Button>
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
+        <p className="mt-2 text-xs text-text-muted">
+          Dica: pela Fototeca, o iPhone converte o vídeo antes de entregar (demora e perde qualidade). Para abrir na hora, salve o
+          vídeo em Arquivos e escolha <span className="text-text">Escolher Arquivo</span>.
+        </p>
       </div>
 
       <section aria-labelledby="drafts" className="mt-6 flex flex-1 flex-col px-3">

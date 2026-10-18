@@ -28,8 +28,11 @@ function emit(e: ImportEvent) {
   for (const fn of listeners) fn(e);
 }
 
-// Files picked this session whose copy into OPFS has not finished.
+// Files picked this session whose copy into OPFS has not finished, and the
+// ones whose copy finished this session (callers may still hold the old
+// "importing" row, e.g. an export that started before the copy ended).
 const pending = new Map<Id, File>();
+const copied = new Set<Id>();
 
 export function isPending(assetId: Id) {
   return pending.has(assetId);
@@ -41,7 +44,7 @@ export function isPending(assetId: Id) {
 export async function assetFile(asset: AssetRow): Promise<File | null> {
   const inMemory = pending.get(asset.id);
   if (inMemory) return inMemory;
-  if (asset.status !== "ready") return null;
+  if (asset.status !== "ready" && !copied.has(asset.id)) return null;
   return readFile(asset.opfsPath);
 }
 
@@ -94,7 +97,9 @@ async function probeImage(file: File) {
 
 // Thumbnails come from key frames only: each one decodes a single frame
 // instead of everything since the previous key frame (slow in 4K).
-async function videoThumbs(file: File) {
+// Two passes so the timeline fills in fast: a few spread-out frames first,
+// then the rest. onPartial gets everything made so far after each pass.
+async function videoThumbs(file: File, onPartial: (t: { times: number[]; blobs: Blob[] }) => void) {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
   try {
     const video = (await input.getPrimaryVideoTrack())!;
@@ -107,14 +112,23 @@ async function videoThumbs(file: File) {
       if (kp) keyTimes.add(kp.timestamp);
     }
     const sink = new CanvasSink(video, { height: THUMB_H, fit: "contain", poolSize: 1 });
-    const blobs: Blob[] = [];
-    const times: number[] = [];
-    for await (const wc of sink.canvasesAtTimestamps([...keyTimes].sort((a, b) => a - b))) {
-      if (!wc) continue;
-      blobs.push(await toJpeg(wc.canvas));
-      times.push(wc.timestamp);
+    const all = [...keyTimes].sort((a, b) => a - b);
+    const step = Math.max(1, Math.floor(all.length / 6));
+    const first = all.filter((_, i) => i % step === 0);
+    const rest = all.filter((_, i) => i % step !== 0);
+    const made: { t: number; blob: Blob }[] = [];
+    const snapshot = () => {
+      made.sort((a, b) => a.t - b.t);
+      return { times: made.map((m) => m.t), blobs: made.map((m) => m.blob) };
+    };
+    for (const pass of [first, rest]) {
+      if (!pass.length) continue;
+      for await (const wc of sink.canvasesAtTimestamps(pass)) {
+        if (wc) made.push({ t: wc.timestamp, blob: await toJpeg(wc.canvas) });
+      }
+      onPartial(snapshot());
     }
-    return { times, blobs };
+    return snapshot();
   } finally {
     input.dispose();
   }
@@ -140,8 +154,14 @@ function reasonOf(err: unknown) {
 const queue: { asset: AssetRow; file: File }[] = [];
 let running = false;
 
+// Thumbnails and the copy run side by side: one decodes, the other writes.
 async function work(asset: AssetRow, file: File) {
-  const thumbs = asset.kind === "video" ? await videoThumbs(file) : await imageThumbs(file);
+  const copy = writeFile(asset.opfsPath, file, (fraction) => emit({ type: "progress", assetId: asset.id, fraction }));
+  copy.catch(() => {}); // awaited below; avoid an unhandled rejection meanwhile
+  const thumbs =
+    asset.kind === "video"
+      ? await videoThumbs(file, (t) => emit({ type: "thumbs", assetId: asset.id, ...t }))
+      : await imageThumbs(file);
   await db.derivatives.add({
     id: crypto.randomUUID(),
     assetId: asset.id,
@@ -153,7 +173,7 @@ async function work(asset: AssetRow, file: File) {
   });
   emit({ type: "thumbs", assetId: asset.id, ...thumbs });
 
-  await writeFile(asset.opfsPath, file, (fraction) => emit({ type: "progress", assetId: asset.id, fraction }));
+  await copy;
   const stored = await readFile(asset.opfsPath);
   if (!stored || stored.size !== file.size) throw new ImportError("Não foi possível guardar o arquivo.");
   // the project may have been deleted while we were copying
@@ -163,6 +183,7 @@ async function work(asset: AssetRow, file: File) {
   }
   const ready: AssetRow = { ...asset, status: "ready", updatedAt: Date.now() };
   await db.assets.update(asset.id, { status: "ready", updatedAt: ready.updatedAt });
+  copied.add(asset.id);
   pending.delete(asset.id);
   emit({ type: "ready", asset: ready });
 }

@@ -195,6 +195,7 @@ onImportEvent((e) => {
   if (e.type === "thumbs") {
     if (!s.assets.has(e.assetId)) return;
     const thumbs = new Map(s.thumbs);
+    thumbs.get(e.assetId)?.urls.forEach(URL.revokeObjectURL);
     thumbs.set(e.assetId, { times: e.times, urls: e.blobs.map((b) => URL.createObjectURL(b)) });
     useEditor.setState({ thumbs });
   } else if (e.type === "progress") {
