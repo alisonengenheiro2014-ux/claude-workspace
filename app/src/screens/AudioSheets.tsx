@@ -3,6 +3,7 @@
 import { Mic, Music, Square, Split } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { MediaClip } from "../data/db";
+import { audio } from "../editor/audio";
 import { Button } from "../ui/Button";
 import { Sheet } from "../ui/Sheet";
 import { Slider } from "../ui/Slider";
@@ -85,6 +86,18 @@ export function FadeSheet({
   );
 }
 
+// What went wrong with the microphone, in words, with the browser's reason.
+function micError(err: unknown) {
+  const name = err instanceof DOMException ? err.name : "Error";
+  const detail = err instanceof Error && err.message ? ` (${name}: ${err.message})` : ` (${name})`;
+  if (name === "NotAllowedError" || name === "SecurityError")
+    return `O iPhone negou o microfone. Veja Ajustes → Apps → Safari → Microfone e, se o app está na tela de início, abra-o pelo Safari uma vez e permita${detail}.`;
+  if (name === "NotFoundError") return `Nenhum microfone encontrado${detail}.`;
+  if (name === "NotReadableError" || name === "AbortError" || name === "InvalidStateError")
+    return `O microfone está ocupado (uma ligação ou outro app gravando?)${detail}.`;
+  return `Não foi possível usar o microfone${detail}.`;
+}
+
 function pickMime() {
   for (const m of ["audio/mp4", "audio/webm;codecs=opus", "audio/webm"]) {
     if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported?.(m)) return m;
@@ -120,17 +133,23 @@ export function RecordSheet({
 
   function cleanup() {
     clearInterval(timer.current);
-    rec.current?.stream.getTracks().forEach((t) => t.stop());
+    if (rec.current) {
+      rec.current.stream.getTracks().forEach((t) => t.stop());
+      audio.setSessionType("playback");
+    }
   }
 
   // The mic is asked for on the tap (iOS wants a gesture); playback starts
   // after a 3 s countdown so you can get ready.
   async function start(timelineUs: number) {
+    // switch the audio session before asking: in "playback" iOS refuses the mic
+    audio.setSessionType("play-and-record");
     let stream: MediaStream;
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
-    } catch {
-      onError("Sem acesso ao microfone. Libere em Ajustes → Safari → Microfone (ou nos ajustes do app).");
+    } catch (err) {
+      audio.setSessionType("playback");
+      onError(micError(err));
       return;
     }
     const mime = pickMime();
@@ -161,6 +180,7 @@ export function RecordSheet({
     onStopPlayback();
     r.recorder.onstop = () => {
       r.stream.getTracks().forEach((t) => t.stop());
+      audio.setSessionType("playback");
       const type = r.recorder.mimeType || "audio/mp4";
       const ext = type.includes("webm") ? "webm" : "m4a";
       const stamp = new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).replace(/:/g, "");

@@ -89,10 +89,21 @@ class AudioEngine {
       const Ctor = (window.AudioContext ?? (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext) as AudioContextCtor;
       this.ctx = new Ctor();
       // play through the ring/silent switch, like a video app
-      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
-      if (session) session.type = "playback";
+      this.setSessionType("playback");
     }
     return this.ctx;
+  }
+
+  // iOS audio session: "playback" plays through the silent switch but does
+  // not allow the microphone; recording a voice-over needs "play-and-record".
+  setSessionType(type: "playback" | "play-and-record") {
+    const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+    if (!session) return;
+    try {
+      session.type = type;
+    } catch {
+      // older Safari: no audio session API
+    }
   }
 
   // Call from the play tap: iOS only starts audio from a user gesture.
