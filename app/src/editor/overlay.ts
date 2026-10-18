@@ -5,10 +5,11 @@ import type { AssetRow, MediaClip, TimelineDoc, Transform, Us } from "../data/db
 import { animatedAt, clipMotion } from "./keyframes";
 import type { TextBox } from "./text";
 
-// Width and height as shown (phone videos are often stored turned).
+// Width and height as shown. The import already stores them as displayed
+// (an iPhone video filmed upright is stored on its side with a 90° turn, and
+// width/height are after that turn): do not turn them again.
 export function displaySize(asset: AssetRow | undefined) {
-  const turned = asset?.rotation === 90 || asset?.rotation === 270;
-  return { w: (turned ? asset?.height : asset?.width) || 16, h: (turned ? asset?.width : asset?.height) || 9 };
+  return { w: asset?.width || 16, h: asset?.height || 9 };
 }
 
 // Size the media shows at when not rotated: fitted inside the frame, times

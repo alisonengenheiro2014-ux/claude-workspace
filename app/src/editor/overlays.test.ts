@@ -388,3 +388,13 @@ describe("speed curves", () => {
     expect(validateDoc(d, assets)).toEqual([]);
   });
 });
+
+describe("upright phone videos", () => {
+  it("an iPhone video stored on its side keeps its upright size (no second turn)", async () => {
+    const { displaySize } = await import("./overlay");
+    // what the import stores for a 1080x1920 upright recording: display size plus the turn
+    const upright: AssetRow = { ...A, width: 1080, height: 1920, rotation: 90 };
+    expect(displaySize(upright)).toEqual({ w: 1080, h: 1920 });
+    expect(overlayBox(upright, 1080, 1920, { x: 0.5, y: 0.5, scale: 1, rotation: 0 })).toMatchObject({ w: 1080, h: 1920 });
+  });
+});
