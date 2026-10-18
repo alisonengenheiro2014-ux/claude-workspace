@@ -104,6 +104,16 @@ export interface HistoryRow {
 }
 
 export const HISTORY_LIMIT = 200;
+// steps of undo kept with the project, so ↶ still works after reopening it
+export const SAVED_HISTORY = 50;
+
+// The undo and redo stacks of a project, as whole docs.
+export interface UndoRow {
+  projectId: Id;
+  past: { doc: TimelineDoc; label: string }[];
+  future: { doc: TimelineDoc; label: string }[];
+  savedAt: number;
+}
 
 export class EditorDB extends Dexie {
   projects!: Table<ProjectRow, Id>;
@@ -112,6 +122,7 @@ export class EditorDB extends Dexie {
   derivatives!: Table<DerivativeRow, Id>;
   exports!: Table<ExportRow, Id>;
   history!: Table<HistoryRow, Id>;
+  undo!: Table<UndoRow, Id>;
 
   constructor() {
     super("editor");
@@ -127,6 +138,7 @@ export class EditorDB extends Dexie {
     this.version(2).stores({
       assets: "id, projectId, [projectId+kind], status, opfsPath",
     });
+    this.version(3).stores({ undo: "projectId" });
   }
 }
 
@@ -137,7 +149,7 @@ export const db = new EditorDB();
 export async function deleteProject(projectId: Id): Promise<string[]> {
   return db.transaction(
     "rw",
-    [db.projects, db.projectDocs, db.assets, db.derivatives, db.exports, db.history],
+    [db.projects, db.projectDocs, db.assets, db.derivatives, db.exports, db.history, db.undo],
     async () => {
       const assets = await db.assets.where("projectId").equals(projectId).toArray();
       const assetIds = assets.map((a) => a.id);
@@ -152,6 +164,7 @@ export async function deleteProject(projectId: Id): Promise<string[]> {
       await db.assets.where("projectId").equals(projectId).delete();
       await db.exports.where("projectId").equals(projectId).delete();
       await db.history.where("projectId").equals(projectId).delete();
+      await db.undo.delete(projectId);
       await db.projectDocs.delete(projectId);
       await db.projects.delete(projectId);
       // keep files another project still points at

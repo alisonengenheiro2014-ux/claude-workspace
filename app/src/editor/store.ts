@@ -3,7 +3,7 @@
 import { create } from "zustand";
 import type { AssetRow, Id, TimelineDoc, Us } from "../data/db";
 import { loadProject, saveDoc, thumbsFor } from "../data/projects";
-import { HISTORY_LIMIT } from "../data/db";
+import { db, HISTORY_LIMIT, SAVED_HISTORY } from "../data/db";
 import { durationOf } from "./timeline";
 import { onImportEvent } from "../media/import";
 
@@ -59,7 +59,31 @@ async function loadThumbs(assetIds: Id[]) {
 export const MIN_ZOOM = 8;
 export const MAX_ZOOM = 400;
 
+// The undo stacks are saved with the project a little after the last edit
+// (they can be large: whole docs), and when the app goes to the background.
+let historyTimer: ReturnType<typeof setTimeout> | null = null;
+let savedHistory: { past: unknown; future: unknown } | null = null;
+async function saveHistory(projectId: Id, past: EditorState["past"], future: EditorState["future"]) {
+  if (historyTimer) clearTimeout(historyTimer);
+  historyTimer = null;
+  if (savedHistory?.past === past && savedHistory.future === future) return;
+  savedHistory = { past, future };
+  try {
+    await db.undo.put({ projectId, past: past.slice(-SAVED_HISTORY), future: future.slice(0, SAVED_HISTORY), savedAt: Date.now() });
+  } catch (err) {
+    console.warn("undo history not saved", err); // the edit itself is saved
+  }
+}
+
 export const useEditor = create<EditorState>((set, get) => {
+  function scheduleHistory() {
+    if (historyTimer) clearTimeout(historyTimer);
+    historyTimer = setTimeout(() => {
+      const { projectId, past, future } = get();
+      if (projectId) void saveHistory(projectId, past, future);
+    }, 3000);
+  }
+
   function scheduleSave() {
     if (saveTimer) clearTimeout(saveTimer);
     set({ saveState: "pending" });
@@ -72,6 +96,7 @@ export const useEditor = create<EditorState>((set, get) => {
     const stillThere = selectedId && doc.tracks.some((t) => t.items.some((c) => c.id === selectedId));
     set({ doc, draft: null, playheadUs: Math.min(playheadUs, end), selectedId: stillThere ? selectedId : null });
     scheduleSave();
+    scheduleHistory();
   }
 
   return {
@@ -96,6 +121,8 @@ export const useEditor = create<EditorState>((set, get) => {
       if (!loaded) return false;
       for (const t of get().thumbs.values()) t.urls.forEach(URL.revokeObjectURL);
       const thumbs = await loadThumbs(loaded.assets.map((a) => a.id));
+      const undo = await db.undo.get(projectId).catch(() => undefined);
+      savedHistory = undo ? { past: undo.past, future: undo.future } : null;
       set({
         projectId,
         name: loaded.project.name,
@@ -105,8 +132,8 @@ export const useEditor = create<EditorState>((set, get) => {
         selectedId: null,
         playheadUs: 0,
         playing: false,
-        past: [],
-        future: [],
+        past: undo?.past ?? [],
+        future: undo?.future ?? [],
         draft: null,
         saveState: "saved",
         copying: new Map(loaded.assets.filter((a) => a.status === "importing").map((a) => [a.id, 0])),
@@ -115,6 +142,8 @@ export const useEditor = create<EditorState>((set, get) => {
     },
 
     close() {
+      const { projectId, past, future } = get();
+      if (projectId) void saveHistory(projectId, past, future);
       for (const t of get().thumbs.values()) t.urls.forEach(URL.revokeObjectURL);
       set({ projectId: null, doc: null, assets: new Map(), thumbs: new Map(), waves: new Map(), past: [], future: [], playing: false });
     },
@@ -216,6 +245,9 @@ onImportEvent((e) => {
 // Save before the page goes away (app switch, tab close).
 if (typeof document !== "undefined") {
   document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "hidden") void useEditor.getState().flush();
+    if (document.visibilityState !== "hidden") return;
+    const s = useEditor.getState();
+    void s.flush();
+    if (s.projectId) void saveHistory(s.projectId, s.past, s.future);
   });
 }
