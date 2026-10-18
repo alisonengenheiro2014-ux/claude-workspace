@@ -30,35 +30,35 @@ Legendas automáticas a partir da fala,legendas,should,yes,yes,"Whisper no próp
 Editar legendas em lote (texto e estilo),legendas,should,yes,yes,"lista para corrigir cada legenda, apagar uma ou todas; estilo e posição valem para todas"
 Modelos de legenda (palavra por palavra e destaque da palavra falada),legendas,should,yes,yes,"87 modelos com prévia animada, recriando a grade do CapCut a partir dos prints (palavras empilhadas, cores e tamanhos por palavra, palavras futuras apagadas, degradê, selo inclinado, emoji, cursor, desfoque); (palavra por palavra, caixa colorida atrás da palavra falada, palavra que cresce, karaokê, revelar, neon, desenho, serifa...); trocar o modelo reagrupa as mesmas palavras sem transcrever de novo; o tempo de cada palavra é estimado pela energia da voz dentro da frase"
 Modelos de estilo de texto,texto,should,yes,yes,"8 modelos: simples, contorno, sombra, neon, caixa, faixa amarela, impacto, assinatura"
-Animações de texto (entrada saída loop),texto,should,yes,partial,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
+Animações de texto (entrada saída loop),texto,should,yes,yes,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
 Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo toca sem som; testado no iPhone (sessão de áudio ""tocar e gravar"" durante a gravação)"
 Extrair o áudio de um vídeo,áudio,should,yes,yes,o clipe fica sem som e o áudio vira um item próprio
 Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,yes,"foto ou vídeo por cima: arrastar, pinça, girar, opacidade, volume, fade, dividir, duplicar; som do vídeo sobreposto entra na exportação"
-Modo de mistura e opacidade,sobrepor,should,yes,no,
+Modo de mistura e opacidade,sobrepor,should,yes,yes,"Mistura nas sobreposições: 7 modos e opacidade"
 Filtros de cor com intensidade,cor,should,yes,yes,"17 filtros próprios (vívido, quente, frio, cinema, P&B, noir, retrô, vintage...), intensidade, aplicar a todos; também em sobreposições"
-Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,partial,"brilho, contraste, saturação, exposição, temperatura, matiz, vinheta; faltam nitidez, realces e sombras"
-Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
+Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,yes,"brilho, contraste, saturação, exposição, temperatura, matiz, realces, sombras, nitidez, vinheta"
+Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,yes,"transições, filtros e ajustes: aplicar a todos"
 Keyframes de posição escala rotação e opacidade,keyframes,should,yes,yes,"botão de keyframe (losango) ao lado do desfazer; vídeo principal (zoom e posição), sobreposições e textos; losangos na timeline; suavização automática"
 Recortar (crop) e girar o clipe,clipe,should,yes,yes,"formatos 1:1 9:16 16:9 4:5 3:4, zoom, arrastar na prévia, girar 90°, espelhar"
 Inverter clipe (reverso),clipe,should,yes,yes,"gera uma cópia invertida do trecho (vídeo e som) no próprio aparelho; inverter de novo volta ao original"
 Congelar quadro,clipe,should,yes,yes,"3 s do quadro sob o cursor, sem som; aparar ou dividir mantém o quadro"
 Substituir mídia de um clipe mantendo as edições,clipe,should,yes,yes,
-Animações de clipe (entrada saída),clipe,should,yes,no,
-Ocultar a faixa e trancar,editor,should,yes,no,
+Animações de clipe (entrada saída),clipe,should,yes,yes,"8 entradas e 8 saídas com duração, no vídeo principal e nas sobreposições"
+Ocultar a faixa e trancar,linha do tempo,should,yes,yes,"Ocultar faixa (some da prévia, do som e da exportação) e Trancar faixa nas ferramentas do item"
 Tela cheia na prévia,editor,should,yes,yes,esconde linha do tempo e ferramentas
-Encaixe magnético dos itens no cursor e nas bordas,editor,should,yes,no,
+Encaixe magnético dos itens no cursor e nas bordas,linha do tempo,should,yes,yes,"gruda no cursor, nas pontas dos outros itens e nas batidas"
 Mostrar tamanho estimado do arquivo e não oferecer 4K sem mídia 4K,exportar,should,yes,yes,fonte 3
-Curvas de velocidade (presets e pontos),clipe,could,yes,no,S05
+Curvas de velocidade (presets e pontos),clipe,could,yes,partial,"6 curvas prontas (montagem, herói, bala, salto, entrada e saída rápidas); sem editar pontos à mão"
 Câmera lenta suave com fluxo óptico,clipe,could,yes,no,pesado em PWA; avaliar depois
 Máscaras (linear espelho círculo retângulo coração estrela),clipe,could,yes,yes,"no vídeo principal e nas sobreposições: 6 formatos, tamanho, borda suave, girar, posição, inverter"
 Chroma key,clipe,could,yes,yes,"nas sobreposições: verde, verde vivo, azul, branco, preto; intensidade e limpeza das bordas"
-Remover fundo automático (sem tela verde),IA,could,yes,no,modelo de segmentação aberto via WebGPU
+Remover fundo automático (sem tela verde),IA,could,yes,partial,"fotos sobrepostas, com MODNet no iPhone (~25 MB uma vez); vídeo não; não testado com o modelo real"
 Estabilizar vídeo,clipe,could,yes,no,caro em processamento
-Redução de ruído de áudio,áudio,could,yes,no,
+Redução de ruído de áudio,áudio,could,yes,partial,"filtros de graves, zumbido e chiado (ao vivo e na exportação); não é um redutor espectral"
 Texto para fala,IA,could,yes,partial,"voz em português (MMS da Meta) rodando no iPhone, baixada uma vez (~40 MB); vira narração no ponto do texto; ainda não testada com a voz real"
 Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,yes,"14 efeitos próprios: tremor, pulsar, zoom lento, flash, pisca-pisca, desfoque, P&B, sépia, negativo, vinheta, luz quente, cinema, escurecer, clarear"
 Stickers (imagens e emoji),stickers,could,yes,partial,"48 emojis com animação em loop; PNG próprio entra por Sobrepor"
-Marcar batidas da música,áudio,could,yes,no,
+Marcar batidas da música,áudio,could,yes,yes,"automático (ritmo regular) ou no cursor; pontos amarelos e encaixe magnético"
 Templates próprios reutilizáveis,templates,could,no,yes,"Salvar como modelo no menu do projeto; tocar num modelo abre uma cópia"
 Backup e restauração do projeto em arquivo,projeto,could,no,yes,"um arquivo .garagem com projeto e mídias (Salvar em Arquivos/iCloud); Abrir backup na tela inicial"
 Biblioteca de músicas e efeitos sonoros,áudio,skip,yes,skip,conteúdo licenciado da CapCut

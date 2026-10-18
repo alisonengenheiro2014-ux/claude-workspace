@@ -107,6 +107,19 @@ in some Safari versions. Fonts added: Bangers, Chewy, Playfair Display,
 Montserrat 900. CapCut's own fonts and textures can't be copied; the looks
 are rebuilt with open fonts.
 
+**The rest of the list (2026-10-18):** project backup to one .garagem file
+(the media referenced, never read into memory; restore goes through the
+normal import) and templates (a project kept as a starting point); clip
+in/out animations for the main video and overlays (composed with
+keyframes); magnetic edges in the timeline (playhead, other items' edges,
+beat marks); hide and lock lanes; highlights, shadows and sharpen (an SVG
+filter with a table transfer and a 3x3 kernel in the preview, the same
+arithmetic per pixel in the export); six speed curves (time mapped through
+the curve's integral, inverted by bisection for the player clock); beat
+marks found from the tempo of the onsets; noise reduction as a filter chain
+shared by preview and export; background removal for photo overlays with
+MODNet (not tested with the real model: the model host is blocked here).
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

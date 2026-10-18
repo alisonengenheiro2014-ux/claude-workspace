@@ -9,8 +9,8 @@ import { maskUrl } from "./mask";
 import type { AssetRow, Id } from "../data/db";
 import type { TextBox } from "./text";
 import { assetFile } from "../media/import";
-import { cssFilter, lookOf } from "./look";
-import { LookWashes } from "./LookLayer";
+import { lookFilter, lookOf } from "./look";
+import { LookSvg, LookWashes } from "./LookLayer";
 import { overlayAt, overlaysAt } from "./overlay";
 import { useEditor } from "./store";
 import { findItem, sourceTimeUs } from "./timeline";
@@ -165,7 +165,7 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
         el.playbackRate = Math.min(16, c.speed);
         if (el.paused) {
           el.currentTime = target;
-          el.muted = hit.track.muted || c.volume === 0;
+          el.muted = hit.track.muted || hit.track.hidden || c.volume === 0;
           // unmuted play can be refused outside a tap: then play it silent
           el.play().catch(() => {
             el.muted = true;
@@ -236,8 +236,9 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
               ...(c.mask ? maskCss(maskUrl(c.mask, b.w / Math.max(1, b.h))) : {}),
             }}
           >
-            <Item id={c.id} asset={asset} filter={cssFilter(look)} chroma={c.chroma} register={register} />
+            <Item id={c.id} asset={asset} filter={lookFilter(look)} chroma={c.chroma} register={register} />
             <LookWashes look={look} />
+            <LookSvg look={look} />
           </div>
         );
       })}

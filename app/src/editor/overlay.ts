@@ -2,7 +2,7 @@
 // them as DOM elements (a <video> keeps HDR right) and the export draws them;
 // both place them with overlayBox, so they land in the same spot.
 import type { AssetRow, MediaClip, TimelineDoc, Transform, Us } from "../data/db";
-import { animatedAt } from "./keyframes";
+import { animatedAt, clipMotion } from "./keyframes";
 import type { TextBox } from "./text";
 
 // Width and height as shown (phone videos are often stored turned).
@@ -41,5 +41,7 @@ export function overlayAlpha(c: MediaClip, tUs: Us) {
 // Where an overlay is and how visible, at timeline time tUs (keyframes and fades).
 export function overlayAt(asset: AssetRow | undefined, c: MediaClip, W: number, H: number, tUs: Us) {
   const a = animatedAt(c, tUs - c.startUs);
-  return { box: overlayBox(asset, W, H, a.transform), alpha: overlayAlpha({ ...c, opacity: a.opacity }, tUs) };
+  const m = clipMotion(c, tUs - c.startUs);
+  const t = { x: a.transform.x + m.dx, y: a.transform.y + m.dy, scale: a.transform.scale * m.scale, rotation: a.transform.rotation + m.rot };
+  return { box: overlayBox(asset, W, H, t), alpha: overlayAlpha({ ...c, opacity: a.opacity * m.alpha }, tUs) };
 }

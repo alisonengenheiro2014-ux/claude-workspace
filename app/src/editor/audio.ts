@@ -38,6 +38,27 @@ export function scheduleEnvelope(param: AudioParam, clip: MediaClip, fromUs: Us,
   param.setValueCurveAtTime(curve, whenS, Math.max(0.001, ((n - 1) * step) / 1e6));
 }
 
+// Noise reduction (S08 Reduzir ruído): cuts rumble and wind under 90 Hz,
+// mains hum at 60 Hz and hiss above 8 kHz, leaving the voice. Not a
+// spectral denoiser, but it runs live and the export uses the same nodes.
+export function denoiseChain(ctx: BaseAudioContext): { input: AudioNode; output: AudioNode } {
+  const hp = ctx.createBiquadFilter();
+  hp.type = "highpass";
+  hp.frequency.value = 90;
+  hp.Q.value = 0.7;
+  const hum = ctx.createBiquadFilter();
+  hum.type = "peaking";
+  hum.frequency.value = 60;
+  hum.Q.value = 4;
+  hum.gain.value = -14;
+  const lp = ctx.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 8000;
+  lp.Q.value = 0.7;
+  hp.connect(hum).connect(lp);
+  return { input: hp, output: lp };
+}
+
 // Decodes a file's whole audio track into one AudioBuffer.
 export async function decodeAudio(file: File): Promise<AudioBuffer | null> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
@@ -89,6 +110,8 @@ type AudioContextCtor = typeof AudioContext;
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private videoGain: GainNode | null = null;
+  private videoDry: GainNode | null = null;
+  private videoWet: GainNode | null = null;
   private attached = new WeakSet<HTMLMediaElement>();
   private buffers = new Map<Id, Promise<AudioBuffer | null>>();
   private nodes: AudioBufferSourceNode[] = [];
@@ -127,8 +150,23 @@ class AudioEngine {
     if (this.attached.has(video)) return;
     const ctx = this.context();
     this.videoGain = ctx.createGain();
-    ctx.createMediaElementSource(video).connect(this.videoGain).connect(ctx.destination);
+    // two paths into the gain: as recorded, and through the noise reduction
+    const src = ctx.createMediaElementSource(video);
+    this.videoDry = ctx.createGain();
+    this.videoWet = ctx.createGain();
+    this.videoWet.gain.value = 0;
+    const chain = denoiseChain(ctx);
+    src.connect(this.videoDry).connect(this.videoGain);
+    src.connect(chain.input);
+    chain.output.connect(this.videoWet).connect(this.videoGain);
+    this.videoGain.connect(ctx.destination);
     this.attached.add(video);
+  }
+
+  setVideoDenoise(on: boolean) {
+    if (!this.videoDry || !this.videoWet || !this.ctx) return;
+    this.videoDry.gain.setTargetAtTime(on ? 0 : 1, this.ctx.currentTime, 0.01);
+    this.videoWet.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.01);
   }
 
   setVideoGain(g: number) {
@@ -174,7 +212,7 @@ class AudioEngine {
     const session = this.session;
     this.clock = { ctxS: ctx.currentTime, us: atUs };
     for (const track of doc.tracks) {
-      if (track.kind !== "audio" || track.muted) continue;
+      if (track.kind !== "audio" || track.muted || track.hidden) continue;
       for (const clip of track.items as MediaClip[]) {
         if (clip.type !== "media" || clip.startUs + clip.durationUs <= atUs) continue;
         const asset = assets.get(clip.assetId);
@@ -201,7 +239,12 @@ class AudioEngine {
     src.playbackRate.value = clip.speed;
     const gain = ctx.createGain();
     scheduleEnvelope(gain.gain, clip, local, whenS);
-    src.connect(gain).connect(ctx.destination);
+    if (clip.denoise) {
+      const chain = denoiseChain(ctx);
+      src.connect(chain.input);
+      chain.output.connect(gain);
+    } else src.connect(gain);
+    gain.connect(ctx.destination);
     src.start(whenS, offsetS, lengthS);
     this.nodes.push(src);
   }

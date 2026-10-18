@@ -371,3 +371,20 @@ describe("volume keyframes", () => {
     expect(validateDoc(d, assets)).toEqual([]);
   });
 });
+
+describe("speed curves", () => {
+  it("a curve sets the length from its average speed and maps time both ways", async () => {
+    const { setClip, sourceTimeUs, offsetForSource, speedAt, SPEED_CURVES } = await import("./timeline");
+    const d0 = base(); // 10 s at 1x
+    const id = mainClips(d0)[0].id;
+    const bullet = SPEED_CURVES.find((c) => c.id === "bullet")!.points; // average 0.78x
+    const d = setClip(d0, id, { speedCurve: bullet });
+    const c = mainClips(d)[0];
+    expect(Math.abs(c.durationUs - 10_000_000 / 0.78)).toBeLessThan(1000);
+    expect(sourceTimeUs(c, 0)).toBe(0);
+    expect(sourceTimeUs(c, c.durationUs)).toBe(10_000_000);
+    expect(speedAt(c, c.durationUs / 2)).toBeCloseTo(0.3);
+    expect(offsetForSource(c, sourceTimeUs(c, 4_000_000))).toBeCloseTo(4_000_000, -3);
+    expect(validateDoc(d, assets)).toEqual([]);
+  });
+});

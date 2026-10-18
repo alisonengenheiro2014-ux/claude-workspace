@@ -10,7 +10,7 @@ import type { Track } from "../data/db";
 import { PEAKS_PER_SEC } from "./audio";
 import { keyTimes } from "./keyframes";
 import { effectOf } from "./effects";
-import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, effectTracks, trim, trimItem } from "./timeline";
+import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, effectTracks, snapTargets, snapShift, sourceTimeUs, offsetForSource, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -19,7 +19,7 @@ function tilesFor(clip: MediaClip, width: number, pxPerSec: number, thumbs: Thum
   const n = Math.max(1, Math.ceil(width / TILE));
   return Array.from({ length: n }, (_, i) => {
     // a freeze frame shows its one frame all along
-    const srcS = (clip.inUs + (clip.freeze ? 0 : ((i * TILE) / pxPerSec) * 1e6 * clip.speed)) / 1e6;
+    const srcS = (clip.freeze ? clip.inUs : sourceTimeUs(clip, ((i * TILE) / pxPerSec) * 1e6)) / 1e6;
     let best = 0;
     for (let k = 1; k < thumbs.times.length; k++) {
       if (Math.abs(thumbs.times[k] - srcS) < Math.abs(thumbs.times[best] - srcS)) best = k;
@@ -191,19 +191,27 @@ export function TimelineView({
     if (!d || !base) return;
     const deltaUs = ((e.clientX - d.x) / pxPerSec) * 1e6;
     if (Math.abs(e.clientX - d.x) > 3) d.moved = true;
+    // magnetic: edges stick to the playhead, other items' edges and beat marks
+    const tol = (10 / pxPerSec) * 1e6;
+    const targets = snapTargets(base, useEditor.getState().playheadUs, d.clipId);
     if (d.overlay) {
       const item = base.tracks.flatMap((t) => t.items).find((c) => c.id === d.clipId);
       if (!item) return;
       const a = item.type === "media" ? assets.get(item.assetId) : undefined;
       const mediaUs = a && a.kind !== "image" ? a.durationUs : null;
-      setDraft(d.mode === "move" ? moveItem(base, d.clipId, item.startUs + deltaUs) : trimItem(base, d.clipId, d.mode, deltaUs, mediaUs));
+      const start = item.startUs + deltaUs;
+      const end = item.startUs + item.durationUs + deltaUs;
+      const snapped = deltaUs + snapShift(d.mode === "move" ? [start, end] : d.mode === "start" ? [start] : [end], targets, tol);
+      setDraft(d.mode === "move" ? moveItem(base, d.clipId, item.startUs + snapped) : trimItem(base, d.clipId, d.mode, snapped, mediaUs));
       return;
     }
     const clip = mainClips(base).find((c) => c.id === d.clipId);
     if (!clip) return;
     const asset = assets.get(clip.assetId);
     const mediaUs = asset?.kind === "video" ? asset.durationUs : null;
-    if (d.mode !== "move") setDraft(trim(base, d.clipId, d.mode, deltaUs, mediaUs));
+    // the end of a main clip snaps too (its start moves everything after it)
+    const snapped = d.mode === "end" ? deltaUs + snapShift([clip.startUs + clip.durationUs + deltaUs], targets, tol) : deltaUs;
+    if (d.mode !== "move") setDraft(trim(base, d.clipId, d.mode, snapped, mediaUs));
   }
   function onHandleUp() {
     const d = drag.current;
@@ -268,7 +276,7 @@ export function TimelineView({
   // One row of overlay items (text or audio): tap selects; a selected item
   // can be dragged in time and trimmed by its edges.
   const lane = (track: Track) => (
-    <div key={track.id} className="relative h-[var(--layout-track-sub)] shrink-0">
+    <div key={track.id} className={`relative h-[var(--layout-track-sub)] shrink-0 ${track.hidden ? "opacity-35" : ""}`}>
       {track.items.map((c) => {
         const sel = c.id === selectedId;
         const w = Math.max(2, px(c.durationUs));
@@ -287,18 +295,19 @@ export function TimelineView({
             key={c.id}
             className="absolute inset-y-0"
             style={{ left: px(c.startUs), width: w }}
-            onPointerDown={sel ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
-            onPointerMove={sel ? onHandleMove : undefined}
-            onPointerUp={sel ? onHandleUp : undefined}
-            onPointerCancel={sel ? onHandleUp : undefined}
+            onPointerDown={sel && !track.locked ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
+            onPointerMove={sel && !track.locked ? onHandleMove : undefined}
+            onPointerUp={sel && !track.locked ? onHandleUp : undefined}
+            onPointerCancel={sel && !track.locked ? onHandleUp : undefined}
           >
             <TimelineClip
               kind={track.kind === "audio" || track.kind === "caption" || track.kind === "overlay" || track.kind === "effect" ? track.kind : "text"}
               width={w}
-              label={label}
+              label={track.locked ? `🔒 ${label}` : label}
               selected={sel}
               missing={!!media && (missing.has(media.assetId) || !asset)}
               keyframes={keyTimes(c).map((t) => t / Math.max(1, c.durationUs))}
+              marks={media?.beats?.filter((b) => b >= media.inUs && b <= media.outUs).map((b) => offsetForSource(media, b) / Math.max(1, media.durationUs))}
               thumbs={
                 thumb
                   ? Array.from({ length: Math.min(40, Math.ceil(w / 36)) }, (_, i) => (
@@ -310,6 +319,7 @@ export function TimelineView({
               onSelect={() => !drag.current?.moved && select(sel ? null : c.id)}
             />
             {sel &&
+              !track.locked &&
               (["start", "end"] as const).map((edge) => (
                 <div
                   key={edge}

@@ -16,6 +16,9 @@ export interface Look {
   tint: number; // -1 green .. 1 magenta
   vignette: number; // 0..1
   invert?: number; // 0..1 (effects)
+  sharpen?: number; // 0..1
+  highlights?: number; // -1..1
+  shadows?: number; // -1..1
 }
 
 export const NEUTRAL: Look = { brightness: 1, contrast: 1, saturate: 1, sepia: 0, hue: 0, temp: 0, tint: 0, vignette: 0, invert: 0 };
@@ -61,6 +64,9 @@ export const ADJUSTS: { key: keyof Adjust; label: string; min: number }[] = [
   { key: "exposure", label: "Exposição", min: -50 },
   { key: "temperature", label: "Temperatura", min: -50 },
   { key: "tint", label: "Matiz", min: -50 },
+  { key: "highlights", label: "Realces", min: -50 },
+  { key: "shadows", label: "Sombras", min: -50 },
+  { key: "sharpen", label: "Nitidez", min: 0 },
   { key: "vignette", label: "Vinheta", min: 0 },
 ];
 
@@ -81,12 +87,49 @@ export function lookOf(clip: Pick<MediaClip, "filter" | "adjust">): Look {
     l.temp = Math.max(-1, Math.min(1, l.temp + a.temperature / 50));
     l.tint = Math.max(-1, Math.min(1, l.tint + a.tint / 50));
     l.vignette = Math.min(1, l.vignette + a.vignette / 100);
+    if (a.sharpen) l.sharpen = a.sharpen / 100;
+    if (a.highlights) l.highlights = a.highlights / 50;
+    if (a.shadows) l.shadows = a.shadows / 50;
   }
   return l;
 }
 
 export function isNeutral(l: Look) {
-  return (Object.keys(NEUTRAL) as (keyof Look)[]).every((k) => Math.abs((l[k] ?? 0) - (NEUTRAL[k] ?? 0)) < 1e-3);
+  return !hasDetail(l) && (Object.keys(NEUTRAL) as (keyof Look)[]).every((k) => Math.abs((l[k] ?? 0) - (NEUTRAL[k] ?? 0)) < 1e-3);
+}
+
+// ---- detail: highlights/shadows (a tone curve) and sharpen (a 3x3 kernel).
+// CSS has no such functions, so the preview uses an SVG filter with exactly
+// these numbers (feComponentTransfer table, feConvolveMatrix) and the export
+// does the same arithmetic per pixel.
+
+export const hasDetail = (l: Look) => !!(l.sharpen || l.highlights || l.shadows);
+
+// 17 points of the tone curve, 0..1
+export function toneTable(l: Look): number[] {
+  const s = l.shadows ?? 0;
+  const h = l.highlights ?? 0;
+  return Array.from({ length: 17 }, (_, i) => {
+    const x = i / 16;
+    const v = x + s * 0.35 * x * Math.pow(1 - x, 2) * 3 + h * 0.35 * Math.pow(x, 2) * (1 - x) * 3;
+    return Math.max(0, Math.min(1, v));
+  });
+}
+
+export function sharpenKernel(l: Look): number[] {
+  const a = (l.sharpen ?? 0) * 0.8;
+  return [0, -a, 0, -a, 1 + 4 * a, -a, 0, -a, 0];
+}
+
+export function detailId(l: Look) {
+  return `look-${toneTable(l).map((v) => Math.round(v * 1000)).join("-")}-${Math.round((l.sharpen ?? 0) * 100)}`;
+}
+
+// The CSS filter, with the SVG detail filter first when there is one.
+export function lookFilter(l: Look): string {
+  const css = cssFilter(l);
+  if (!hasDetail(l)) return css;
+  return `url(#${detailId(l)})${css === "none" ? "" : ` ${css}`}`;
 }
 
 export function cssFilter(l: Look): string {
@@ -185,6 +228,42 @@ export function applyMatrix(l: Look, r: number, g: number, b: number): [number, 
   return [Math.round(x * 255), Math.round(y * 255), Math.round(z * 255)];
 }
 
+// Same as the SVG filter: table transfer per channel (piecewise linear over
+// the 17 points), then the 3x3 kernel with edges repeated, alpha untouched.
+function applyDetail(ctx: Ctx, x: number, y: number, w: number, h: number, l: Look) {
+  const img = ctx.getImageData(x, y, w, h);
+  const d = img.data;
+  if (l.highlights || l.shadows) {
+    const t = toneTable(l);
+    const lut = new Uint8ClampedArray(256);
+    for (let i = 0; i < 256; i++) {
+      const p = (i / 255) * 16;
+      const k = Math.min(15, Math.floor(p));
+      lut[i] = Math.round((t[k] + (t[k + 1] - t[k]) * (p - k)) * 255);
+    }
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = lut[d[i]];
+      d[i + 1] = lut[d[i + 1]];
+      d[i + 2] = lut[d[i + 2]];
+    }
+  }
+  if (l.sharpen) {
+    const k = sharpenKernel(l);
+    const src = new Uint8ClampedArray(d);
+    const at = (xx: number, yy: number) => (Math.min(h - 1, Math.max(0, yy)) * w + Math.min(w - 1, Math.max(0, xx))) * 4;
+    for (let yy = 0; yy < h; yy++)
+      for (let xx = 0; xx < w; xx++) {
+        const o = (yy * w + xx) * 4;
+        const up = at(xx, yy - 1);
+        const dn = at(xx, yy + 1);
+        const lf = at(xx - 1, yy);
+        const rt = at(xx + 1, yy);
+        for (let c = 0; c < 3; c++) d[o + c] = k[4] * src[o + c] + k[1] * (src[up + c] + src[dn + c] + src[lf + c] + src[rt + c]);
+      }
+  }
+  ctx.putImageData(img, x, y);
+}
+
 let canvasFilter: boolean | null = null;
 function hasCanvasFilter(ctx: Ctx) {
   canvasFilter ??= typeof (ctx as { filter?: unknown }).filter === "string";
@@ -202,6 +281,7 @@ export function applyLook(ctx: Ctx, rect: Rect, l: Look) {
   const w = Math.min(ctx.canvas.width, Math.ceil(rect.x + rect.w)) - x;
   const h = Math.min(ctx.canvas.height, Math.ceil(rect.y + rect.h)) - y;
   if (w < 1 || h < 1) return;
+  if (hasDetail(l)) applyDetail(ctx, x, y, w, h, l);
   const css = cssFilter(l);
   if (css !== "none") {
     if (hasCanvasFilter(ctx)) {

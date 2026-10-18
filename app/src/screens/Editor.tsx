@@ -13,6 +13,13 @@ import {
   FlipHorizontal2,
   Gauge,
   Layers,
+  ScissorsSquare,
+  AudioWaveform,
+  Eye,
+  EyeOff,
+  Lock,
+  LockOpen,
+  Music2,
   Circle,
   Pipette,
   Speech,
@@ -73,6 +80,10 @@ import {
   toggleKeyframe,
   setKeyEasing,
   setVolumeAt,
+  setBeats,
+  setTrackFlags,
+  SPEED_CURVES,
+  sourceTimeUs,
   addEffect,
   setEffect,
 } from "../editor/timeline";
@@ -86,6 +97,10 @@ import { ProgressBar } from "../ui/Progress";
 import { reverseRange } from "../media/reverse";
 import { speak } from "../captions/tts";
 import { ChromaSheet, MaskSheet } from "./OverlaySheets";
+import { ClipAnimSheet } from "./ClipAnimSheet";
+import { detectBeats } from "../media/beats";
+import { decodeAudio } from "../editor/audio";
+import { removeBackground } from "../media/cutout";
 import { STICKERS, STICKER_STYLE } from "../editor/text";
 import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
@@ -121,8 +136,20 @@ type Panel =
   | { name: "crop"; id: Id }
   | { name: "stickers" }
   | { name: "mask" }
+  | { name: "clipAnim" }
+  | { name: "beats" }
   | { name: "chroma" }
   | { name: "effects" };
+
+// a small drawing of a speed curve (speed 0.1..4 up the side)
+function CurveIcon({ points }: { points: { t: number; speed: number }[] }) {
+  const y = (v: number) => 22 - (Math.log(v / 0.25) / Math.log(16)) * 18;
+  return (
+    <svg viewBox="0 0 32 24" aria-hidden className="h-6 w-8 stroke-text-muted" fill="none" strokeWidth="1.6">
+      <polyline points={points.map((p) => `${2 + p.t * 28},${y(p.speed).toFixed(1)}`).join(" ")} />
+    </svg>
+  );
+}
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -235,7 +262,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       const d = s.draft ?? s.doc;
       const hit = d ? clipAt(d, s.playheadUs) : null;
       const z = hit ? mainZoom(hit.clip, hit.offsetUs) : null;
-      const t = z && isZoomed(z) ? `translate(${z.dx * 100}%, ${z.dy * 100}%) scale(${z.scale})` : "";
+      const t = z && isZoomed(z) ? `translate(${z.dx * 100}%, ${z.dy * 100}%) rotate(${z.rot}deg) scale(${z.scale})` : "";
       if (el.style.transform !== t) el.style.transform = t;
       const o = z && z.opacity < 0.999 ? String(Math.max(0, z.opacity)) : "";
       if (el.style.opacity !== o) el.style.opacity = o;
@@ -573,6 +600,109 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (cur && id) s.setDraft(setItem(cur, id, patch));
   }
 
+  // S08 Batidas: marks on a music clip (found automatically or by hand); the
+  // timeline's magnetic edges stick to them
+  const [findingBeats, setFindingBeats] = useState(false);
+  async function onAutoBeats() {
+    const clip = selectedAudio;
+    const asset = clip && assets.get(clip.assetId);
+    if (!clip || !asset) return;
+    setFindingBeats(true);
+    try {
+      const file = await assetFile(asset);
+      const buf = file ? await decodeAudio(file) : null;
+      const beats = buf ? detectBeats(buf) : [];
+      const s = useEditor.getState();
+      if (!s.doc) return;
+      if (!beats.length) return toast("Não encontrei um ritmo regular nesse áudio. Marque no cursor.");
+      s.commit(setBeats(s.doc, clip.id, beats), "Batidas");
+      toast(`${beats.filter((b) => b >= clip.inUs && b <= clip.outUs).length} batidas marcadas`);
+    } finally {
+      setFindingBeats(false);
+    }
+  }
+  function onBeatHere() {
+    const s = useEditor.getState();
+    const clip = selectedAudio;
+    if (!s.doc || !clip) return;
+    const local = s.playheadUs - clip.startUs;
+    if (local < 0 || local > clip.durationUs) return toast("Ponha o cursor em cima do áudio.");
+    const src = sourceTimeUs(clip, local);
+    const near = (clip.beats ?? []).find((b) => Math.abs(b - src) < 60_000);
+    const next = near !== undefined ? (clip.beats ?? []).filter((b) => b !== near) : [...(clip.beats ?? []), src];
+    s.commit(setBeats(s.doc, clip.id, next), near !== undefined ? "Apagar batida" : "Marcar batida");
+  }
+
+  // the selected item's lane: hide it, lock it (not the main track)
+  const lane = selectedItem && selectedItem.track.kind !== "main" ? selectedItem.track : null;
+  const laneTools = lane ? (
+    <>
+      <ToolbarItem
+        icon={lane.hidden ? <Eye /> : <EyeOff />}
+        label={lane.hidden ? "Mostrar faixa" : "Ocultar faixa"}
+        onClick={() => {
+          const s = useEditor.getState();
+          if (s.doc) s.commit(setTrackFlags(s.doc, lane.id, { hidden: !lane.hidden }), lane.hidden ? "Mostrar faixa" : "Ocultar faixa");
+        }}
+      />
+      <ToolbarItem
+        icon={lane.locked ? <LockOpen /> : <Lock />}
+        label={lane.locked ? "Destrancar" : "Trancar faixa"}
+        onClick={() => {
+          const s = useEditor.getState();
+          if (s.doc) s.commit(setTrackFlags(s.doc, lane.id, { locked: !lane.locked }), lane.locked ? "Destrancar faixa" : "Trancar faixa");
+        }}
+      />
+    </>
+  ) : null;
+
+  // S12 Remover fundo: a photo overlay with its background cut out (a model
+  // running on the phone); the new PNG replaces the photo, same place and size
+  async function onCutout(clip: MediaClip) {
+    stop();
+    const asset = assets.get(clip.assetId);
+    const file = asset && (await assetFile(asset));
+    if (!asset || !file) return;
+    const abort = new AbortController();
+    setBusy({ label: "Removendo o fundo", fraction: 0, abort });
+    try {
+      const png = await removeBackground(
+        file,
+        asset.name,
+        (e) =>
+          setBusy((b) =>
+            !b
+              ? b
+              : e.stage === "download"
+                ? { ...b, label: `Baixando o recorte (uma vez) · ${Math.round(e.loaded / 1e6)} de ${Math.round(e.total / 1e6)} MB`, fraction: e.total ? e.loaded / e.total : 0 }
+                : { ...b, label: e.stage === "loading" ? "Preparando o recorte" : "Removendo o fundo", fraction: e.stage === "working" ? 0.5 : 0 },
+          ),
+        abort.signal,
+      );
+      const [made] = await runImport(projectId, [png], setImporting, toast);
+      if (!made) return;
+      await useEditor.getState().addAssets([made]);
+      const s = useEditor.getState();
+      if (s.doc) s.commit(setItem(s.doc, clip.id, { assetId: made.id }), "Remover fundo");
+      toast("Fundo removido");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") toast("Cancelado");
+      else {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(/fetch|network|404/i.test(msg) ? "Não foi possível baixar o recorte. Na primeira vez precisa de internet (cerca de 25 MB)." : `Não foi possível remover o fundo: ${msg}`, "error");
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  function toggleDenoise(clip: MediaClip) {
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    s.commit(setItem(s.doc, clip.id, { denoise: !clip.denoise }), clip.denoise ? "Desligar redução de ruído" : "Reduzir ruído");
+    toast(clip.denoise ? "Redução de ruído desligada" : "Ruído reduzido (graves, zumbido e chiado)");
+  }
+
   // S13 Efeitos: add at the playhead, or swap the selected one
   function onEffect(id: string) {
     const s = useEditor.getState();
@@ -625,7 +755,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   function setSpeed(v: number) {
     if (!selected) return;
     const speed = Math.min(100, Math.max(0.1, v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10));
-    ed.setDraft(setClip(useEditor.getState().doc!, selected.id, { speed }));
+    const s = useEditor.getState();
+    ed.setDraft(setClip(s.draft ?? s.doc!, selected.id, { speed, speedCurve: null })); // a fixed speed replaces a curve
   }
 
   function moveSelected(step: -1 | 1) {
@@ -867,6 +998,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Type />} label="Editar" onClick={() => openCaptions("edit")} />
               <ToolbarItem icon={<Palette />} label="Estilo" onClick={() => openCaptions("style")} />
               <ToolbarItem icon={<Captions />} label="Gerar de novo" onClick={() => openCaptions("generate")} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
           ) : selectedEffect ? (
@@ -880,6 +1012,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             >
               <ToolbarItem icon={<Sparkles />} label="Trocar" onClick={() => (stop(), setPanel({ name: "effects" }))} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
           ) : selectedOverlay ? (
@@ -894,12 +1027,17 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
               <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => setPanel({ name: "opacity" })} />
               <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
+              <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />
+              {assets.get(selectedOverlay.assetId)?.kind === "image" && (
+                <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" onClick={() => void onCutout(selectedOverlay)} />
+              )}
               <ToolbarItem icon={<Pipette />} label="Chroma key" onClick={() => (stop(), setPanel({ name: "chroma" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
               <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
           ) : selectedAudio ? (
@@ -914,7 +1052,10 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />
               <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
+              <ToolbarItem icon={<Music2 />} label="Batidas" onClick={() => (stop(), setPanel({ name: "beats" }))} />
+              <ToolbarItem icon={<AudioWaveform />} label={selectedAudio.denoise ? "Ruído: reduzido" : "Reduzir ruído"} onClick={() => toggleDenoise(selectedAudio)} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
           ) : selectedText ? (
@@ -931,6 +1072,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => editText(selectedText.id, "anim")} />
               <ToolbarItem icon={<Speech />} label="Texto para fala" onClick={() => void onSpeak()} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
           ) : clipTools ? (
@@ -958,13 +1100,21 @@ export function Editor({ projectId }: { projectId: Id }) {
               />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
+              <ToolbarItem
+                icon={<AudioWaveform />}
+                label={selected?.denoise ? "Ruído: reduzido" : "Reduzir ruído"}
+                disabled={!assets.get(selected!.assetId)?.hasAudio}
+                onClick={() => toggleDenoise(selected!)}
+              />
               <ToolbarItem icon={<Split />} label="Extrair som" disabled={!targetAsset?.hasAudio} onClick={onExtract} />
               <ToolbarItem icon={<ArrowLeft />} label="Mover ←" disabled={mainIndex <= 0} onClick={() => moveSelected(-1)} />
               <ToolbarItem icon={<ArrowRight />} label="Mover →" disabled={mainIndex < 0 || mainIndex >= mainCount - 1} onClick={() => moveSelected(1)} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
               <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
+              <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />
               <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selected!.id }))} />
               <ToolbarItem
                 icon={<FlipHorizontal2 />}
@@ -1098,7 +1248,22 @@ export function Editor({ projectId }: { projectId: Id }) {
             </div>
           </div>
         )}
-        <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
+        {selected && (
+          <div className="mt-5 flex flex-col gap-2">
+            <span className="text-xs text-text-muted">Curva (a velocidade muda ao longo do clipe)</span>
+            <OptionGrid
+              label="Curva de velocidade"
+              value={SPEED_CURVES.find((c) => JSON.stringify(c.points) === JSON.stringify(selected.speedCurve))?.id ?? null}
+              onChange={(id) => {
+                const c = SPEED_CURVES.find((x) => x.id === id);
+                const s = useEditor.getState();
+                ed.setDraft(setClip(s.draft ?? s.doc!, selected.id, { speedCurve: c ? c.points : null }));
+              }}
+              options={SPEED_CURVES.map((c) => ({ id: c.id, label: c.label, preview: <CurveIcon points={c.points} /> }))}
+            />
+          </div>
+        )}
+        <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida. Com uma curva, a velocidade fixa fica sem efeito.</p>
       </Sheet>
 
       <Sheet open={panel?.name === "stickers"} onOpenChange={(o) => !o && setPanel(null)} title="Stickers">
@@ -1123,6 +1288,32 @@ export function Editor({ projectId }: { projectId: Id }) {
         <p className="mt-3 text-xs text-text-muted">O efeito entra no cursor por 3 s; puxe as pontas dele na linha do tempo para mudar a duração.</p>
       </Sheet>
 
+      <Sheet open={panel?.name === "beats"} onOpenChange={(o) => !o && setPanel(null)} title="Batidas">
+        {selectedAudio && (
+          <div className="flex flex-col gap-3">
+            <p className="text-sm">
+              {(selectedAudio.beats?.length ?? 0) > 0 ? `${selectedAudio.beats!.length} batidas marcadas` : "Nenhuma batida marcada"}
+            </p>
+            <Button variant="primary" loading={findingBeats} onClick={() => void onAutoBeats()}>
+              Marcar automaticamente
+            </Button>
+            <Button onClick={onBeatHere}>Marcar / apagar no cursor</Button>
+            <Button variant="ghost" disabled={!selectedAudio.beats?.length} onClick={() => {
+              const s = useEditor.getState();
+              if (s.doc) s.commit(setBeats(s.doc, selectedAudio.id, []), "Limpar batidas");
+            }}>
+              Apagar todas
+            </Button>
+            <p className="text-xs text-text-muted">As marcas aparecem como pontos amarelos na música; textos, fotos e cortes grudam nelas quando você arrasta.</p>
+          </div>
+        )}
+      </Sheet>
+
+      <ClipAnimSheet
+        clip={panel?.name === "clipAnim" ? (selectedOverlay ?? selected ?? null) : null}
+        onChange={changeMasked}
+        onClose={() => closeEditing("Animação")}
+      />
       <MaskSheet clip={panel?.name === "mask" ? (selectedOverlay ?? selected ?? null) : null} onChange={changeMasked} onClose={() => closeEditing("Máscara")} />
       <ChromaSheet clip={panel?.name === "chroma" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Chroma key")} />
 

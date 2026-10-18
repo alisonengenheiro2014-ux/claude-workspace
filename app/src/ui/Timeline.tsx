@@ -22,6 +22,7 @@ export function TimelineClip({
   selected,
   missing,
   keyframes = [],
+  marks = [],
   thumbs,
   waveform,
   onSelect,
@@ -32,6 +33,7 @@ export function TimelineClip({
   selected?: boolean;
   missing?: boolean;
   keyframes?: number[];
+  marks?: number[]; // beat marks, 0..1 inside the clip
   thumbs?: ReactNode;
   waveform?: number[];
   onSelect?: () => void;
@@ -69,6 +71,9 @@ export function TimelineClip({
           <AlertTriangle aria-hidden className="size-3.5" /> Mídia ausente
         </span>
       )}
+      {marks.map((k, i) => (
+        <span key={`m${i}`} aria-hidden className="absolute bottom-0.5 size-1.5 -translate-x-1/2 rounded-pill bg-warning" style={{ left: `${k * 100}%` }} />
+      ))}
       {keyframes.map((k, i) => (
         <span
           key={i}

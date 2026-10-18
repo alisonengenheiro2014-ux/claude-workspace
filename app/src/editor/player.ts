@@ -11,7 +11,7 @@ import { assetFile } from "../media/import";
 import { useEditor } from "./store";
 import { audio } from "./audio";
 import { ALL_FORMATS, BlobSource, CanvasSink, Input } from "mediabunny";
-import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs, transitionAt } from "./timeline";
+import { durationOf, frameSize, gainAt, mainClips, mainTrack, offsetForSource, sourceTimeUs, speedAt, transitionAt } from "./timeline";
 import { fxOf, layerCss, type LayerFx } from "./transitions";
 import { frameBgOf, drawFrame, plainShape, shapedCss, shapedDraw, shapeOf } from "./frame";
 import { displaySize } from "./overlay";
@@ -395,7 +395,7 @@ export class Player {
       this.layoutVideo(clip, asset);
       this.show("video");
       // browsers cap playback rate (16x); the export uses the real speed
-      this.video.playbackRate = Math.min(16, Math.max(0.1, clip.speed));
+      this.video.playbackRate = Math.min(16, Math.max(0.1, speedAt(clip, offsetUs)));
       // volume and fades are a GainNode now; muted only while recording a
       // voice-over, which also lets iOS start it without a tap
       this.video.muted = this.monitorMuted;
@@ -431,13 +431,19 @@ export class Player {
       done = t >= clip.startUs + clip.durationUs;
     } else {
       const srcUs = this.video.currentTime * 1e6;
-      t = clip.startUs + (srcUs - clip.inUs) / clip.speed;
+      t = clip.startUs + offsetForSource(clip, srcUs);
+      if (clip.speedCurve?.length) {
+        // a speed curve: follow it (only when it changes enough, to spare iOS)
+        const want = Math.min(16, Math.max(0.1, speedAt(clip, t - clip.startUs)));
+        if (Math.abs(want - this.video.playbackRate) / this.video.playbackRate > 0.04) this.video.playbackRate = want;
+      }
       done = srcUs >= clip.outUs - 1000 || this.video.ended;
     }
 
     // clip volume, fades and the main track's mute, applied to the video sound
     const muted = mainTrack(s.doc).muted;
     audio.setVideoGain(muted || this.monitorMuted ? 0 : gainAt(clip, Math.max(0, t - clip.startUs)));
+    audio.setVideoDenoise(clip.denoise);
 
     // keep the audio lanes in step with the video: restart them if they drift
     const now = performance.now();

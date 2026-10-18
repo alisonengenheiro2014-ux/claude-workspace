@@ -40,6 +40,6 @@ describe("keyframes", () => {
     c.keyframes = withKeyAt(c, 3_000_000, { transform: { ...c.transform, scale: 2 }, opacity: 1 });
     const right = { ...c, keyframes: shiftKeys(c.keyframes, 2_000_000) };
     expect(animatedAt(right, 500_000).transform.scale).toBeCloseTo(animatedAt(c, 2_500_000).transform.scale);
-    expect(mainZoom(right, 1_000_000)).toEqual({ scale: 2, dx: 0, dy: 0, opacity: 1 });
+    expect(mainZoom(right, 1_000_000)).toEqual({ scale: 2, dx: 0, dy: 0, rot: 0, opacity: 1 });
   });
 });

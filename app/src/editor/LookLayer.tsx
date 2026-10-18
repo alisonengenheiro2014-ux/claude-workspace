@@ -4,11 +4,31 @@
 // OverlayMedia. Same look as the export (see look.ts).
 import { useEffect, useState, type RefObject } from "react";
 import { containRect, shapedSize, shapeOf } from "./frame";
-import { cssFilter, lookOf, NEUTRAL, vignetteCss, washes, type Look } from "./look";
+import { detailId, hasDetail, lookFilter, lookOf, NEUTRAL, sharpenKernel, toneTable, vignetteCss, washes, type Look } from "./look";
 import { maskUrl } from "./mask";
 import { displaySize } from "./overlay";
 import { useEditor } from "./store";
 import { clipAt } from "./timeline";
+
+// The SVG filter for highlights, shadows and sharpen (see look.ts).
+export function LookSvg({ look }: { look: Look }) {
+  if (!hasDetail(look)) return null;
+  const table = toneTable(look).map((v) => v.toFixed(4)).join(" ");
+  return (
+    <svg aria-hidden width="0" height="0" style={{ position: "absolute" }}>
+      <defs>
+        <filter id={detailId(look)} colorInterpolationFilters="sRGB" x="0" y="0" width="100%" height="100%">
+          <feComponentTransfer>
+            <feFuncR type="table" tableValues={table} />
+            <feFuncG type="table" tableValues={table} />
+            <feFuncB type="table" tableValues={table} />
+          </feComponentTransfer>
+          {look.sharpen ? <feConvolveMatrix order="3" kernelMatrix={sharpenKernel(look).join(" ")} divisor="1" edgeMode="duplicate" preserveAlpha="true" /> : null}
+        </filter>
+      </defs>
+    </svg>
+  );
+}
 
 export function LookWashes({ look }: { look: Look }) {
   return (
@@ -40,7 +60,7 @@ export function LookLayer({
       const doc = s.draft ?? s.doc;
       const hit = doc ? clipAt(doc, s.playheadUs) : null;
       const look = hit ? lookOf(hit.clip) : NEUTRAL;
-      const css = cssFilter(look);
+      const css = lookFilter(look);
       const f = css === "none" ? "" : css;
       if (video.current && video.current.style.filter !== f) video.current.style.filter = f;
       if (image.current && image.current.style.filter !== f) image.current.style.filter = f;
@@ -70,11 +90,16 @@ export function LookLayer({
     update();
     return useEditor.subscribe(update);
   }, [video, image, width, height]);
-  if (!shown || (!washes(shown.look).length && !shown.look.vignette)) return null;
+  if (!shown) return null;
   const { rect } = shown;
   return (
-    <div aria-hidden className="pointer-events-none absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
-      <LookWashes look={shown.look} />
-    </div>
+    <>
+      <LookSvg look={shown.look} />
+      {(washes(shown.look).length > 0 || shown.look.vignette > 0) && (
+        <div aria-hidden className="pointer-events-none absolute" style={{ left: rect.x, top: rect.y, width: rect.w, height: rect.h }}>
+          <LookWashes look={shown.look} />
+        </div>
+      )}
+    </>
   );
 }

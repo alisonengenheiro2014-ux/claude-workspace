@@ -62,7 +62,69 @@ export function newMediaClip(asset: AssetRow): MediaClip {
 }
 
 export function clipDuration(c: MediaClip): Us {
-  return Math.round((c.outUs - c.inUs) / c.speed);
+  return Math.round((c.outUs - c.inUs) / effectiveSpeed(c));
+}
+
+// ---- speed curves (S05 Curva): speed changes along the clip. Points are
+// (t: 0..1 of the clip's timeline length, speed), straight lines between.
+
+export type SpeedCurve = NonNullable<MediaClip["speedCurve"]>;
+
+export const SPEED_CURVES: { id: string; label: string; points: SpeedCurve }[] = [
+  { id: "montage", label: "Montagem", points: [{ t: 0, speed: 1 }, { t: 0.2, speed: 3 }, { t: 0.4, speed: 0.5 }, { t: 0.6, speed: 3 }, { t: 0.8, speed: 0.5 }, { t: 1, speed: 1.5 }] },
+  { id: "hero", label: "Herói", points: [{ t: 0, speed: 2 }, { t: 0.35, speed: 2 }, { t: 0.45, speed: 0.4 }, { t: 0.6, speed: 0.4 }, { t: 0.7, speed: 2 }, { t: 1, speed: 2 }] },
+  { id: "bullet", label: "Bala", points: [{ t: 0, speed: 1.5 }, { t: 0.4, speed: 0.3 }, { t: 0.6, speed: 0.3 }, { t: 1, speed: 1.5 }] },
+  { id: "jump", label: "Salto", points: [{ t: 0, speed: 0.6 }, { t: 0.35, speed: 0.6 }, { t: 0.45, speed: 4 }, { t: 0.55, speed: 4 }, { t: 0.65, speed: 0.6 }, { t: 1, speed: 0.6 }] },
+  { id: "flash-in", label: "Entrada rápida", points: [{ t: 0, speed: 4 }, { t: 0.3, speed: 1 }, { t: 1, speed: 1 }] },
+  { id: "flash-out", label: "Saída rápida", points: [{ t: 0, speed: 1 }, { t: 0.7, speed: 1 }, { t: 1, speed: 4 }] },
+];
+
+export function speedAtP(curve: SpeedCurve, p: number) {
+  if (p <= curve[0].t) return curve[0].speed;
+  for (let i = 1; i < curve.length; i++) {
+    const a = curve[i - 1];
+    const b = curve[i];
+    if (p <= b.t) return a.speed + ((b.speed - a.speed) * (p - a.t)) / Math.max(1e-9, b.t - a.t);
+  }
+  return curve[curve.length - 1].speed;
+}
+
+// ∫ speed dp from 0 to p (exact for straight segments)
+function curveIntegral(curve: SpeedCurve, p: number) {
+  let sum = 0;
+  for (let i = 1; i < curve.length; i++) {
+    const a = curve[i - 1];
+    const b = curve[i];
+    if (p <= a.t) break;
+    const end = Math.min(p, b.t);
+    sum += ((a.speed + speedAtP(curve, end)) / 2) * (end - a.t);
+  }
+  return sum;
+}
+
+// Source time per timeline time, on average.
+export function effectiveSpeed(c: MediaClip) {
+  return c.speedCurve?.length ? Math.max(0.05, curveIntegral(c.speedCurve, 1)) : c.speed;
+}
+
+// The speed at a moment of the clip (offset from its start).
+export function speedAt(c: MediaClip, offsetUs: Us) {
+  if (!c.speedCurve?.length) return c.speed;
+  return speedAtP(c.speedCurve, Math.max(0, Math.min(1, offsetUs / Math.max(1, clipDuration(c)))));
+}
+
+// Where on the clip (offset from its start) a source time plays.
+export function offsetForSource(c: MediaClip, srcUs: Us): Us {
+  if (!c.speedCurve?.length) return (srcUs - c.inUs) / c.speed;
+  const D = clipDuration(c);
+  let lo = 0;
+  let hi = D;
+  for (let i = 0; i < 32; i++) {
+    const mid = (lo + hi) / 2;
+    if (sourceTimeUs(c, mid) < srcUs) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
 }
 
 // The main track is magnetic: clips sit end to end from zero.
@@ -114,6 +176,11 @@ export function clipAt(doc: TimelineDoc, atUs: Us): { clip: MediaClip; offsetUs:
 
 // Where in the source media a timeline position lands.
 export function sourceTimeUs(clip: MediaClip, offsetUs: Us): Us {
+  if (clip.speedCurve?.length) {
+    const D = clipDuration(clip);
+    const p = Math.max(0, Math.min(1, offsetUs / Math.max(1, D)));
+    return Math.min(clip.outUs, clip.inUs + Math.round(D * curveIntegral(clip.speedCurve, p)));
+  }
   return Math.min(clip.outUs, clip.inUs + Math.round(offsetUs * clip.speed));
 }
 
@@ -168,8 +235,8 @@ export function trim(doc: TimelineDoc, clipId: Id, edge: "start" | "end", deltaU
   return edit(doc, (d) => {
     const c = mainTrack(d).items.find((x) => x.id === clipId) as MediaClip | undefined;
     if (!c) return;
-    const delta = Math.round(deltaUs * c.speed);
-    const min = Math.round(MIN_CLIP_US * c.speed);
+    const delta = Math.round(deltaUs * effectiveSpeed(c));
+    const min = Math.round(MIN_CLIP_US * effectiveSpeed(c));
     if (c.freeze) {
       // only its length changes, never the frame it shows
       c.outUs = Math.max(c.inUs + min, c.outUs + (edge === "start" ? -delta : delta));
@@ -462,6 +529,45 @@ export function splitItem(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDo
   return { doc: next, rightId };
 }
 
+// ---------- snapping and beats ----------
+
+// Timeline times worth snapping to: 0, the end, the playhead, every item's
+// start and end and every beat mark (except the item being moved).
+export function snapTargets(doc: TimelineDoc, playheadUs: Us, skipId?: Id): Us[] {
+  const out = [0, durationOf(doc), playheadUs];
+  for (const t of doc.tracks)
+    for (const c of t.items) {
+      if (c.id === skipId) continue;
+      out.push(c.startUs, c.startUs + c.durationUs);
+      if (c.type === "media" && c.beats)
+        for (const b of c.beats) if (b >= c.inUs && b <= c.outUs) out.push(c.startUs + Math.round(offsetForSource(c, b)));
+    }
+  return out;
+}
+
+// The nearest target to any of the edges, within tolUs: how far to shift.
+export function snapShift(edges: Us[], targets: Us[], tolUs: Us): Us {
+  let best = 0;
+  let bestD = tolUs + 1;
+  for (const e of edges)
+    for (const t of targets) {
+      const d = Math.abs(t - e);
+      if (d < bestD) {
+        bestD = d;
+        best = t - e;
+      }
+    }
+  return bestD <= tolUs ? best : 0;
+}
+
+// Beats of a music clip, as source times. "auto" finds them in its peaks.
+export function setBeats(doc: TimelineDoc, id: Id, beats: Us[]): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (hit?.clip.type === "media") hit.clip.beats = [...new Set(beats.map(Math.round))].sort((a, b) => a - b);
+  });
+}
+
 // ---------- effects ----------
 
 // An effect at the playhead, 3 s long (or what is left of the video).
@@ -548,6 +654,15 @@ export function setItem(doc: TimelineDoc, id: Id, patch: Partial<MediaClip>): Ti
     if (!hit) return;
     const i = hit.track.items.indexOf(hit.clip);
     hit.track.items[i] = { ...hit.clip, ...patch } as Clip;
+  });
+}
+
+// Hide a lane (not shown, not heard, not exported) or lock it (its items
+// can't be moved or trimmed).
+export function setTrackFlags(doc: TimelineDoc, trackId: Id, flags: Partial<Pick<Track, "hidden" | "locked">>): TimelineDoc {
+  return edit(doc, (d) => {
+    const t = d.tracks.find((x) => x.id === trackId);
+    if (t) Object.assign(t, flags);
   });
 }
 

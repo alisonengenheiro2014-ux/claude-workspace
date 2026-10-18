@@ -30,8 +30,8 @@ import { applyEffects, effectsAt } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
-import { scheduleEnvelope } from "../editor/audio";
-import { durationOf, frameSize, mainClips, sourceTimeUs, transitionAt, transitionWindows } from "../editor/timeline";
+import { denoiseChain, scheduleEnvelope } from "../editor/audio";
+import { durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
@@ -120,7 +120,7 @@ export async function mixAudio(
   let any = false;
   const include = opts.include ?? ((kind: string) => kind === "main" || kind === "audio" || kind === "overlay");
   const sounding = doc.tracks
-    .filter((t) => (t.kind === "main" || t.kind === "audio" || t.kind === "overlay") && (opts.include ? true : !t.muted))
+    .filter((t) => (t.kind === "main" || t.kind === "audio" || t.kind === "overlay") && (opts.include ? true : !t.muted && !t.hidden))
     .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media").map((c) => ({ clip: c, kind: t.kind })));
   for (const { clip, kind } of sounding) {
     const asset = assets.get(clip.assetId);
@@ -132,6 +132,13 @@ export async function mixAudio(
     if (opts.flat) gain.gain.value = 1;
     else scheduleEnvelope(gain.gain, clip, 0, clip.startUs / 1e6);
     gain.connect(ctx.destination);
+    // noise reduction: the same filters as the preview, in front of the gain
+    let into: AudioNode = gain;
+    if (clip.denoise && !opts.flat) {
+      const chain = denoiseChain(ctx);
+      chain.output.connect(gain);
+      into = chain.input;
+    }
     const sink = new AudioBufferSink(track);
     const inS = clip.inUs / 1e6;
     const outS = clip.outUs / 1e6;
@@ -139,10 +146,12 @@ export async function mixAudio(
       if (signal.aborted) throw new ExportCancelled();
       const node = ctx.createBufferSource();
       node.buffer = buffer;
-      node.playbackRate.value = clip.speed;
-      node.connect(gain);
       const skip = Math.max(0, inS - timestamp); // part of the buffer before the clip's in point
-      const at = clip.startUs / 1e6 + (timestamp + skip - inS) / clip.speed;
+      // with a speed curve each short buffer plays at the speed of its moment
+      const offset = offsetForSource(clip, (timestamp + skip) * 1e6);
+      node.playbackRate.value = speedAt(clip, offset);
+      node.connect(into);
+      const at = (clip.startUs + offset) / 1e6;
       const play = Math.min(buffer.duration - skip, outS - (timestamp + skip));
       if (play > 0 && at < totalUs / 1e6) node.start(at, skip, play);
       any = true;
@@ -197,6 +206,7 @@ export async function exportTimeline(
       c.save();
       c.globalAlpha *= Math.max(0, z.opacity);
       c.translate(cx, cy);
+      c.rotate((z.rot * Math.PI) / 180);
       c.scale(z.scale, z.scale);
       c.translate(-W / 2, -H / 2);
       const r = draw(c);
@@ -478,7 +488,7 @@ export async function exportTimeline(
           try {
             next = await pull();
             for (let f = first; f < last; f++) {
-              const srcS = Math.min(outS - 1e-4, inS + (f - first) * frameS * clip.speed);
+              const srcS = Math.min(outS - 1e-4, sourceTimeUs(clip, (f / opts.fps) * 1e6 - clip.startUs) / 1e6);
               while (next && next.timestamp <= srcS + 1e-6) {
                 current?.close();
                 current = next;

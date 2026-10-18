@@ -264,7 +264,8 @@ export interface MediaClip extends ClipBase {
   adjust: Adjust | null;
   freeze: boolean; // a freeze frame is a media clip of one source frame (inUs); outUs - inUs is its length
   flip?: boolean; // mirrored left-right (after the crop)
-  reverseOf?: { assetId: Id; inUs: Us; outUs: Us } | null; // reverse: the media it was made from (to undo it)
+  reverseOf?: { assetId: Id; inUs: Us; outUs: Us } | null;
+  beats?: Us[]; // music: beat marks, in source time // reverse: the media it was made from (to undo it)
   stabilize: 0 | 1 | 2 | 3; // off, low, medium, high
   denoise: boolean;
 }

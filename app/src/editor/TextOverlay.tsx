@@ -135,7 +135,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     // corner handle of the selected text
     const selBox = s.selectedId ? boxes.current.get(s.selectedId) : undefined;
     const t = s.selectedId ? textOf(s.selectedId) : null;
-    if (selBox && t) {
+    if (selBox && t && !(s.doc && findItem(s.doc, t.id)?.track.locked)) {
       const h = handlePos(selBox);
       if (Math.hypot(p.x - h.x, p.y - h.y) <= HANDLE * dpr * 1.6) {
         gesture.current = {
@@ -162,6 +162,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
       }
       lastTap.current = { id, at: now };
       s.select(id);
+      if (s.doc && findItem(s.doc, id)?.track.locked) return; // locked lane: select only
       const tt = textOf(id)!;
       gesture.current = { kind: "move", id, x0: p.x / W, y0: p.y / H, t0: nowTransform(tt) };
       return;
