@@ -38,6 +38,16 @@ picker (it converts HDR/HEVC to a compatible format before handing the file
 over) is outside the app: choosing "Atual" in the picker's options, if
 present, or picking from the Files app avoids it.
 
+**Import test on the iPhone (2026-10-18, screen recording):** three
+file-input variants (`video/*`, exact `.mov/.mp4` types, no `accept`, then
+"Fototeca" from the menu) all got the same result: the iOS photo picker
+converted the HEVC recording to H.264 (171 MB for 1:38 4K) in about 70 s
+before handing it over. A fast first run (6 s, 167 MB) was iOS reusing the
+conversion from the day before. The app's own part took 0.0–0.3 s every time.
+Conclusion: a web app cannot skip this conversion from the photo library; the
+Files app ("Escolher Arquivos") is the remaining route, and a native wrapper
+is the only full fix. The test buttons were removed.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

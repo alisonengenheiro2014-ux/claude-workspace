@@ -33,15 +33,7 @@ function formatBytes(n: number) {
   return `${(n / 1e9).toFixed(1)} GB`;
 }
 
-const IMPORT_TESTS: { label: string; accept: string | null }[] = [
-  { label: "Teste A · padrão (video/*)", accept: "video/*,image/*" },
-  { label: "Teste B · tipos exatos (.mov, .mp4)", accept: "video/quicktime,video/mp4,.mov,.mp4" },
-  { label: "Teste C · sem filtro", accept: null },
-];
-
 export function Home() {
-  const testPickers = useRef<(HTMLInputElement | null)[]>([]);
-  const testLabel = useRef<string | null>(null);
   const toast = useToast();
   const picker = useRef<HTMLInputElement>(null);
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
@@ -86,8 +78,7 @@ export function Home() {
     }
     const loaded = await loadProject(project.id);
     if (loaded) await saveDoc(project.id, insertMedia(loaded.doc, assets, 0).doc);
-    markImport(project.id, startedAt, testLabel.current);
-    testLabel.current = null;
+    markImport(project.id, startedAt);
     navigate(`/p/${project.id}`);
   }
 
@@ -131,31 +122,6 @@ export function Home() {
           Novo projeto
         </Button>
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
-        {/* TEMPORARY experiment: which file-input "accept" makes iOS hand over
-            the original video instead of converting it. Remove once known. */}
-        <details className="mt-3 rounded-md border border-border px-3 py-2">
-          <summary className="cursor-pointer text-xs text-text-muted">Teste: formas de importar (temporário)</summary>
-          <div className="mt-2 flex flex-col gap-2">
-            {IMPORT_TESTS.map((t, i) => (
-              <Button key={t.label} size="sm" className="justify-start" onClick={() => testPickers.current[i]?.click()}>
-                {t.label}
-              </Button>
-            ))}
-            {IMPORT_TESTS.map((t, i) => (
-              <FilePicker
-                key={t.label}
-                accept={t.accept}
-                ref={(el) => {
-                  testPickers.current[i] = el;
-                }}
-                onFiles={(f) => {
-                  testLabel.current = t.label.slice(0, 7);
-                  void onFiles(f);
-                }}
-              />
-            ))}
-          </div>
-        </details>
         <p className="mt-2 text-xs text-text-muted">
           Dica: pela Fototeca, o iPhone converte o vídeo antes de entregar (demora e perde qualidade). Para abrir na hora, salve o
           vídeo em Arquivos e escolha <span className="text-text">Escolher Arquivo</span>.
