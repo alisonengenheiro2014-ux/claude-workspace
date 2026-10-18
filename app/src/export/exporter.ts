@@ -33,7 +33,7 @@ import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
 import { scheduleEnvelope, soundChain } from "../editor/audio";
-import { durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionAt, transitionWindows } from "../editor/timeline";
+import { clipAt, durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
@@ -437,6 +437,42 @@ export async function exportTimeline(
       }
     };
 
+    // Capa: the first output frame shows the cover (a moment of the edit,
+    // whole, with layers and text; or a photo) instead of the start
+    let coverPic: OffscreenCanvas | null = null;
+    const cover = doc.cover;
+    if (cover?.type === "image") {
+      const a = assets.get(cover.assetId);
+      const file = a && (await assetFile(a));
+      if (file) {
+        const img = await createImageBitmap(file);
+        coverPic = new OffscreenCanvas(width, height);
+        drawFrame(coverPic.getContext("2d")!, fbg, shapedDraw(img, img.width, img.height, { crop: null, rotation: 0, flip: false }));
+        img.close();
+      }
+    } else if (cover?.type === "frame") {
+      const at = Math.min(cover.atUs, Math.max(0, totalUs - 1));
+      const hit = clipAt(doc, at);
+      if (hit) {
+        try {
+          const still = await makeStill(hit.clip, hit.clip.freeze ? hit.clip.inUs : sourceTimeUs(hit.clip, hit.offsetUs), hit.offsetUs);
+          ctx.drawImage(still, 0, 0);
+        } catch (err) {
+          const a = assets.get(hit.clip.assetId);
+          throw a ? readError(a, err) : err;
+        }
+        await drawOverlays(at);
+        const fx = effectsAt(doc, at);
+        if (fx) applyEffects(ctx, fx, bg);
+        for (const t of textsAt(doc.tracks, at)) drawText(ctx, t, width, height, at - t.startUs);
+        coverPic = new OffscreenCanvas(width, height);
+        coverPic.getContext("2d")!.drawImage(canvas, 0, 0);
+        // the layers' videos were read ahead to the cover: start them over
+        for (const r of readers.values()) await closeReader(r);
+        readers.clear();
+      }
+    }
+
     try {
       for (const clip of clips) {
         const asset = assets.get(clip.assetId);
@@ -469,6 +505,7 @@ export async function exportTimeline(
           const fx = effectsAt(doc, tUs);
           if (fx) applyEffects(ctx, fx, bg);
           for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
+          if (frame === 0 && coverPic) ctx.drawImage(coverPic, 0, 0);
           await videoSource.add(frame * frameS, frameS);
           frame++;
           if (frame % 10 === 0) onProgress(frame / totalFrames, "video");

@@ -2,8 +2,8 @@
 // tracks scroll under it: scrollLeft / pxPerSec is the playhead time.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Plus } from "lucide-react";
-import type { Id, MediaClip } from "../data/db";
+import { PenLine, Plus, Volume2, VolumeX } from "lucide-react";
+import type { Id, MediaClip, TimelineDoc } from "../data/db";
 import { AddClipButton, Playhead, TimelineClip, TransitionMarker } from "../ui/Timeline";
 import { formatTime } from "../ui/Transport";
 import { useEditor, type Thumbs } from "./store";
@@ -11,7 +11,7 @@ import type { Track } from "../data/db";
 import { PEAKS_PER_SEC } from "./audio";
 import { keyTimes } from "./keyframes";
 import { effectOf } from "./effects";
-import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, effectTracks, snapTargets, snapShift, sourceTimeUs, offsetForSource, trim, trimItem } from "./timeline";
+import { audioTracks, clipAt, durationOf, mainClips, mainTrack, move, moveItem, overlayTracks, textTracks, effectTracks, snapTargets, snapShift, sourceTimeUs, offsetForSource, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -93,6 +93,21 @@ function Square({ url, x, held = false }: { url: string | undefined; x: number; 
   );
 }
 
+// The cover's picture for the timeline: its photo, the frame it uses, or the
+// video's first frame while none is set.
+function coverThumb(doc: TimelineDoc, thumbs: Map<Id, Thumbs>) {
+  const c = doc.cover;
+  if (c?.type === "image") return thumbs.get(c.assetId)?.urls[0];
+  const at = c?.type === "frame" ? c.atUs : 0;
+  const hit = clipAt(doc, at);
+  const t = hit && thumbs.get(hit.clip.assetId);
+  if (!hit || !t?.urls.length) return undefined;
+  const srcS = (hit.clip.freeze ? hit.clip.inUs : sourceTimeUs(hit.clip, at - hit.clip.startUs)) / 1e6;
+  let best = 0;
+  for (let k = 1; k < t.times.length; k++) if (Math.abs(t.times[k] - srcS) < Math.abs(t.times[best] - srcS)) best = k;
+  return t.urls[best];
+}
+
 function AddLane({ label, width, onClick }: { label: string; width: number; onClick: () => void }) {
   return (
     <button
@@ -116,9 +131,13 @@ export function TimelineView({
   onAddAudio,
   onAddText,
   onTransition,
+  onCover,
+  onToggleSound,
   missing,
 }: {
   onAddMedia: () => void;
+  onCover: () => void;
+  onToggleSound: () => void;
   onAddAudio: () => void;
   onAddText: () => void;
   onTransition: (fromId: Id) => void;
@@ -463,6 +482,25 @@ export function TimelineView({
           {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
           {[...textTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
+            {/* before the start, like CapCut: the video's sound and the cover */}
+            <div className="absolute right-full mr-4 flex items-center gap-3">
+              <button type="button" onClick={onToggleSound} className="flex w-16 flex-col items-center gap-1 text-[11px] leading-tight text-text-muted">
+                {mainTrack(doc).muted ? <VolumeX aria-hidden className="size-6" /> : <Volume2 aria-hidden className="size-6" />}
+                {mainTrack(doc).muted ? "Ativar áudio do clipe" : "Silenciar áudio do clipe"}
+              </button>
+              <button
+                type="button"
+                aria-label={doc.cover ? "Capa (definida)" : "Capa"}
+                onClick={onCover}
+                className={`relative h-[var(--layout-track-main)] w-[var(--layout-track-main)] overflow-hidden rounded-sm bg-surface-2 ${doc.cover ? "outline-2 outline-selection" : ""}`}
+              >
+                {coverThumb(doc, thumbs) && <img src={coverThumb(doc, thumbs)} alt="" draggable={false} className="absolute inset-0 size-full object-cover opacity-70" />}
+                <span className="absolute inset-0 flex flex-col items-center justify-center gap-0.5 bg-black/30 text-[11px] font-semibold text-white">
+                  <PenLine aria-hidden className="size-4" />
+                  Capa
+                </span>
+              </button>
+            </div>
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));
               const asset = assets.get(clip.assetId);

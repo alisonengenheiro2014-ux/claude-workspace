@@ -532,6 +532,12 @@ export function layerToMain(doc: TimelineDoc, id: Id): TimelineDoc | null {
   });
 }
 
+export function setCover(doc: TimelineDoc, cover: TimelineDoc["cover"]): TimelineDoc {
+  return edit(doc, (d) => {
+    d.cover = cover;
+  });
+}
+
 export function overlayTracks(doc: TimelineDoc) {
   return doc.tracks.filter((t) => t.kind === "overlay");
 }

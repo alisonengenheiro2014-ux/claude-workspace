@@ -45,7 +45,7 @@ import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
 import { describeAsset, runImport, takeImport } from "../app/importFlow";
 import { navigate } from "../app/router";
-import type { AspectRatio, Id, MediaClip } from "../data/db";
+import type { AspectRatio, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile, onImportEvent } from "../media/import";
 import { Player } from "../editor/player";
 import { useEditor } from "../editor/store";
@@ -79,6 +79,7 @@ import {
   splitItem,
   addOverlay,
   layerToMain,
+  setCover,
   clipDuration,
   freezeAt,
   toggleKeyframe,
@@ -112,6 +113,7 @@ import { STICKERS, STICKER_STYLE } from "../editor/text";
 import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
+import { CoverSheet } from "./CoverSheet";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -126,6 +128,7 @@ import { ExportSheet, resolutionLabel } from "./ExportSheet";
 
 type Panel =
   | null
+  | { name: "cover" }
   | { name: "speed" }
   | { name: "volume" }
   | { name: "format" }
@@ -245,6 +248,23 @@ export function Editor({ projectId }: { projectId: Id }) {
     };
   }, [bgAssetId]);
   const bgPicker = useRef<HTMLInputElement>(null);
+  const coverPicker = useRef<HTMLInputElement>(null);
+
+  // Capa: a frame of the edit or a photo becomes the export's first frame
+  function pickCover(cover: TimelineDoc["cover"]) {
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    s.commit(setCover(s.doc, cover), cover ? "Capa" : "Tirar capa");
+    toast(cover ? "Capa definida" : "Capa removida");
+    setPanel(null);
+  }
+  async function onCoverImage(files: File[]) {
+    const [img] = await runImport(projectId, files.slice(0, 1), setImporting, toast);
+    if (!img) return;
+    if (img.kind !== "image") return toast("Escolha uma foto para a capa.");
+    await useEditor.getState().addAssets([img]);
+    pickCover({ type: "image", assetId: img.id });
+  }
   async function onBgImage(files: File[]) {
     const [img] = await runImport(projectId, files.slice(0, 1), setImporting, toast);
     if (!img) return;
@@ -1054,6 +1074,8 @@ export function Editor({ projectId }: { projectId: Id }) {
             onAddMedia={() => addPicker.current?.click()}
             onAddAudio={() => setPanel({ name: "audio" })}
             onAddText={onAddText}
+            onCover={() => (stop(), setPanel({ name: "cover" }))}
+            onToggleSound={toggleVideoSound}
             onTransition={(fromId) => {
               stop();
               setPanel({ name: "transition", fromId });
@@ -1246,6 +1268,17 @@ export function Editor({ projectId }: { projectId: Id }) {
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
       <FilePicker ref={bgPicker} accept="image/*" onFiles={(f) => void onBgImage(f)} />
+      <FilePicker ref={coverPicker} accept="image/*" onFiles={(f) => void onCoverImage(f)} />
+      <CoverSheet
+        open={panel?.name === "cover"}
+        cover={doc?.cover ?? null}
+        totalUs={totalUs}
+        playheadUs={playheadUs}
+        onSeek={(us) => ed.setPlayhead(us)}
+        onPick={pickCover}
+        onPhoto={() => coverPicker.current?.click()}
+        onClose={() => setPanel(null)}
+      />
       <FilePicker ref={overlayPicker} onFiles={(f) => void onAddOverlay(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
 
