@@ -60,7 +60,7 @@ Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,yes,"14 efei
 Stickers (imagens e emoji),stickers,could,yes,partial,"48 emojis com animação em loop; PNG próprio entra por Sobrepor"
 Marcar batidas da música,áudio,could,yes,no,
 Templates próprios reutilizáveis,templates,could,no,yes,"Salvar como modelo no menu do projeto; tocar num modelo abre uma cópia"
-Backup e restauração do projeto em arquivo,projeto,could,no,no,protege contra o Safari apagar o armazenamento
+Backup e restauração do projeto em arquivo,projeto,could,no,yes,"um arquivo .garagem com projeto e mídias (Salvar em Arquivos/iCloud); Abrir backup na tela inicial"
 Biblioteca de músicas e efeitos sonoros,áudio,skip,yes,skip,conteúdo licenciado da CapCut
 Templates da comunidade,templates,skip,yes,skip,é a rede de usuários deles
 Efeitos stickers filtros e fontes prontos da CapCut,efeitos,skip,yes,skip,arquivos deles; recriamos os tipos com código e fontes abertas
