@@ -321,7 +321,27 @@ export function CaptionSheet({
       title: "Idioma de origem",
       body: <ListPicker label="Idioma de origem" value={prefs.language} options={LANGUAGES} onPick={(language) => (savePrefs({ ...prefs, language }), setPage("main"))} />,
     },
-    templates: { title: "Modelos", body: <TemplateGrid value={prefs.preset} onPick={(preset) => (savePrefs({ ...prefs, preset }), setPage("main"))} /> },
+    templates: {
+      title: "Modelos",
+      body: (
+        <>
+          <TemplateGrid value={prefs.preset} onPick={(preset) => savePrefs({ ...prefs, preset })} />
+          <div className="sticky -bottom-4 -mx-4 -mb-4 mt-4 bg-surface px-4 pb-4 pt-3">
+            <Button
+              variant="primary"
+              size="lg"
+              className="w-full"
+              onClick={() => {
+                setPage("main"); // the progress shows there
+                void generate();
+              }}
+            >
+              Gerar
+            </Button>
+          </div>
+        </>
+      ),
+    },
   }[page];
 
   const editTab = track ? (

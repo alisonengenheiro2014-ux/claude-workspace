@@ -19,7 +19,8 @@ export default defineConfig({
     tailwindcss(),
     dropOrtWasm,
     VitePWA({
-      registerType: "autoUpdate",
+      registerType: "prompt", // src/app/updates.ts decides when to switch
+      injectRegister: false,
       includeAssets: ["apple-touch-icon.png", "favicon.png"],
       manifest: {
         name: "Editor",
