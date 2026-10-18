@@ -38,7 +38,6 @@ function formatBytes(n: number) {
 export function Home() {
   const toast = useToast();
   const picker = useRef<HTMLInputElement>(null);
-  const multiPicker = useRef<HTMLInputElement>(null);
   const updateReady = useUpdateReady();
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -175,12 +174,7 @@ export function Home() {
         >
           Novo projeto
         </Button>
-        {/* one video: a single tap in the iPhone picker; several need its ✓ at the top */}
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
-        <Button variant="secondary" className="mt-2 w-full" icon={<Copy aria-hidden className="size-4" />} onClick={() => multiPicker.current?.click()}>
-          Novo com vários vídeos
-        </Button>
-        <FilePicker ref={multiPicker} multiple onFiles={(f) => void onFiles(f)} />
         <Button variant="ghost" className="mt-2 w-full" icon={<ArchiveRestore aria-hidden className="size-4" />} onClick={() => backupPicker.current?.click()}>
           Abrir backup
         </Button>
