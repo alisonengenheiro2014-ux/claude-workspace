@@ -9,7 +9,8 @@ import { useEditor, type Thumbs } from "./store";
 import type { Track } from "../data/db";
 import { PEAKS_PER_SEC } from "./audio";
 import { keyTimes } from "./keyframes";
-import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, trim, trimItem } from "./timeline";
+import { effectOf } from "./effects";
+import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, effectTracks, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -273,7 +274,13 @@ export function TimelineView({
         const w = Math.max(2, px(c.durationUs));
         const media = c.type === "media" ? c : null;
         const asset = media ? assets.get(media.assetId) : undefined;
-        const label = c.type === "text" || c.type === "caption" ? c.text.split("\n")[0] || "Texto" : (asset?.name ?? "Áudio");
+        const fx = c.type === "effect" ? effectOf(c.effectId) : undefined;
+        const label =
+          c.type === "text" || c.type === "caption"
+            ? c.text.split("\n")[0] || "Texto"
+            : c.type === "effect"
+              ? `${fx?.emoji ?? ""} ${fx?.label ?? "Efeito"}`
+              : (asset?.name ?? "Áudio");
         const thumb = track.kind === "overlay" && media ? thumbs.get(media.assetId)?.urls[0] : undefined;
         return (
           <div
@@ -286,7 +293,7 @@ export function TimelineView({
             onPointerCancel={sel ? onHandleUp : undefined}
           >
             <TimelineClip
-              kind={track.kind === "audio" || track.kind === "caption" || track.kind === "overlay" ? track.kind : "text"}
+              kind={track.kind === "audio" || track.kind === "caption" || track.kind === "overlay" || track.kind === "effect" ? track.kind : "text"}
               width={w}
               label={label}
               selected={sel}
@@ -357,6 +364,7 @@ export function TimelineView({
       >
         <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
+          {[...effectTracks(doc)].reverse().map(lane)}
           {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
           {[...textTracks(doc)].reverse().map(lane)}
           {[...overlayTracks(doc)].reverse().map(lane)}

@@ -15,9 +15,10 @@ export interface Look {
   temp: number; // -1 cool .. 1 warm
   tint: number; // -1 green .. 1 magenta
   vignette: number; // 0..1
+  invert?: number; // 0..1 (effects)
 }
 
-export const NEUTRAL: Look = { brightness: 1, contrast: 1, saturate: 1, sepia: 0, hue: 0, temp: 0, tint: 0, vignette: 0 };
+export const NEUTRAL: Look = { brightness: 1, contrast: 1, saturate: 1, sepia: 0, hue: 0, temp: 0, tint: 0, vignette: 0, invert: 0 };
 
 export const FILTERS: { id: string; label: string; look: Partial<Look> }[] = [
   { id: "vivid", label: "Vívido", look: { contrast: 1.15, saturate: 1.45 } },
@@ -70,7 +71,7 @@ export function lookOf(clip: Pick<MediaClip, "filter" | "adjust">): Look {
   const f = clip.filter && FILTERS.find((x) => x.id === clip.filter!.id);
   if (f) {
     const k = clip.filter!.intensity / 100;
-    for (const key of Object.keys(f.look) as (keyof Look)[]) l[key] = mix(NEUTRAL[key], f.look[key]!, k);
+    for (const key of Object.keys(f.look) as (keyof Look)[]) l[key] = mix(NEUTRAL[key] ?? 0, f.look[key]!, k);
   }
   const a = clip.adjust;
   if (a) {
@@ -85,7 +86,7 @@ export function lookOf(clip: Pick<MediaClip, "filter" | "adjust">): Look {
 }
 
 export function isNeutral(l: Look) {
-  return (Object.keys(NEUTRAL) as (keyof Look)[]).every((k) => Math.abs(l[k] - NEUTRAL[k]) < 1e-3);
+  return (Object.keys(NEUTRAL) as (keyof Look)[]).every((k) => Math.abs((l[k] ?? 0) - (NEUTRAL[k] ?? 0)) < 1e-3);
 }
 
 export function cssFilter(l: Look): string {
@@ -95,6 +96,7 @@ export function cssFilter(l: Look): string {
   if (l.saturate !== 1) parts.push(`saturate(${l.saturate.toFixed(3)})`);
   if (l.sepia) parts.push(`sepia(${l.sepia.toFixed(3)})`);
   if (l.hue) parts.push(`hue-rotate(${l.hue.toFixed(1)}deg)`);
+  if (l.invert) parts.push(`invert(${l.invert.toFixed(3)})`);
   return parts.join(" ") || "none";
 }
 
@@ -151,6 +153,11 @@ function stepsOf(l: Look): number[][] {
         0.213 - cos * 0.213 - sin * 0.787, 0.715 - cos * 0.715 + sin * 0.715, 0.072 + cos * 0.928 + sin * 0.072, 0, 0,
         0, 0, 0, 1, 0,
     ]);
+  }
+  if (l.invert) {
+    const a = l.invert;
+    const k = 1 - 2 * a;
+    out.push([k, 0, 0, 0, a, 0, k, 0, 0, a, 0, 0, k, 0, a, 0, 0, 0, 1, 0]);
   }
   return out;
 }

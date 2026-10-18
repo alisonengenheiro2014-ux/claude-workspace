@@ -78,6 +78,25 @@ export const TEXT_COLORS = ["#ffffff", "#000000", "#ffd400", "#ff3b30", "#ff9500
 
 export const DEFAULT_TEXT_US: Us = 3_000_000;
 
+// Stickers are emoji text items: big, no outline or shadow.
+export const STICKERS = [
+  "🔥", "😂", "❤️", "👍", "💯", "✨", "🎉", "😍", "😮", "👀", "⚡", "💰",
+  "📞", "📶", "🚀", "🏠", "🎮", "💡", "🏆", "⚠️", "🙏", "😎", "🤩", "🥳",
+  "👇", "👉", "👆", "✅", "❌", "⭐", "📢", "🛒", "🎁", "📱", "💻", "🤑",
+  "😱", "🤯", "😭", "🥰", "😡", "🤔", "👏", "💪", "🙌", "🎯", "📈", "🆕",
+];
+export const STICKER_STYLE: TextStyle = {
+  font: "montserrat",
+  size: 200,
+  color: "#ffffff",
+  stroke: null,
+  shadow: null,
+  background: null,
+  align: "center",
+  bold: false,
+  italic: false,
+};
+
 export const DEFAULT_STYLE: TextStyle = {
   font: "montserrat",
   size: 72, // px for a 1080-wide frame; scales with the frame
@@ -103,6 +122,15 @@ export const ANIMS_OUT = [
   { id: "slide-down", label: "Descer" },
   { id: "pop", label: "Encolher" },
 ];
+// "loop" plays over and over for as long as the item shows (stickers, mostly).
+export const ANIMS_LOOP = [
+  { id: "pulse", label: "Pulsar" },
+  { id: "bounce", label: "Quicar" },
+  { id: "wobble", label: "Balançar" },
+  { id: "spin", label: "Girar" },
+  { id: "blink", label: "Piscar" },
+];
+export const LOOP_US: Us = 1_000_000;
 export const ANIM_US: Us = 500_000;
 
 const ease = (t: number) => 1 - Math.pow(1 - Math.max(0, Math.min(1, t)), 3);
@@ -113,9 +141,10 @@ interface AnimState {
   scale: number;
   chars: number; // 0..1 of the text shown
   blur: number; // 0..1, out of focus
+  rot: number; // degrees
 }
 
-const STILL: AnimState = { alpha: 1, dy: 0, scale: 1, chars: 1, blur: 0 };
+const STILL: AnimState = { alpha: 1, dy: 0, scale: 1, chars: 1, blur: 0, rot: 0 };
 
 function animState(clip: TextClip, localUs: Us): AnimState {
   const s: AnimState = { ...STILL };
@@ -138,7 +167,16 @@ function animState(clip: TextClip, localUs: Us): AnimState {
       s.blur = Math.max(s.blur, 1 - k);
     }
   };
-  const { in: aIn, out: aOut } = clip.animation;
+  const { in: aIn, out: aOut, loop } = clip.animation;
+  if (loop) {
+    const ph = (localUs / (loop.durationUs || LOOP_US)) % 1;
+    const wave = Math.sin(ph * Math.PI * 2);
+    if (loop.id === "pulse") s.scale *= 1 + 0.08 * wave;
+    else if (loop.id === "bounce") s.dy -= Math.abs(Math.sin(ph * Math.PI)) * 0.35;
+    else if (loop.id === "wobble") s.rot += 8 * wave;
+    else if (loop.id === "spin") s.rot += ph * 360;
+    else if (loop.id === "blink") s.alpha *= ph < 0.5 ? 1 : 0.15;
+  }
   if (aIn) apply(aIn, localUs / aIn.durationUs, true);
   if (aOut) apply(aOut, (clip.durationUs - localUs) / aOut.durationUs, false);
   return s;
@@ -245,7 +283,7 @@ export function drawText(
   }
   ctx.globalAlpha = alpha;
   ctx.translate(cx, cy + anim.dy * px);
-  ctx.rotate((clip.transform.rotation * Math.PI) / 180);
+  ctx.rotate(((clip.transform.rotation + anim.rot) * Math.PI) / 180);
   ctx.scale(anim.scale, anim.scale);
 
   if (st.background) {

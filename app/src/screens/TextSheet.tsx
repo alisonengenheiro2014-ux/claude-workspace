@@ -5,7 +5,7 @@ import { AlignCenter, AlignLeft, AlignRight } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Id, TextClip, TextStyle } from "../data/db";
 import { useEditor } from "../editor/store";
-import { ANIM_US, ANIMS_IN, ANIMS_OUT, FONTS, TEXT_COLORS } from "../editor/text";
+import { ANIM_US, ANIMS_IN, ANIMS_LOOP, ANIMS_OUT, FONTS, LOOP_US, TEXT_COLORS } from "../editor/text";
 import { findItem, setText } from "../editor/timeline";
 import { cn } from "../ui/cn";
 import { OptionGrid } from "../ui/OptionGrid";
@@ -225,6 +225,17 @@ export function TextSheet({ id, tab, onTab, onClose }: { id: Id | null; tab: Tex
                     value={clip.animation.out?.id ?? null}
                     onChange={(a) => patch({ animation: { ...clip.animation, out: a ? { id: a, durationUs: ANIM_US } : null } })}
                     options={ANIMS_OUT.map((a) => ({
+                      id: a.id,
+                      label: a.label,
+                      preview: <span className="text-xs text-text-muted">{a.label}</span>,
+                    }))}
+                  />
+                  <span className="text-xs text-text-muted">Repetir</span>
+                  <OptionGrid
+                    label="Animação repetida"
+                    value={clip.animation.loop?.id ?? null}
+                    onChange={(a) => patch({ animation: { ...clip.animation, loop: a ? { id: a, durationUs: LOOP_US } : null } })}
+                    options={ANIMS_LOOP.map((a) => ({
                       id: a.id,
                       label: a.label,
                       preview: <span className="text-xs text-text-muted">{a.label}</span>,

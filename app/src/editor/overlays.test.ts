@@ -323,3 +323,18 @@ describe("freeze frames and crop", () => {
     expect(css.style.clipPath).toBe("inset(0.0000% 25.0000% 50.0000% 25.0000%)");
   });
 });
+
+describe("effects", () => {
+  it("an effect at the playhead lasts 3 s; two at once combine", async () => {
+    const { addEffect, effectTracks } = await import("./timeline");
+    const { effectsAt } = await import("./effects");
+    let d = addEffect(base(), "cinema", 1_000_000).doc;
+    d = addEffect(d, "bw", 2_000_000).doc;
+    expect(effectTracks(d)).toHaveLength(2);
+    expect(effectsAt(d, 500_000)).toBeNull();
+    const f = effectsAt(d, 2_500_000)!;
+    expect([f.bars, f.look.saturate]).toEqual([0.12, 0]);
+    expect(effectsAt(d, 4_500_000)!.bars).toBe(0);
+    expect(validateDoc(d, assets)).toEqual([]);
+  });
+});

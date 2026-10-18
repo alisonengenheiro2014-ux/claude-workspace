@@ -3,6 +3,7 @@
 import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Transform, Us } from "../data/db";
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 import { captionPreset, type CaptionGrouping } from "./presets";
+import { newEffect } from "./effects";
 import { animatedAt, keyNear, shiftKeys, withKeyAt, withoutKeyAt, type Animated } from "./keyframes";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
@@ -459,6 +460,28 @@ export function splitItem(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDo
     h.track.items.push(right);
   });
   return { doc: next, rightId };
+}
+
+// ---------- effects ----------
+
+// An effect at the playhead, 3 s long (or what is left of the video).
+export function addEffect(doc: TimelineDoc, effectId: string, atUs: Us): { doc: TimelineDoc; id: Id } {
+  const total = durationOf(doc);
+  const start = Math.max(0, Math.min(atUs, Math.max(0, total - MIN_CLIP_US)));
+  const dur = Math.max(MIN_CLIP_US, Math.min(3_000_000, total - start));
+  const id = uid();
+  return { doc: edit(doc, (d) => placeInLane(d, { id, ...newEffect(effectId, start, dur) }, "effect")), id };
+}
+
+export function setEffect(doc: TimelineDoc, id: Id, effectId: string): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (hit?.clip.type === "effect") hit.clip.effectId = effectId;
+  });
+}
+
+export function effectTracks(doc: TimelineDoc) {
+  return doc.tracks.filter((t) => t.kind === "effect");
 }
 
 // ---------- keyframes ----------

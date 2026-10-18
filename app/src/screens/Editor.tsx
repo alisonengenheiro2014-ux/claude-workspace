@@ -13,6 +13,7 @@ import {
   FlipHorizontal2,
   Gauge,
   Layers,
+  Speech,
   Palette,
   RectangleHorizontal,
   Replace,
@@ -47,6 +48,7 @@ import { audio, peaksOf } from "../editor/audio";
 import {
   addAudio,
   addText,
+  setText,
   captionTrack,
   canSplit,
   clipAt,
@@ -67,9 +69,19 @@ import {
   addOverlay,
   freezeAt,
   toggleKeyframe,
+  addEffect,
+  setEffect,
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
 import { LookLayer } from "../editor/LookLayer";
+import { BLENDS } from "../editor/blend";
+import { EffectsBox } from "../editor/EffectsBox";
+import { EFFECTS } from "../editor/effects";
+import { OptionGrid } from "../ui/OptionGrid";
+import { ProgressBar } from "../ui/Progress";
+import { reverseRange } from "../media/reverse";
+import { speak } from "../captions/tts";
+import { STICKERS, STICKER_STYLE } from "../editor/text";
 import { isZoomed, keyNear, mainZoom } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
@@ -92,7 +104,6 @@ type Panel =
   | { name: "format" }
   | { name: "export" }
   | { name: "missing"; assetId: Id }
-  | { name: "stub"; title: string; screen: string }
   | { name: "text"; id: Id; tab: TextTab }
   | { name: "audio" }
   | { name: "fade" }
@@ -102,7 +113,9 @@ type Panel =
   | { name: "opacity" }
   | { name: "filters"; id: Id }
   | { name: "adjust"; id: Id }
-  | { name: "crop"; id: Id };
+  | { name: "crop"; id: Id }
+  | { name: "stickers" }
+  | { name: "effects" };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -310,6 +323,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selectedText = selectedItem?.clip.type === "text" ? selectedItem.clip : null;
   const selectedCaption = selectedItem?.clip.type === "caption" ? selectedItem.clip : null;
   const selectedAudio = selectedItem?.track.kind === "audio" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
+  const selectedEffect = selectedItem?.clip.type === "effect" ? selectedItem.clip : null;
   const selectedOverlay = selectedItem?.track.kind === "overlay" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
   const selectedMedia: MediaClip | null = selected ?? selectedAudio ?? selectedOverlay;
   const videoMuted = doc ? mainTrack(doc).muted : false;
@@ -440,6 +454,118 @@ export function Editor({ projectId }: { projectId: Id }) {
   const keyClip =
     keyCandidate && playheadUs >= keyCandidate.startUs && playheadUs <= keyCandidate.startUs + keyCandidate.durationUs ? keyCandidate : null;
 
+  // S04 Inverter: the clip's part of its video, made backwards as a new video;
+  // inverting again goes back to the original
+  const [busy, setBusy] = useState<{ label: string; fraction: number; abort: AbortController } | null>(null);
+  async function onReverse() {
+    stop();
+    const s = useEditor.getState();
+    const clip = selected;
+    if (!s.doc || !clip) return;
+    if (clip.reverse && clip.reverseOf) {
+      const o = clip.reverseOf;
+      s.commit(setClip(s.doc, clip.id, { assetId: o.assetId, inUs: o.inUs, outUs: o.outUs, reverse: false, reverseOf: null }), "Desinverter");
+      return;
+    }
+    const asset = assets.get(clip.assetId);
+    if (asset?.kind !== "video") return toast("Inverter funciona em vídeos.");
+    if (clip.freeze) return toast("Um quadro congelado já é igual ao contrário.");
+    const abort = new AbortController();
+    setBusy({ label: "Invertendo o vídeo", fraction: 0, abort });
+    player.current?.release();
+    setMediaReleased(true);
+    try {
+      const file = await reverseRange(asset, clip.inUs, clip.outUs, (fraction) => setBusy((b) => b && { ...b, fraction }), abort.signal);
+      const [made] = await runImport(projectId, [file], setImporting, toast);
+      if (!made) return;
+      await useEditor.getState().addAssets([made]);
+      const now = useEditor.getState();
+      if (!now.doc) return;
+      const patch = { assetId: made.id, inUs: 0, outUs: made.durationUs, reverse: true, reverseOf: { assetId: asset.id, inUs: clip.inUs, outUs: clip.outUs } };
+      now.commit(setClip(now.doc, clip.id, patch), "Inverter");
+      toast("Vídeo invertido");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") toast("Inversão cancelada");
+      else toast(`Não foi possível inverter: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setBusy(null);
+      setMediaReleased(false);
+      void player.current?.showAt(useEditor.getState().playheadUs);
+    }
+  }
+
+  // S11 Texto para fala: the selected text read aloud by a voice that runs
+  // on the phone, added as narration where the text starts
+  async function onSpeak() {
+    stop();
+    const clip = selectedText;
+    if (!clip?.text.trim()) return;
+    const abort = new AbortController();
+    setBusy({ label: "Gerando a voz", fraction: 0, abort });
+    try {
+      const file = await speak(
+        clip.text,
+        (e) =>
+          setBusy((b) =>
+            !b
+              ? b
+              : e.stage === "download"
+                ? { ...b, label: `Baixando a voz (uma vez) · ${Math.round(e.loaded / 1e6)} de ${Math.round(e.total / 1e6)} MB`, fraction: e.total ? e.loaded / e.total : 0 }
+                : e.stage === "loading"
+                  ? { ...b, label: "Carregando a voz", fraction: 0 }
+                  : { ...b, label: "Gerando a voz", fraction: e.fraction },
+          ),
+        abort.signal,
+      );
+      const [voice] = await runImport(projectId, [file], setImporting, toast, { only: "audio" });
+      if (!voice) return;
+      await useEditor.getState().addAssets([voice]);
+      const s = useEditor.getState();
+      if (!s.doc) return;
+      const r = addAudio(s.doc, voice, clip.startUs);
+      s.commit(setItem(r.doc, r.id, { outUs: voice.durationUs, durationUs: voice.durationUs }), "Texto para fala");
+      s.select(r.id);
+      toast("Voz adicionada");
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") toast("Cancelado");
+      else {
+        const msg = err instanceof Error ? err.message : String(err);
+        toast(
+          /fetch|network|404|not found/i.test(msg)
+            ? "Não foi possível baixar a voz. Na primeira vez precisa de internet (cerca de 40 MB)."
+            : `Não foi possível gerar a voz: ${msg}`,
+          "error",
+        );
+      }
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  // S13 Stickers: an emoji text item at the playhead, popping in
+  function onSticker(emoji: string) {
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addText(s.doc, s.playheadUs, emoji, STICKER_STYLE);
+    const d = setText(r.doc, r.id, { animation: { in: { id: "pop", durationUs: 300_000 }, out: null, loop: null } });
+    s.commit(d, "Sticker");
+    s.select(r.id);
+    setPanel(null);
+  }
+
+  // S13 Efeitos: add at the playhead, or swap the selected one
+  function onEffect(id: string) {
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    if (selectedEffect) s.commit(setEffect(s.doc, selectedEffect.id, id), "Trocar efeito");
+    else {
+      const r = addEffect(s.doc, id, s.playheadUs);
+      s.commit(r.doc, "Efeito");
+      s.select(r.id);
+    }
+    setPanel(null);
+  }
+
   // S04 Recortar and Congelar
   const cropHit = doc && panel?.name === "crop" ? findItem(doc, panel.id) : null;
   const cropClip = cropHit?.clip.type === "media" ? cropHit.clip : null;
@@ -551,11 +677,6 @@ export function Editor({ projectId }: { projectId: Id }) {
     setPanel(null);
   }
 
-  function stub(title: string, screen: string) {
-    stop();
-    setPanel({ name: "stub", title, screen });
-  }
-
   const clipTools = !!selected;
 
   return (
@@ -580,30 +701,33 @@ export function Editor({ projectId }: { projectId: Id }) {
           className={cn("relative overflow-hidden", state !== "ready" && "hidden")}
           style={{ width: stage.w, height: stage.h, background: bg }}
         >
-          {/* blurred background (when the format sheet asks for it) */}
-          <canvas
-            ref={bgCanvasRef}
-            aria-hidden
-            className="pointer-events-none absolute inset-0 size-full scale-110 blur-xl brightness-75"
-            style={{ visibility: "hidden" }}
-          />
-          {/* the main video's zoom and pan (keyframes) move this box */}
-          <div ref={zoomBoxRef} className="pointer-events-none absolute inset-0">
-            <div ref={videoBoxRef} className="pointer-events-none absolute inset-0">
-              <video
-                ref={videoRef}
-                aria-label="Prévia do vídeo"
-                playsInline
-                className="pointer-events-none absolute inset-0 size-full object-contain"
-              />
+          {/* effects (S13) move and filter everything below the text */}
+          <EffectsBox width={stage.w}>
+            {/* blurred background (when the format sheet asks for it) */}
+            <canvas
+              ref={bgCanvasRef}
+              aria-hidden
+              className="pointer-events-none absolute inset-0 size-full scale-110 blur-xl brightness-75"
+              style={{ visibility: "hidden" }}
+            />
+            {/* the main video's zoom and pan (keyframes) move this box */}
+            <div ref={zoomBoxRef} className="pointer-events-none absolute inset-0">
+              <div ref={videoBoxRef} className="pointer-events-none absolute inset-0">
+                <video
+                  ref={videoRef}
+                  aria-label="Prévia do vídeo"
+                  playsInline
+                  className="pointer-events-none absolute inset-0 size-full object-contain"
+                />
+              </div>
+              <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+              {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
             </div>
-            <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
-            {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
-          </div>
-          {/* transitions: the clip that is not playing, as a still, and the dip colour */}
-          <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
-          <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
-          {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
+            {/* transitions: the clip that is not playing, as a still, and the dip colour */}
+            <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+            <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
+            {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
+          </EffectsBox>
           {cropClip && stage.w > 0 && (
             <CropPan clip={cropClip} asset={assets.get(cropClip.assetId)} width={stage.w} height={stage.h} onChange={changeCrop} onDone={() => {}} />
           )}
@@ -702,6 +826,19 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Captions />} label="Gerar de novo" onClick={() => openCaptions("generate")} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
+          ) : selectedEffect ? (
+            <Toolbar
+              label="Ferramentas do efeito"
+              leading={
+                <button type="button" aria-label="Voltar às ferramentas" onClick={() => ed.select(null)} className="flex size-11 items-center justify-center">
+                  <ChevronLeft aria-hidden className="size-6" />
+                </button>
+              }
+            >
+              <ToolbarItem icon={<Sparkles />} label="Trocar" onClick={() => (stop(), setPanel({ name: "effects" }))} />
+              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+            </Toolbar>
           ) : selectedOverlay ? (
             <Toolbar
               label="Ferramentas da sobreposição"
@@ -712,7 +849,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               }
             >
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
-              <ToolbarItem icon={<Blend />} label="Opacidade" onClick={() => setPanel({ name: "opacity" })} />
+              <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => setPanel({ name: "opacity" })} />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
@@ -747,6 +884,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Type />} label="Editar" onClick={() => editText(selectedText.id, "text")} />
               <ToolbarItem icon={<Palette />} label="Estilo" onClick={() => editText(selectedText.id, "style")} />
               <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => editText(selectedText.id, "anim")} />
+              <ToolbarItem icon={<Speech />} label="Texto para fala" onClick={() => void onSpeak()} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
@@ -782,9 +920,13 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
               <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selected!.id }))} />
-              <ToolbarItem icon={<FlipHorizontal2 />} label="Inverter" onClick={() => stub("Inverter", "S04")} />
+              <ToolbarItem
+                icon={<FlipHorizontal2 />}
+                label={selected?.reverse ? "Desinverter" : "Inverter"}
+                disabled={assets.get(selected!.assetId)?.kind !== "video" || !!selected?.freeze}
+                onClick={() => void onReverse()}
+              />
               <ToolbarItem icon={<Snowflake />} label="Congelar" disabled={assets.get(selected!.assetId)?.kind !== "video" || !!selected?.freeze} onClick={onFreeze} />
-              <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => stub("Mistura", "S12")} />
             </Toolbar>
           ) : (
             <Toolbar label="Ferramentas">
@@ -799,9 +941,9 @@ export function Editor({ projectId }: { projectId: Id }) {
               />
               <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
               <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
-              <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
+              <ToolbarItem icon={<Smile />} label="Stickers" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "stickers" }))} />
               <ToolbarItem icon={<Layers />} label="Sobrepor" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
-              <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => stub("Efeitos", "S13")} />
+              <ToolbarItem icon={<Sparkles />} label="Efeitos" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "effects" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
               <ToolbarItem icon={<RectangleHorizontal />} label="Formato" onClick={() => setPanel({ name: "format" })} />
@@ -913,6 +1055,28 @@ export function Editor({ projectId }: { projectId: Id }) {
         <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
       </Sheet>
 
+      <Sheet open={panel?.name === "stickers"} onOpenChange={(o) => !o && setPanel(null)} title="Stickers">
+        <div role="list" aria-label="Stickers" className="grid grid-cols-6 gap-2">
+          {STICKERS.map((e) => (
+            <button key={e} type="button" role="listitem" aria-label={`Sticker ${e}`} onClick={() => onSticker(e)} className="flex aspect-square items-center justify-center rounded-md bg-surface-2 text-3xl">
+              {e}
+            </button>
+          ))}
+        </div>
+        <p className="mt-3 text-xs text-text-muted">Depois de pôr, arraste e aumente na prévia. Em Animação → Repetir, ele pode pulsar, quicar ou balançar.</p>
+      </Sheet>
+
+      <Sheet open={panel?.name === "effects"} onOpenChange={(o) => !o && setPanel(null)} title={selectedEffect ? "Trocar efeito" : "Efeitos"}>
+        <OptionGrid
+          label="Efeitos"
+          allowNone={false}
+          value={selectedEffect?.effectId ?? null}
+          onChange={(id) => id && onEffect(id)}
+          options={EFFECTS.map((e) => ({ id: e.id, label: e.label, preview: <span className="text-3xl">{e.emoji}</span> }))}
+        />
+        <p className="mt-3 text-xs text-text-muted">O efeito entra no cursor por 3 s; puxe as pontas dele na linha do tempo para mudar a duração.</p>
+      </Sheet>
+
       <CropSheet clip={cropClip} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
 
       <FilterSheet
@@ -929,17 +1093,36 @@ export function Editor({ projectId }: { projectId: Id }) {
         onClose={() => closeEditing("Ajustar")}
       />
 
-      <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Opacidade")} title="Opacidade">
+      <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Mistura")} title="Mistura">
         {selectedOverlay && (
-          <Slider
-            label="Opacidade"
-            value={Math.round(selectedOverlay.opacity * 100)}
-            min={0}
-            max={100}
-            defaultValue={100}
-            format={(v) => `${v}%`}
-            onChange={(v) => ed.setDraft(setItem(useEditor.getState().doc!, selectedOverlay.id, { opacity: v / 100 }))}
-          />
+          <div className="flex flex-col gap-4">
+            <div role="radiogroup" aria-label="Modo de mistura" className="flex flex-wrap gap-2">
+              {BLENDS.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  role="radio"
+                  aria-checked={selectedOverlay.blendMode === b.id}
+                  onClick={() => ed.setDraft(setItem(useEditor.getState().draft ?? useEditor.getState().doc!, selectedOverlay.id, { blendMode: b.id }))}
+                  className={cn(
+                    "h-9 rounded-pill border px-3 text-sm",
+                    selectedOverlay.blendMode === b.id ? "border-accent bg-accent text-on-accent" : "border-border-input",
+                  )}
+                >
+                  {b.label}
+                </button>
+              ))}
+            </div>
+            <Slider
+              label="Opacidade"
+              value={Math.round(selectedOverlay.opacity * 100)}
+              min={0}
+              max={100}
+              defaultValue={100}
+              format={(v) => `${v}%`}
+              onChange={(v) => ed.setDraft(setItem(useEditor.getState().draft ?? useEditor.getState().doc!, selectedOverlay.id, { opacity: v / 100 }))}
+            />
+          </div>
         )}
       </Sheet>
 
@@ -1037,13 +1220,6 @@ export function Editor({ projectId }: { projectId: Id }) {
         </div>
       </Sheet>
 
-      <Sheet open={panel?.name === "stub"} onOpenChange={(o) => !o && setPanel(null)} title={panel?.name === "stub" ? panel.title : ""}>
-        <p className="text-sm text-text-muted">
-          Esta ferramenta ainda não foi construída ({panel?.name === "stub" ? panel.screen : ""}). Ela está no plano, em{" "}
-          <code className="font-mono text-xs">replica/features.csv</code>.
-        </p>
-      </Sheet>
-
       <TextSheet
         id={panel?.name === "text" ? panel.id : null}
         tab={panel?.name === "text" ? panel.tab : "text"}
@@ -1067,6 +1243,20 @@ export function Editor({ projectId }: { projectId: Id }) {
       />
 
       {importing && <ImportOverlay progress={importing} />}
+      {busy && (
+        <div role="dialog" aria-modal aria-label={busy.label} className="fixed inset-0 z-40 flex items-center justify-center bg-scrim/70 px-8">
+          <div className="flex w-full max-w-xs flex-col gap-3 rounded-lg bg-surface-2 p-5 shadow-pop">
+            <p className="text-sm">
+              {busy.label}… {Math.round(busy.fraction * 100)}%
+            </p>
+            <ProgressBar value={busy.fraction} label={busy.label} />
+            <p className="text-xs text-text-muted">Mantenha o app aberto.</p>
+            <Button variant="ghost" onClick={() => busy.abort.abort()}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

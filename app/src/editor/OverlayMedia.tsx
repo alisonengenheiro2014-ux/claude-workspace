@@ -2,7 +2,8 @@
 // placed with overlayBox; videos follow the playhead (seek while paused, play
 // along and correct drift while playing). Placing them is done by the text
 // canvas above (TextOverlay), which handles every on-screen gesture.
-import { useEffect, useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState, type CSSProperties } from "react";
+import { blendOf } from "./blend";
 import type { AssetRow, Id } from "../data/db";
 import type { TextBox } from "./text";
 import { assetFile } from "../media/import";
@@ -150,7 +151,9 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
     syncRef.current();
   };
   return (
-    <div aria-hidden className="pointer-events-none absolute inset-0 z-[3]">
+    // no z-index on this container: it would isolate the overlays, and blend
+    // modes must reach the video below; each overlay carries the z-index
+    <div aria-hidden className="pointer-events-none absolute inset-0">
       {overlaysAt(doc, s.playheadUs).map((c) => {
         const asset = s.assets.get(c.assetId);
         const { box: b } = overlayAt(asset, c, width, height, s.playheadUs);
@@ -159,7 +162,15 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
           <div
             key={c.id}
             className="absolute overflow-hidden"
-            style={{ left: b.cx - b.w / 2, top: b.cy - b.h / 2, width: b.w, height: b.h, transform: `rotate(${b.rotation}deg)` }}
+            style={{
+              left: b.cx - b.w / 2,
+              top: b.cy - b.h / 2,
+              width: b.w,
+              height: b.h,
+              transform: `rotate(${b.rotation}deg)`,
+              zIndex: 3,
+              mixBlendMode: blendOf(c.blendMode).css as CSSProperties["mixBlendMode"],
+            }}
           >
             <Item id={c.id} asset={asset} filter={cssFilter(look)} register={register} />
             <LookWashes look={look} />

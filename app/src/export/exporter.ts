@@ -23,6 +23,8 @@ import { assetFile } from "../media/import";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { overlayAt, overlaysAt } from "../editor/overlay";
+import { blendOf } from "../editor/blend";
+import { applyEffects, effectsAt } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
@@ -321,6 +323,7 @@ export async function exportTimeline(
         const look = lookOf(c);
         ctx.save();
         ctx.globalAlpha = alpha;
+        ctx.globalCompositeOperation = blendOf(c.blendMode).canvas;
         ctx.translate(b.cx, b.cy);
         ctx.rotate((b.rotation * Math.PI) / 180);
         if (isNeutral(look)) draw(ctx, b);
@@ -371,6 +374,8 @@ export async function exportTimeline(
           else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
           else ctx.drawImage(layer, 0, 0);
           await drawOverlays(tUs);
+          const fx = effectsAt(doc, tUs);
+          if (fx) applyEffects(ctx, fx, bg);
           for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
           await videoSource.add(frame * frameS, frameS);
           frame++;

@@ -40,7 +40,7 @@ Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,y
 Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
 Keyframes de posição escala rotação e opacidade,keyframes,should,yes,yes,"botão de keyframe (losango) ao lado do desfazer; vídeo principal (zoom e posição), sobreposições e textos; losangos na timeline; suavização automática"
 Recortar (crop) e girar o clipe,clipe,should,yes,yes,"formatos 1:1 9:16 16:9 4:5 3:4, zoom, arrastar na prévia, girar 90°, espelhar"
-Inverter clipe (reverso),clipe,should,yes,no,
+Inverter clipe (reverso),clipe,should,yes,yes,"gera uma cópia invertida do trecho (vídeo e som) no próprio aparelho; inverter de novo volta ao original"
 Congelar quadro,clipe,should,yes,yes,"3 s do quadro sob o cursor, sem som; aparar ou dividir mantém o quadro"
 Substituir mídia de um clipe mantendo as edições,clipe,should,yes,yes,
 Animações de clipe (entrada saída),clipe,should,yes,no,
@@ -55,9 +55,9 @@ Chroma key,clipe,could,yes,no,shader
 Remover fundo automático (sem tela verde),IA,could,yes,no,modelo de segmentação aberto via WebGPU
 Estabilizar vídeo,clipe,could,yes,no,caro em processamento
 Redução de ruído de áudio,áudio,could,yes,no,
-Texto para fala,IA,could,yes,no,voz do sistema (speechSynthesis) não grava; precisa de API própria
-Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,no,recriar com shaders próprios; não os arquivos deles
-Stickers (imagens e emoji),stickers,could,yes,no,seus PNGs e emoji do sistema
+Texto para fala,IA,could,yes,partial,"voz em português (MMS da Meta) rodando no iPhone, baixada uma vez (~40 MB); vira narração no ponto do texto; ainda não testada com a voz real"
+Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,yes,"14 efeitos próprios: tremor, pulsar, zoom lento, flash, pisca-pisca, desfoque, P&B, sépia, negativo, vinheta, luz quente, cinema, escurecer, clarear"
+Stickers (imagens e emoji),stickers,could,yes,partial,"48 emojis com animação em loop; PNG próprio entra por Sobrepor"
 Marcar batidas da música,áudio,could,yes,no,
 Templates próprios reutilizáveis,templates,could,no,no,diferente dos templates da comunidade CapCut
 Backup e restauração do projeto em arquivo,projeto,could,no,no,protege contra o Safari apagar o armazenamento
@@ -70,3 +70,4 @@ Publicar direto no TikTok,compartilhar,skip,yes,skip,API de parceiro; a folha de
 Assinatura Pro e marca d'água,cobrança,skip,yes,skip,não há cobrança num app pessoal
 Feed de inspiração e tutoriais dentro do app,início,skip,yes,skip,conteúdo deles
 Modelos de IA da CapCut,IA,skip,yes,skip,recursos de IA usam modelos abertos ou APIs próprias
+Mistura (modos de mesclagem) nas sobreposições,sobrepor,could,yes,yes,"normal, multiplicar, tela, sobrepor, escurecer, clarear, adicionar, com opacidade"
