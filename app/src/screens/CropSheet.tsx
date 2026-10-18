@@ -48,11 +48,13 @@ function describe(crop: Crop | null, sw: number, sh: number) {
 
 export function CropSheet({
   clip,
+  layer = false,
   asset,
   onChange,
   onClose,
 }: {
   clip: MediaClip | null;
+  layer?: boolean; // a layer: its box takes the cropped size and it has no drag to pan
   asset: AssetRow | undefined;
   onChange: (p: Partial<CropPatch>) => void;
   onClose: () => void;
@@ -102,7 +104,9 @@ export function CropSheet({
           <Button variant="ghost" disabled={!clip.crop && !clip.flip && !shapeOf(clip).rotation} onClick={() => onChange({ crop: null, flip: false, transform: { ...clip.transform, rotation: 0 } })}>
             Redefinir
           </Button>
-          <p className="text-xs text-text-muted">Arraste o vídeo na prévia para escolher a parte que aparece.</p>
+          <p className="text-xs text-text-muted">
+            {layer ? "A camada fica do tamanho da parte recortada; arraste e gire na prévia como sempre." : "Arraste o vídeo na prévia para escolher a parte que aparece."}
+          </p>
         </div>
       )}
     </Sheet>

@@ -398,3 +398,32 @@ describe("upright phone videos", () => {
     expect(overlayBox(upright, 1080, 1920, { x: 0.5, y: 0.5, scale: 1, rotation: 0 })).toMatchObject({ w: 1080, h: 1920 });
   });
 });
+
+describe("layer tools (CapCut's Camada menu)", () => {
+  it("a cropped layer is the size of the part that shows, and the picture is placed to show it", async () => {
+    const { cropPlacement } = await import("./overlay");
+    const land: AssetRow = { ...A, width: 1920, height: 1080 };
+    const crop = { x: 0.25, y: 0, w: 0.5, h: 1 };
+    // half the width of a 16:9 picture is 960x1080; fitted into 1080x1920 at scale 1
+    expect(overlayBox(land, 1080, 1920, { x: 0.5, y: 0.5, scale: 1, rotation: 0 }, crop)).toMatchObject({ w: 1080, h: 1215 });
+    expect(cropPlacement(crop)).toEqual({ x: -0.5, y: -0, w: 2, h: 1 });
+    expect(cropPlacement(null)).toEqual({ x: -0, y: -0, w: 1, h: 1 });
+  });
+
+  it("Faixa principal: the layer becomes a main clip at the nearest edge, full frame", async () => {
+    const { addOverlay, layerToMain, mainClips } = await import("./timeline");
+    let d = insertMedia(emptyDoc(), [A, A], 0).doc; // two clips of A's length
+    const len = mainClips(d)[0].durationUs;
+    const r = addOverlay(d, A, len * 0.9); // starts near the end of the first clip
+    d = r.doc;
+    const next = layerToMain(d, r.id)!;
+    expect(next.tracks.some((t) => t.kind === "overlay")).toBe(false);
+    const ids = mainClips(next).map((c) => c.id);
+    expect(ids.indexOf(r.id)).toBe(1); // between the two
+    const moved = mainClips(next)[1];
+    expect(moved.transform).toEqual({ x: 0.5, y: 0.5, scale: 1, rotation: 0 });
+    expect(moved.keyframes).toEqual([]);
+    expect(validateDoc(next, assets)).toEqual([]);
+    expect(layerToMain(next, ids[0])).toBeNull(); // only layers
+  });
+});

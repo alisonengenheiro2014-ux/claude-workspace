@@ -13,9 +13,11 @@ export function displaySize(asset: AssetRow | undefined) {
 }
 
 // Size the media shows at when not rotated: fitted inside the frame, times
-// the clip's scale.
-export function overlayBox(asset: AssetRow | undefined, W: number, H: number, t: Transform): TextBox {
-  const { w: aw, h: ah } = displaySize(asset);
+// the clip's scale. A cropped layer is the size of the part that shows.
+export function overlayBox(asset: AssetRow | undefined, W: number, H: number, t: Transform, crop?: MediaClip["crop"]): TextBox {
+  const { w: sw, h: sh } = displaySize(asset);
+  const aw = sw * (crop?.w ?? 1);
+  const ah = sh * (crop?.h ?? 1);
   const fit = Math.min(W / aw, H / ah);
   return { cx: t.x * W, cy: t.y * H, w: aw * fit * t.scale, h: ah * fit * t.scale, rotation: t.rotation };
 }
@@ -40,9 +42,16 @@ export function overlayAlpha(c: MediaClip, tUs: Us) {
 }
 
 // Where an overlay is and how visible, at timeline time tUs (keyframes and fades).
+// Where the whole picture goes inside a layer's box (0..1 of the box), so
+// only the cropped part shows: the box clips the rest.
+export function cropPlacement(crop: MediaClip["crop"]) {
+  const c = crop ?? { x: 0, y: 0, w: 1, h: 1 };
+  return { x: -c.x / c.w, y: -c.y / c.h, w: 1 / c.w, h: 1 / c.h };
+}
+
 export function overlayAt(asset: AssetRow | undefined, c: MediaClip, W: number, H: number, tUs: Us) {
   const a = animatedAt(c, tUs - c.startUs);
   const m = clipMotion(c, tUs - c.startUs);
   const t = { x: a.transform.x + m.dx, y: a.transform.y + m.dy, scale: a.transform.scale * m.scale, rotation: a.transform.rotation + m.rot };
-  return { box: overlayBox(asset, W, H, t), alpha: overlayAlpha({ ...c, opacity: a.opacity * m.alpha }, tUs) };
+  return { box: overlayBox(asset, W, H, t, c.crop), alpha: overlayAlpha({ ...c, opacity: a.opacity * m.alpha }, tUs) };
 }

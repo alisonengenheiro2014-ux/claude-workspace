@@ -13,6 +13,8 @@ import {
   FlipHorizontal2,
   Gauge,
   Layers,
+  SquarePlus,
+  Shuffle,
   ScissorsSquare,
   AudioWaveform,
   Eye,
@@ -76,6 +78,8 @@ import {
   split,
   splitItem,
   addOverlay,
+  layerToMain,
+  clipDuration,
   freezeAt,
   toggleKeyframe,
   setKeyEasing,
@@ -399,6 +403,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selectedEffect = selectedItem?.clip.type === "effect" ? selectedItem.clip : null;
   const selectedOverlay = selectedItem?.track.kind === "overlay" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
   const selectedMedia: MediaClip | null = selected ?? selectedAudio ?? selectedOverlay;
+  const speedClip = selected ?? selectedOverlay; // Velocidade: main clips and layers
+  const overlayAsset = selectedOverlay ? assets.get(selectedOverlay.assetId) : undefined;
   const videoMuted = doc ? mainTrack(doc).muted : false;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
   const targetAsset = target ? assets.get(target.assetId) : undefined;
@@ -464,10 +470,12 @@ export function Editor({ projectId }: { projectId: Id }) {
     stop();
     setPanel(null);
     const s = useEditor.getState();
-    if (!s.doc || !target || !targetAsset?.hasAudio) return;
-    const r = addAudio(s.doc, targetAsset, target.startUs, target.inUs);
-    let d = setItem(r.doc, r.id, { outUs: target.outUs, speed: target.speed, volume: target.volume, durationUs: target.durationUs });
-    d = setClip(d, target.id, { volume: 0 });
+    const from = selectedOverlay ?? target;
+    const fromAsset = from && assets.get(from.assetId);
+    if (!s.doc || !from || !fromAsset?.hasAudio) return;
+    const r = addAudio(s.doc, fromAsset, from.startUs, from.inUs);
+    let d = setItem(r.doc, r.id, { outUs: from.outUs, speed: from.speed, volume: from.volume, durationUs: from.durationUs });
+    d = setItem(d, from.id, { volume: 0 });
     s.commit(d, "Extrair som");
     s.select(r.id);
   }
@@ -532,11 +540,11 @@ export function Editor({ projectId }: { projectId: Id }) {
   async function onReverse() {
     stop();
     const s = useEditor.getState();
-    const clip = selected;
+    const clip = selected ?? selectedOverlay;
     if (!s.doc || !clip) return;
     if (clip.reverse && clip.reverseOf) {
       const o = clip.reverseOf;
-      s.commit(setClip(s.doc, clip.id, { assetId: o.assetId, inUs: o.inUs, outUs: o.outUs, reverse: false, reverseOf: null }), "Desinverter");
+      s.commit(setItem(s.doc, clip.id, { assetId: o.assetId, inUs: o.inUs, outUs: o.outUs, reverse: false, reverseOf: null }), "Desinverter");
       return;
     }
     const asset = assets.get(clip.assetId);
@@ -554,7 +562,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       const now = useEditor.getState();
       if (!now.doc) return;
       const patch = { assetId: made.id, inUs: 0, outUs: made.durationUs, reverse: true, reverseOf: { assetId: asset.id, inUs: clip.inUs, outUs: clip.outUs } };
-      now.commit(setClip(now.doc, clip.id, patch), "Inverter");
+      now.commit(setItem(now.doc, clip.id, patch), "Inverter");
       toast("Vídeo invertido");
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") toast("Inversão cancelada");
@@ -805,10 +813,23 @@ export function Editor({ projectId }: { projectId: Id }) {
   }
 
   function setSpeed(v: number) {
-    if (!selected) return;
+    if (!speedClip) return;
     const speed = Math.min(100, Math.max(0.1, v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10));
     const s = useEditor.getState();
-    ed.setDraft(setClip(s.draft ?? s.doc!, selected.id, { speed, speedCurve: null })); // a fixed speed replaces a curve
+    const patch = { speed, speedCurve: null }; // a fixed speed replaces a curve
+    // a layer keeps its start; its length follows the speed (main clips relayout)
+    ed.setDraft(setItem(s.draft ?? s.doc!, speedClip.id, selected ? patch : { ...patch, durationUs: clipDuration({ ...speedClip, ...patch }) }));
+  }
+
+  // Faixa principal: the layer becomes a clip of the main video
+  function onLayerToMain() {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc || !selectedOverlay) return;
+    const next = layerToMain(s.doc, selectedOverlay.id);
+    if (!next) return;
+    s.commit(next, "Faixa principal");
+    s.select(selectedOverlay.id);
   }
 
   function moveSelected(step: -1 | 1) {
@@ -935,7 +956,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
             {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
           </EffectsBox>
-          {cropClip && stage.w > 0 && (
+          {cropClip && cropHit?.track.kind === "main" && stage.w > 0 && (
             <CropPan clip={cropClip} asset={assets.get(cropClip.assetId)} width={stage.w} height={stage.h} onChange={changeCrop} onDone={() => {}} />
           )}
           {state === "ready" && stage.w > 0 && (
@@ -1078,21 +1099,34 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               }
             >
+              {/* in CapCut's order for a layer */}
+              <ToolbarItem icon={<SquarePlus />} label="Adicionar camada" onClick={() => overlayPicker.current?.click()} />
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
-              <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => setPanel({ name: "opacity" })} />
-              <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
-              <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />
-              {assets.get(selectedOverlay.assetId)?.kind === "image" && (
-                <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" onClick={() => void onCutout(selectedOverlay)} />
-              )}
-              <ToolbarItem icon={<Pipette />} label="Chroma key" onClick={() => (stop(), setPanel({ name: "chroma" }))} />
-              <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
-              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
-              {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
-              <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
-              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
-              {laneTools}
+              {overlayAsset?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+              <ToolbarItem icon={<Sparkles />} label="Animações" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />
+              {overlayAsset?.kind === "video" && <ToolbarItem icon={<Gauge />} label="Velocidade" onClick={() => setPanel({ name: "speed" })} />}
+              <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selectedOverlay.id }))} />
+              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selectedOverlay.assetId })} />
+              <ToolbarItem icon={<Shuffle />} label="Faixa principal" onClick={onLayerToMain} />
+              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
+              <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
+              {overlayAsset?.kind === "image" && <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" onClick={() => void onCutout(selectedOverlay)} />}
+              <ToolbarItem icon={<Blend />} label="Opacidade" onClick={() => setPanel({ name: "opacity" })} />
+              <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => setPanel({ name: "opacity" })} />
+              {overlayAsset?.hasAudio && <ToolbarItem icon={<Split />} label="Extrair som" onClick={onExtract} />}
+              {overlayAsset?.hasAudio && (
+                <ToolbarItem icon={<AudioWaveform />} label={selectedOverlay.denoise ? "Ruído: reduzido" : "Reduzir ruído"} onClick={() => toggleDenoise(selectedOverlay)} />
+              )}
+              {overlayAsset?.hasAudio && <ToolbarItem icon={<Speech />} label="Efeito de voz" onClick={() => (stop(), setPanel({ name: "voice" }))} />}
+              {overlayAsset?.kind === "video" && (
+                <ToolbarItem icon={<FlipHorizontal2 />} label={selectedOverlay.reverse ? "Desinverter" : "Reverso"} onClick={() => void onReverse()} />
+              )}
+              <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
+              <ToolbarItem icon={<Pipette />} label="Chroma key" onClick={() => (stop(), setPanel({ name: "chroma" }))} />
+              <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
+              {laneTools}
             </Toolbar>
           ) : selectedAudio ? (
             <Toolbar
@@ -1256,13 +1290,13 @@ export function Editor({ projectId }: { projectId: Id }) {
         onSfx={() => setPanel({ name: "sfx" })}
       />
       <Sheet open={panel?.name === "voice"} onOpenChange={(o) => !o && closeEditing("Efeito de voz")} title="Efeito de voz">
-        {(selectedAudio ?? selected) && (
+        {(selectedAudio ?? selectedOverlay ?? selected) && (
           <OptionGrid
             label="Efeito de voz"
-            value={(selectedAudio ?? selected)!.voiceFx ?? null}
+            value={(selectedAudio ?? selectedOverlay ?? selected)!.voiceFx ?? null}
             onChange={(id) => {
               const s = useEditor.getState();
-              ed.setDraft(setItem(s.draft ?? s.doc!, (selectedAudio ?? selected)!.id, { voiceFx: id }));
+              ed.setDraft(setItem(s.draft ?? s.doc!, (selectedAudio ?? selectedOverlay ?? selected)!.id, { voiceFx: id }));
             }}
             options={VOICE_FX.map((v) => ({ id: v.id, label: v.label, preview: <span className="text-2xl">{v.emoji}</span> }))}
           />
@@ -1294,12 +1328,12 @@ export function Editor({ projectId }: { projectId: Id }) {
       />
 
       <Sheet open={panel?.name === "speed"} onOpenChange={(o) => !o && closeEditing("Velocidade")} title="Velocidade">
-        {selected && doc && (
+        {speedClip && doc && (
           <div className="flex flex-col gap-4">
             {/* logarithmic: the same drag covers 0.1x-1x, 1x-10x and 10x-100x */}
             <Slider
               label="Velocidade"
-              value={Math.round(Math.log10(selected.speed) * 100) / 100}
+              value={Math.round(Math.log10(speedClip.speed) * 100) / 100}
               min={-1}
               max={2}
               step={0.01}
@@ -1313,11 +1347,11 @@ export function Editor({ projectId }: { projectId: Id }) {
                   key={v}
                   type="button"
                   role="radio"
-                  aria-checked={selected.speed === v}
+                  aria-checked={speedClip.speed === v}
                   onClick={() => setSpeed(v)}
                   className={cn(
                     "h-9 min-w-12 rounded-pill border px-3 text-sm",
-                    selected.speed === v ? "border-accent bg-accent text-on-accent" : "border-border-input",
+                    speedClip.speed === v ? "border-accent bg-accent text-on-accent" : "border-border-input",
                   )}
                 >
                   {formatSpeed(v)}
@@ -1405,7 +1439,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       <MaskSheet clip={panel?.name === "mask" ? (selectedOverlay ?? selected ?? null) : null} onChange={changeMasked} onClose={() => closeEditing("Máscara")} />
       <ChromaSheet clip={panel?.name === "chroma" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Chroma key")} />
 
-      <CropSheet clip={cropClip} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
+      <CropSheet clip={cropClip} layer={cropHit?.track.kind === "overlay"} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
 
       <FilterSheet
         clip={panel?.name === "filters" ? lookClip : null}
@@ -1421,7 +1455,7 @@ export function Editor({ projectId }: { projectId: Id }) {
         onClose={() => closeEditing("Ajustar")}
       />
 
-      <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Mistura")} title="Mistura">
+      <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Mistura")} title="Opacidade e mistura">
         {selectedOverlay && (
           <div className="flex flex-col gap-4">
             <div role="radiogroup" aria-label="Modo de mistura" className="flex flex-wrap gap-2">

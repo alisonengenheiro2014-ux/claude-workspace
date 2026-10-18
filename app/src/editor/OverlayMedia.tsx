@@ -11,7 +11,7 @@ import type { TextBox } from "./text";
 import { assetFile } from "../media/import";
 import { lookFilter, lookOf } from "./look";
 import { LookSvg, LookWashes } from "./LookLayer";
-import { overlayAt, overlaysAt } from "./overlay";
+import { cropPlacement, overlayAt, overlaysAt } from "./overlay";
 import { useEditor } from "./store";
 import { findItem, sourceTimeUs } from "./timeline";
 
@@ -156,7 +156,8 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
       const c = hit.clip;
       // the wrapper holds picture and washes: it moves (keyframes) and fades
       const at = overlayAt(s.assets.get(c.assetId), c, sizeRef.current.w, sizeRef.current.h, t);
-      const wrap = el.parentElement ?? el;
+      // the layer's box is three levels up (box > mirror > crop > picture)
+      const wrap = el.parentElement?.parentElement?.parentElement ?? el;
       place(wrap, at.box);
       wrap.style.opacity = String(at.alpha);
       if (!(el instanceof HTMLVideoElement) || el.readyState < 1) continue;
@@ -221,6 +222,8 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
         const asset = s.assets.get(c.assetId);
         const { box: b } = overlayAt(asset, c, width, height, s.playheadUs);
         const look = lookOf(c);
+        const pl = cropPlacement(c.crop);
+        const pct = (v: number) => `${(v * 100).toFixed(4)}%`;
         return (
           <div
             key={c.id}
@@ -236,7 +239,12 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
               ...(c.mask ? maskCss(maskUrl(c.mask, b.w / Math.max(1, b.h))) : {}),
             }}
           >
-            <Item id={c.id} asset={asset} filter={lookFilter(look)} chroma={c.chroma} register={register} />
+            {/* crop: the whole picture, placed so the chosen part fills the box; mirror after it */}
+            <div className="absolute inset-0" style={c.flip ? { transform: "scaleX(-1)" } : undefined}>
+              <div className="absolute" style={{ left: pct(pl.x), top: pct(pl.y), width: pct(pl.w), height: pct(pl.h) }}>
+                <Item id={c.id} asset={asset} filter={lookFilter(look)} chroma={c.chroma} register={register} />
+              </div>
+            </div>
             <LookWashes look={look} />
             <LookSvg look={look} />
           </div>

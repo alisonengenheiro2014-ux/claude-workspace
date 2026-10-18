@@ -24,7 +24,7 @@ import { assetFile } from "../media/import";
 import { clearDir, openStreamFile, readFile } from "../data/opfs";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
-import { overlayAt, overlaysAt } from "../editor/overlay";
+import { cropPlacement, overlayAt, overlaysAt } from "../editor/overlay";
 import { blendOf } from "../editor/blend";
 import { keyImage } from "../editor/chroma";
 import { drawMask } from "../editor/mask";
@@ -383,6 +383,21 @@ export async function exportTimeline(
           }
         }
         if (!draw) continue;
+        if (c.crop || c.flip) {
+          // the whole picture placed so the cropped part fills the box, clipped to it; mirrored after
+          const whole = draw;
+          const pl = cropPlacement(c.crop);
+          draw = (x, b) => {
+            x.save();
+            x.beginPath();
+            x.rect(-b.w / 2, -b.h / 2, b.w, b.h);
+            x.clip();
+            if (c.flip) x.scale(-1, 1);
+            x.translate(-b.w / 2 + pl.x * b.w + (pl.w * b.w) / 2, -b.h / 2 + pl.y * b.h + (pl.h * b.h) / 2);
+            whole(x, { ...b, w: pl.w * b.w, h: pl.h * b.h });
+            x.restore();
+          };
+        }
         const { box: b, alpha } = overlayAt(a, c, width, height, tUs);
         const look = lookOf(c);
         ctx.save();

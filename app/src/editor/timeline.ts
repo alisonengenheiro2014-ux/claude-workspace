@@ -503,6 +503,35 @@ export function addOverlay(doc: TimelineDoc, asset: AssetRow, atUs: Us): { doc: 
   return { doc: edit(doc, (d) => placeInLane(d, clip, "overlay")), id: clip.id };
 }
 
+// Faixa principal: a layer becomes a clip of the main video, put in where it
+// starts (at the nearest clip edge). It keeps its cut, speed, look, crop and
+// sound; its place on the screen (and its moves) belong to the layer, so the
+// clip fills the frame like any other.
+export function layerToMain(doc: TimelineDoc, id: Id): TimelineDoc | null {
+  const hit = findItem(doc, id);
+  if (!hit || hit.track.kind !== "overlay" || hit.clip.type !== "media") return null;
+  const c = hit.clip;
+  return edit(doc, (d) => {
+    for (const t of d.tracks) t.items = t.items.filter((x) => x.id !== id);
+    const items = mainTrack(d).items;
+    let index = items.length;
+    for (let i = 0; i < items.length; i++)
+      if (c.startUs < items[i].startUs + items[i].durationUs / 2) {
+        index = i;
+        break;
+      }
+    items.splice(index, 0, {
+      ...structuredClone(c),
+      transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0 },
+      keyframes: [],
+      opacity: 1,
+      blendMode: "normal",
+      chroma: null,
+      animation: { in: null, out: null, loop: null },
+    });
+  });
+}
+
 export function overlayTracks(doc: TimelineDoc) {
   return doc.tracks.filter((t) => t.kind === "overlay");
 }
