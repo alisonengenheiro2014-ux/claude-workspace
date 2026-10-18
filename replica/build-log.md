@@ -48,6 +48,15 @@ Conclusion: a web app cannot skip this conversion from the photo library; the
 Files app ("Escolher Arquivos") is the remaining route, and a native wrapper
 is the only full fix. The test buttons were removed.
 
+**Bug from the iPhone (2026-10-18): a reopened project showed a black preview
+and felt stuck.** Every earlier iPhone test edited a freshly picked file, kept
+in memory. A reopened project reads the copy saved in OPFS, and that File has
+no type (the stored path has no extension), so the blob URL had an empty
+content type; Safari will not play that, Chromium sniffs it (which is why the
+browser checks missed it). Fix: files read back from OPFS get their original
+type again (a typed slice, no copy), and a video that fails to load now shows
+a message on the preview instead of staying black.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

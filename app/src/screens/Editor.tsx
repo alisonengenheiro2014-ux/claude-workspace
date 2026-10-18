@@ -133,6 +133,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const [fullscreen, setFullscreen] = useState(false);
   const [importing, setImporting] = useState<ImportProgress | null>(null);
   const [missing, setMissing] = useState<Set<Id>>(new Set());
+  const [mediaError, setMediaError] = useState<string | null>(null);
   const [exportOptions, setExportOptions] = useState<ExportOptions>(() => loadExportOptions(projectId));
 
   const doc = useEditor((s) => s.draft ?? s.doc);
@@ -175,6 +176,7 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (state !== "ready" || !videoRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current || !bgCanvasRef.current) return;
     const p = new Player(videoRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current, bgCanvasRef.current);
     player.current = p;
+    p.onMediaError = setMediaError;
     void p.showAt(useEditor.getState().playheadUs);
     // repaint the frame under the playhead whenever it or the doc changes
     let queued = false;
@@ -502,6 +504,11 @@ export function Editor({ projectId }: { projectId: Id }) {
             Guardando {copying.size > 1 ? `${copying.size} vídeos` : "vídeo"} no app…{" "}
             {Math.round(([...copying.values()].reduce((a, b) => a + b, 0) / copying.size) * 100)}%
           </span>
+        )}
+        {mediaError && (
+          <p role="alert" className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-surface-2/95 p-3 text-center text-sm">
+            {mediaError}
+          </p>
         )}
         {saveState === "error" && (
           <span role="alert" className="absolute left-2 top-2 rounded-sm bg-danger px-2 py-1 text-xs text-on-danger">

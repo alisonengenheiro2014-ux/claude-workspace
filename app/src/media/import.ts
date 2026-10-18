@@ -45,7 +45,36 @@ export async function assetFile(asset: AssetRow): Promise<File | null> {
   const inMemory = pending.get(asset.id);
   if (inMemory) return inMemory;
   if (asset.status !== "ready" && !copied.has(asset.id)) return null;
-  return readFile(asset.opfsPath);
+  const stored = await readFile(asset.opfsPath);
+  return stored && withType(stored, asset);
+}
+
+const MIME_BY_EXT: Record<string, string> = {
+  mov: "video/quicktime",
+  mp4: "video/mp4",
+  m4v: "video/x-m4v",
+  webm: "video/webm",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  heic: "image/heic",
+  webp: "image/webp",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  aac: "audio/aac",
+  wav: "audio/wav",
+};
+
+// Files read back from OPFS have no type (our paths have no extension), and
+// Safari will not play a video from a blob URL without one: the preview of a
+// reopened project stayed black. Give the file back the type it came with.
+function withType(file: File, asset: AssetRow): File {
+  if (file.type) return file;
+  const ext = asset.name.split(".").pop()?.toLowerCase() ?? "";
+  const type = asset.mime && asset.mime !== "application/octet-stream" ? asset.mime : (MIME_BY_EXT[ext] ?? "");
+  if (!type) return file;
+  // slice() makes a typed view of the same bytes, nothing is copied
+  return new File([file.slice(0, file.size, type)], asset.name, { type, lastModified: file.lastModified });
 }
 
 function kindOf(file: File): AssetKind | null {

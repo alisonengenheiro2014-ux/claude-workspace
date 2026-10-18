@@ -49,6 +49,8 @@ export class Player {
     audio.attachVideo(video);
     video.addEventListener("seeked", this.onSeeked);
     video.addEventListener("loadedmetadata", this.onMeta);
+    video.addEventListener("error", this.onVideoError);
+    video.addEventListener("loadeddata", this.onVideoOk);
   }
 
   dispose() {
@@ -57,6 +59,8 @@ export class Player {
     this.release();
     this.video.removeEventListener("seeked", this.onSeeked);
     this.video.removeEventListener("loadedmetadata", this.onMeta);
+    this.video.removeEventListener("error", this.onVideoError);
+    this.video.removeEventListener("loadeddata", this.onVideoOk);
     clearTimeout(this.seekTimer);
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     for (const b of this.images.values()) b.close();
@@ -241,6 +245,16 @@ export class Player {
     drawFrame(this.canvas.getContext("2d")!, frameBgOf(d), containDraw(bmp, bmp.width, bmp.height));
     this.show("image");
   }
+
+  // Tells the screen when a video can't be shown, instead of a silent black frame.
+  onMediaError: ((message: string | null) => void) | null = null;
+  private onVideoError = () => {
+    if (!this.video.getAttribute("src")) return; // released on purpose
+    const e = this.video.error;
+    const why = e?.code === 4 ? "formato não suportado" : e?.code === 3 ? "erro ao decodificar" : e?.code === 2 ? "erro ao ler o arquivo" : "erro desconhecido";
+    this.onMediaError?.(`Não foi possível mostrar este vídeo (${why}${e?.message ? `: ${e.message}` : ""}).`);
+  };
+  private onVideoOk = () => this.onMediaError?.(null);
 
   // Safari ignores a seek made before the file's metadata has loaded, and
   // then never fires "seeked": the preview stayed black. Seeks wait for it.
