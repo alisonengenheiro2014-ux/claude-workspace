@@ -338,3 +338,19 @@ describe("effects", () => {
     expect(validateDoc(d, assets)).toEqual([]);
   });
 });
+
+describe("chroma key and masks", () => {
+  it("the key colour goes clear, other colours stay", async () => {
+    const { keyImage } = await import("./chroma");
+    const px = (r: number, g: number, b: number) => ({ data: new Uint8ClampedArray([r, g, b, 255]) }) as ImageData;
+    const green = px(0, 177, 64);
+    keyImage(green, { color: "#00b140", intensity: 0.4, shadow: 0.5 });
+    expect(green.data[3]).toBe(0);
+    const red = px(220, 20, 20);
+    keyImage(red, { color: "#00b140", intensity: 0.4, shadow: 0.5 });
+    expect(Array.from(red.data)).toEqual([220, 20, 20, 255]);
+    const darkGreen = px(0, 90, 32); // a shadow on the screen still goes
+    keyImage(darkGreen, { color: "#00b140", intensity: 0.4, shadow: 0.5 });
+    expect(darkGreen.data[3]).toBeLessThan(60);
+  });
+});

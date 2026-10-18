@@ -24,6 +24,8 @@ import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, typ
 import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { overlayAt, overlaysAt } from "../editor/overlay";
 import { blendOf } from "../editor/blend";
+import { keyImage } from "../editor/chroma";
+import { drawMask } from "../editor/mask";
 import { applyEffects, effectsAt } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
@@ -262,6 +264,7 @@ export async function exportTimeline(
     const overlayImages = new Map<Id, ImageBitmap>();
     const readers = new Map<Id, Reader>();
     let overlayScratch: OffscreenCanvas | null = null;
+    let maskScratch: OffscreenCanvas | null = null;
     const closeReader = async (r: Reader) => {
       r.current?.close();
       r.next?.close();
@@ -326,7 +329,7 @@ export async function exportTimeline(
         ctx.globalCompositeOperation = blendOf(c.blendMode).canvas;
         ctx.translate(b.cx, b.cy);
         ctx.rotate((b.rotation * Math.PI) / 180);
-        if (isNeutral(look)) draw(ctx, b);
+        if (isNeutral(look) && !c.chroma && !c.mask) draw(ctx, b);
         else {
           // filtered on its own canvas first, so the look stays inside it
           const w = Math.max(1, Math.round(b.w));
@@ -339,6 +342,19 @@ export async function exportTimeline(
           draw(o, { ...b, w, h });
           o.restore();
           applyLook(o, { x: 0, y: 0, w, h }, look);
+          if (c.chroma) {
+            const img = o.getImageData(0, 0, w, h);
+            keyImage(img, c.chroma);
+            o.putImageData(img, 0, 0);
+          }
+          if (c.mask) {
+            if (!maskScratch || maskScratch.width !== w || maskScratch.height !== h) maskScratch = new OffscreenCanvas(w, h);
+            drawMask(maskScratch.getContext("2d")!, w, h, c.mask);
+            o.save();
+            o.globalCompositeOperation = "destination-in";
+            o.drawImage(maskScratch, 0, 0);
+            o.restore();
+          }
           ctx.drawImage(overlayScratch, -b.w / 2, -b.h / 2, b.w, b.h);
         }
         ctx.restore();

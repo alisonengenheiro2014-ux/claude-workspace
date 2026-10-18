@@ -13,6 +13,8 @@ import {
   FlipHorizontal2,
   Gauge,
   Layers,
+  Circle,
+  Pipette,
   Speech,
   Palette,
   RectangleHorizontal,
@@ -81,6 +83,7 @@ import { OptionGrid } from "../ui/OptionGrid";
 import { ProgressBar } from "../ui/Progress";
 import { reverseRange } from "../media/reverse";
 import { speak } from "../captions/tts";
+import { ChromaSheet, MaskSheet } from "./OverlaySheets";
 import { STICKERS, STICKER_STYLE } from "../editor/text";
 import { isZoomed, keyNear, mainZoom } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
@@ -115,6 +118,8 @@ type Panel =
   | { name: "adjust"; id: Id }
   | { name: "crop"; id: Id }
   | { name: "stickers" }
+  | { name: "mask" }
+  | { name: "chroma" }
   | { name: "effects" };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
@@ -553,6 +558,12 @@ export function Editor({ projectId }: { projectId: Id }) {
     setPanel(null);
   }
 
+  function changeOverlay(patch: Partial<MediaClip>) {
+    const s = useEditor.getState();
+    const cur = s.draft ?? s.doc;
+    if (cur && selectedOverlay) s.setDraft(setItem(cur, selectedOverlay.id, patch));
+  }
+
   // S13 Efeitos: add at the playhead, or swap the selected one
   function onEffect(id: string) {
     const s = useEditor.getState();
@@ -850,6 +861,8 @@ export function Editor({ projectId }: { projectId: Id }) {
             >
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
               <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => setPanel({ name: "opacity" })} />
+              <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
+              <ToolbarItem icon={<Pipette />} label="Chroma key" onClick={() => (stop(), setPanel({ name: "chroma" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
@@ -1076,6 +1089,9 @@ export function Editor({ projectId }: { projectId: Id }) {
         />
         <p className="mt-3 text-xs text-text-muted">O efeito entra no cursor por 3 s; puxe as pontas dele na linha do tempo para mudar a duração.</p>
       </Sheet>
+
+      <MaskSheet clip={panel?.name === "mask" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Máscara")} />
+      <ChromaSheet clip={panel?.name === "chroma" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Chroma key")} />
 
       <CropSheet clip={cropClip} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
 
