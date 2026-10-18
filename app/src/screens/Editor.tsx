@@ -13,6 +13,7 @@ import {
   FlipHorizontal2,
   Gauge,
   Layers,
+  PanelsTopLeft,
   SquarePlus,
   Shuffle,
   ScissorsSquare,
@@ -114,6 +115,9 @@ import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import { CoverSheet } from "./CoverSheet";
+import { LayoutSheet } from "./LayoutSheet";
+import { LAYOUTS, layerInCell, mainInCell } from "../editor/layouts";
+import { overlaysAt } from "../editor/overlay";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -128,6 +132,7 @@ import { ExportSheet, resolutionLabel } from "./ExportSheet";
 
 type Panel =
   | null
+  | { name: "layout" }
   | { name: "cover" }
   | { name: "speed" }
   | { name: "volume" }
@@ -249,6 +254,57 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [bgAssetId]);
   const bgPicker = useRef<HTMLInputElement>(null);
   const coverPicker = useRef<HTMLInputElement>(null);
+
+  // Tela dividida: the main video at the cursor in cell 1, the layers there
+  // in the others; when some are missing, the phone's picker asks for them
+  // (opened straight from the tap, as iOS wants) and they come in as layers.
+  const layoutPicker = useRef<HTMLInputElement>(null);
+  const pendingLayout = useRef<string | null>(null);
+  function arrangeLayout(doc: TimelineDoc, layoutId: string, layerIds: Id[]) {
+    const layout = LAYOUTS.find((l) => l.id === layoutId)!;
+    const s = useEditor.getState();
+    const { width: W, height: H } = frameSize(doc, s.assets, 1080);
+    const main = clipAt(doc, s.playheadUs)?.clip;
+    if (!main) return null;
+    let next = setItem(doc, main.id, mainInCell(s.assets.get(main.assetId), main, W, H, layout.cells[0]));
+    layerIds.slice(0, layout.cells.length - 1).forEach((id, i) => {
+      const hit = findItem(next, id);
+      if (hit?.clip.type === "media") next = setItem(next, id, layerInCell(s.assets.get(hit.clip.assetId), W, H, layout.cells[i + 1]));
+    });
+    return next;
+  }
+  function onLayout(layoutId: string) {
+    const s = useEditor.getState();
+    if (!s.doc || !clipAt(s.doc, s.playheadUs)) return toast("Ponha o cursor sobre o vídeo principal.");
+    const layout = LAYOUTS.find((l) => l.id === layoutId)!;
+    const layers = overlaysAt(s.doc, s.playheadUs);
+    if (layers.length < layout.cells.length - 1) {
+      pendingLayout.current = layoutId;
+      layoutPicker.current?.click();
+      return;
+    }
+    const next = arrangeLayout(s.doc, layoutId, layers.map((c) => c.id));
+    if (next) s.commit(next, "Tela dividida");
+    setPanel(null);
+  }
+  async function onLayoutFiles(files: File[]) {
+    const layoutId = pendingLayout.current;
+    pendingLayout.current = null;
+    if (!layoutId) return;
+    setPanel(null);
+    const s0 = useEditor.getState();
+    const need = LAYOUTS.find((l) => l.id === layoutId)!.cells.length - 1 - (s0.doc ? overlaysAt(s0.doc, s0.playheadUs).length : 0);
+    const added = await runImport(projectId, files.slice(0, need), setImporting, toast);
+    if (!added.length) return;
+    await useEditor.getState().addAssets(added);
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    let doc = s.doc;
+    for (const a of added) doc = addOverlay(doc, a, s.playheadUs).doc;
+    const next = arrangeLayout(doc, layoutId, overlaysAt(doc, s.playheadUs).map((c) => c.id));
+    if (next) s.commit(next, "Tela dividida");
+    if (added.length < need) toast(`Faltou ${need - added.length === 1 ? "1 vídeo" : `${need - added.length} vídeos`} para completar o modelo.`);
+  }
 
   // Capa: a frame of the edit or a photo becomes the export's first frame
   function pickCover(cover: TimelineDoc["cover"]) {
@@ -1258,6 +1314,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
               <ToolbarItem icon={<Smile />} label="Stickers" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "stickers" }))} />
               <ToolbarItem icon={<Layers />} label="Camada" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
+              <ToolbarItem icon={<PanelsTopLeft />} label="Tela dividida" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "layout" }))} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "effects" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
@@ -1271,6 +1328,14 @@ export function Editor({ projectId }: { projectId: Id }) {
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
       <FilePicker ref={bgPicker} accept="image/*" onFiles={(f) => void onBgImage(f)} />
       <FilePicker ref={coverPicker} accept="image/*" onFiles={(f) => void onCoverImage(f)} />
+      <FilePicker ref={layoutPicker} onFiles={(f) => void onLayoutFiles(f)} />
+      <LayoutSheet
+        open={panel?.name === "layout"}
+        aspect={frame.width / frame.height}
+        layers={doc ? overlaysAt(doc, playheadUs).length : 0}
+        onPick={onLayout}
+        onClose={() => setPanel(null)}
+      />
       <CoverSheet
         open={panel?.name === "cover"}
         cover={doc?.cover ?? null}

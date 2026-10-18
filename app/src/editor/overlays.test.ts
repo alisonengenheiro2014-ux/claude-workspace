@@ -427,3 +427,27 @@ describe("layer tools (CapCut's Camada menu)", () => {
     expect(layerToMain(next, ids[0])).toBeNull(); // only layers
   });
 });
+
+describe("tela dividida", () => {
+  it("puts the main video and a layer into the halves of a 9:16 frame, each filling its half", async () => {
+    const { LAYOUTS, mainInCell, layerInCell } = await import("./layouts");
+    const { overlayBox } = await import("./overlay");
+    const { containRect, shapedSize, shapeOf } = await import("./frame");
+    const [top, bottom] = LAYOUTS.find((l) => l.id === "2v")!.cells;
+    const upright: AssetRow = { ...A, width: 1080, height: 1920 };
+    const land: AssetRow = { ...A, width: 1920, height: 1080 };
+    const main = insertMedia(emptyDoc(), [upright], 0).doc.tracks[0].items[0] as MediaClip;
+    const m = mainInCell(upright, main, 1080, 1920, top);
+    // the picture shown (cropped, contained, zoomed) is the top half: 1080x960 centred at y 480
+    const size = shapedSize(1080, 1920, shapeOf({ ...main, ...m } as MediaClip));
+    const r = containRect(size.w, size.h, 1080, 1920);
+    expect(r.w * m.transform!.scale).toBeCloseTo(1080);
+    expect(r.h * m.transform!.scale).toBeCloseTo(960);
+    expect(m.transform!.y * 1920).toBeCloseTo(480);
+    const l = layerInCell(land, 1080, 1920, bottom);
+    const b = overlayBox(land, 1080, 1920, l.transform!, l.crop);
+    expect(b.w).toBeCloseTo(1080);
+    expect(b.h).toBeCloseTo(960);
+    expect(b.cy).toBeCloseTo(1440);
+  });
+});
