@@ -66,6 +66,12 @@ function Ruler({ totalUs, pxPerSec }: { totalUs: number; pxPerSec: number }) {
   );
 }
 
+// Touching the timeline while it plays stops playback at once (as in CapCut),
+// so the drag that follows scrubs from there.
+function pauseIfPlaying() {
+  if (useEditor.getState().playing) useEditor.getState().setPlaying(false);
+}
+
 export function TimelineView({
   onAddMedia,
   onTransition,
@@ -129,7 +135,10 @@ export function TimelineView({
       setZoom(start * (e as Event & { scale: number }).scale);
     };
     const onWheel = (e: WheelEvent) => {
-      if (!e.ctrlKey) return;
+      if (!e.ctrlKey) {
+        pauseIfPlaying();
+        return;
+      }
       e.preventDefault();
       setZoom(useEditor.getState().pxPerSec * Math.exp(-e.deltaY / 200));
     };
@@ -329,10 +338,11 @@ export function TimelineView({
         aria-valuenow={Math.round(playheadUs / 1e6)}
         aria-valuetext={`${formatTime(playheadUs)} de ${formatTime(totalUs)}`}
         onScroll={onScroll}
+        onPointerDownCapture={pauseIfPlaying}
         onKeyDown={onKeyDown}
         onClick={(e) => !(e.target as HTMLElement).closest("button") && select(null)}
         className="no-scrollbar h-full overflow-auto"
-        style={{ touchAction: playing || reorder ? "none" : "pan-x pan-y" }}
+        style={{ touchAction: reorder ? "none" : "pan-x pan-y" }}
       >
         <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />

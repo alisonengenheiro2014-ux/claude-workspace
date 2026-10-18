@@ -197,6 +197,8 @@ export function Editor({ projectId }: { projectId: Id }) {
     // repaint the frame under the playhead whenever it or the doc changes
     let queued = false;
     const unsub = useEditor.subscribe((s, prev) => {
+      // playback stopped from elsewhere (touching the timeline): stop the player too
+      if (prev.playing && !s.playing) p.pause();
       if (s.playing) return;
       if (s.playheadUs === prev.playheadUs && s.doc === prev.doc && s.draft === prev.draft && s.playing === prev.playing) return;
       if (queued) return;
