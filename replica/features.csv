@@ -29,7 +29,7 @@ Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,ye
 Legendas automáticas a partir da fala,legendas,should,yes,yes,"Whisper no próprio iPhone (transformers.js; GPU se houver, senão CPU); modelo baixado uma vez e guardado; testado com whisper-tiny em CPU"
 Editar legendas em lote (texto e estilo),legendas,should,yes,yes,"lista para corrigir cada legenda, apagar uma ou todas; estilo e posição valem para todas"
 Animações de texto (entrada saída loop),texto,should,yes,partial,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
-Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo toca sem som durante a gravação"
+Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo toca sem som; testado no iPhone (sessão de áudio ""tocar e gravar"" durante a gravação)"
 Extrair o áudio de um vídeo,áudio,should,yes,yes,o clipe fica sem som e o áudio vira um item próprio
 Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,no,S12
 Modo de mistura e opacidade,sobrepor,should,yes,no,

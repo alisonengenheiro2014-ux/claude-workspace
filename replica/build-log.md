@@ -57,6 +57,10 @@ browser checks missed it). Fix: files read back from OPFS get their original
 type again (a typed slice, no copy), and a video that fails to load now shows
 a message on the preview instead of staying black.
 
+**Confirmed on the iPhone (2026-10-18):** a reopened project shows its
+video again (typed OPFS files), and voice-over recording works after switching
+the iOS audio session to play-and-record while recording.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |
