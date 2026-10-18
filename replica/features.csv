@@ -39,9 +39,9 @@ Filtros de cor com intensidade,cor,should,yes,yes,"17 filtros próprios (vívido
 Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,partial,"brilho, contraste, saturação, exposição, temperatura, matiz, vinheta; faltam nitidez, realces e sombras"
 Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
 Keyframes de posição escala rotação e opacidade,keyframes,should,yes,no,S16
-Recortar (crop) e girar o clipe,clipe,should,yes,no,
+Recortar (crop) e girar o clipe,clipe,should,yes,yes,"formatos 1:1 9:16 16:9 4:5 3:4, zoom, arrastar na prévia, girar 90°, espelhar"
 Inverter clipe (reverso),clipe,should,yes,no,
-Congelar quadro,clipe,should,yes,no,
+Congelar quadro,clipe,should,yes,yes,"3 s do quadro sob o cursor, sem som; aparar ou dividir mantém o quadro"
 Substituir mídia de um clipe mantendo as edições,clipe,should,yes,yes,
 Animações de clipe (entrada saída),clipe,should,yes,no,
 Ocultar a faixa e trancar,editor,should,yes,no,

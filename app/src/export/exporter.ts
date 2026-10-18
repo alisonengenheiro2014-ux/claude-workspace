@@ -20,7 +20,7 @@ import {
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
-import { containDraw, containRect, drawFrame, frameBgOf } from "../editor/frame";
+import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { overlayAlpha, overlayBox, overlaysAt } from "../editor/overlay";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
@@ -119,7 +119,7 @@ export async function mixAudio(
     .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media").map((c) => ({ clip: c, kind: t.kind })));
   for (const { clip, kind } of sounding) {
     const asset = assets.get(clip.assetId);
-    if (!asset || asset.kind === "image" || !asset.hasAudio || clip.startUs >= totalUs || !include(kind, asset)) continue;
+    if (!asset || asset.kind === "image" || clip.freeze || !asset.hasAudio || clip.startUs >= totalUs || !include(kind, asset)) continue;
     if (!opts.flat && clip.volume === 0) continue;
     const track = await (await openInput(asset, inputs)).getPrimaryAudioTrack();
     if (!track) continue;
@@ -167,9 +167,28 @@ export async function exportTimeline(
   const ctx = canvas.getContext("2d")!;
   const bg = doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
   const fbg = frameBgOf(doc);
-  const sampleDraw = (s: VideoSample) => (c: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D) => {
-    s.drawWithFit(c, { fit: "contain" });
-    return containRect(s.displayWidth, s.displayHeight, c.canvas.width, c.canvas.height);
+  // A decoded frame, letterboxed; with a crop/turn/mirror it goes through a
+  // canvas the size of the picture first (the sample applies its own rotation).
+  let shapeScratch: OffscreenCanvas | null = null;
+  const sampleDraw = (s: VideoSample, shape: Shape) => (c: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D) => {
+    if (plainShape(shape)) {
+      s.drawWithFit(c, { fit: "contain" });
+      return containRect(s.displayWidth, s.displayHeight, c.canvas.width, c.canvas.height);
+    }
+    if (!shapeScratch || shapeScratch.width !== s.displayWidth || shapeScratch.height !== s.displayHeight)
+      shapeScratch = new OffscreenCanvas(s.displayWidth, s.displayHeight);
+    s.draw(shapeScratch.getContext("2d")!, 0, 0);
+    return shapedDraw(shapeScratch, s.displayWidth, s.displayHeight, shape)(c);
+  };
+  // A video frame kept as a picture (freeze frames, transition stills).
+  const frameAsPicture = async (asset: AssetRow, us: number) => {
+    const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
+    const sample = track ? await new VideoSampleSink(track).getSample(us / 1e6) : null;
+    if (!sample) return null;
+    const c = new OffscreenCanvas(sample.displayWidth, sample.displayHeight);
+    sample.draw(c.getContext("2d")!, 0, 0);
+    sample.close();
+    return c;
   };
   const inputs = new Map<Id, Input>();
 
@@ -203,19 +222,14 @@ export async function exportTimeline(
       const c = new OffscreenCanvas(width, height);
       const cx = c.getContext("2d")!;
       const a = assets.get(clip.assetId);
+      let pic: ImageBitmap | OffscreenCanvas | null = null;
       if (a?.kind === "image") {
         const file = await assetFile(a);
-        const bmp = file ? await createImageBitmap(file) : null;
-        const r = drawFrame(cx, fbg, bmp ? containDraw(bmp, bmp.width, bmp.height) : () => null);
-        if (r) applyLook(cx, r, lookOf(clip));
-        bmp?.close();
-      } else if (a) {
-        const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
-        const sample = track ? await new VideoSampleSink(track).getSample(us / 1e6) : null;
-        const r = drawFrame(cx, fbg, sample ? sampleDraw(sample) : () => null);
-        if (r) applyLook(cx, r, lookOf(clip));
-        sample?.close();
-      } else drawFrame(cx, fbg, () => null);
+        pic = file ? await createImageBitmap(file) : null;
+      } else if (a) pic = await frameAsPicture(a, clip.freeze ? clip.inUs : us);
+      const r = drawFrame(cx, fbg, pic ? shapedDraw(pic, pic.width, pic.height, shapeOf(clip)) : () => null);
+      if (r) applyLook(cx, r, lookOf(clip));
+      if (pic instanceof ImageBitmap) pic.close();
       return c;
     };
 
@@ -345,17 +359,28 @@ export async function exportTimeline(
             drawFrame(lctx, fbg, () => null);
             await emit();
           }
-        } else if (asset.kind === "image") {
-          const file = await assetFile(asset);
-          if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
-          const bmp = await createImageBitmap(file);
+        } else if (asset.kind === "image" || clip.freeze) {
+          // a photo, or a video frame held (freeze frame)
+          let pic: ImageBitmap | OffscreenCanvas | null;
+          if (asset.kind === "image") {
+            const file = await assetFile(asset);
+            if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
+            pic = await createImageBitmap(file);
+          } else {
+            try {
+              pic = await frameAsPicture(asset, clip.inUs);
+            } catch (err) {
+              throw readError(asset, err);
+            }
+          }
+          const shape = shapeOf(clip);
           try {
             for (let f = first; f < last; f++) {
-              paint(drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height)));
+              paint(drawFrame(lctx, fbg, pic ? shapedDraw(pic, pic.width, pic.height, shape) : () => null));
               await emit();
             }
           } finally {
-            bmp.close();
+            if (pic instanceof ImageBitmap) pic.close();
           }
         } else {
           const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
@@ -364,6 +389,7 @@ export async function exportTimeline(
           // the latest decoded frame at or before its source time. Each frame is
           // closed as soon as it is replaced: 4K frames are large.
           const sink = new VideoSampleSink(track);
+          const shape = shapeOf(clip);
           const inS = clip.inUs / 1e6;
           const outS = clip.outUs / 1e6;
           const samples = sink.samples(inS, outS);
@@ -387,7 +413,7 @@ export async function exportTimeline(
                 current = next;
                 next = ended ? null : await pull();
               }
-              paint(drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null));
+              paint(drawFrame(lctx, fbg, current ? sampleDraw(current, shape) : () => null));
               await emit();
             }
           } catch (err) {

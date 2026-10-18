@@ -261,7 +261,8 @@ export interface MediaClip extends ClipBase {
   chroma: { color: string; intensity: number; shadow: number } | null;
   filter: { id: string; intensity: number } | null;
   adjust: Adjust | null;
-  freeze: boolean; // a freeze frame is a media clip of one source frame
+  freeze: boolean; // a freeze frame is a media clip of one source frame (inUs); outUs - inUs is its length
+  flip?: boolean; // mirrored left-right (after the crop)
   stabilize: 0 | 1 | 2 | 3; // off, low, medium, high
   denoise: boolean;
 }
@@ -337,7 +338,7 @@ export function validateDoc(doc: TimelineDoc, assets: Map<Id, AssetRow>): string
         if (!(0 <= clip.inUs && clip.inUs < clip.outUs)) {
           errors.push(`${clip.id}: need 0 <= inUs < outUs`);
         }
-        if (asset && asset.kind !== "image" && clip.outUs > asset.durationUs) {
+        if (asset && asset.kind !== "image" && !clip.freeze && clip.outUs > asset.durationUs) {
           errors.push(`${clip.id}: outUs past the end of the media`);
         }
         if (clip.speed < 0.1 || clip.speed > 100) errors.push(`${clip.id}: speed out of 0.1..100`);

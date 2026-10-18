@@ -147,7 +147,10 @@ export function split(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: TimelineDo
     const i = items.findIndex((c) => c.id === clipId);
     const left = items[i] as MediaClip;
     const cut = sourceTimeUs(left, atUs - left.startUs);
-    const right: MediaClip = { ...structuredClone(left), id: rightId, inUs: cut };
+    // a freeze frame keeps its one frame in both parts
+    const right: MediaClip = left.freeze
+      ? { ...structuredClone(left), id: rightId, outUs: left.inUs + (left.outUs - cut) }
+      : { ...structuredClone(left), id: rightId, inUs: cut };
     left.outUs = cut;
     items.splice(i + 1, 0, right);
     // a transition that followed the clip now follows its right part
@@ -164,9 +167,41 @@ export function trim(doc: TimelineDoc, clipId: Id, edge: "start" | "end", deltaU
     if (!c) return;
     const delta = Math.round(deltaUs * c.speed);
     const min = Math.round(MIN_CLIP_US * c.speed);
+    if (c.freeze) {
+      // only its length changes, never the frame it shows
+      c.outUs = Math.max(c.inUs + min, c.outUs + (edge === "start" ? -delta : delta));
+      return;
+    }
     if (edge === "start") c.inUs = Math.max(0, Math.min(c.outUs - min, c.inUs + delta));
     else c.outUs = Math.max(c.inUs + min, Math.min(mediaUs ?? Number.POSITIVE_INFINITY, c.outUs + delta));
   });
+}
+
+// S04 Congelar: the frame under the playhead held for 3 s, inserted there
+// (the clip is split around it). Silent.
+export const FREEZE_US = 3_000_000;
+export function freezeAt(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: TimelineDoc; id: Id } | null {
+  const clip = findClip(doc, clipId);
+  if (!clip || clip.freeze) return null;
+  const offset = Math.max(0, Math.min(clip.durationUs - 1, atUs - clip.startUs));
+  const frameUs = Math.min(clip.outUs - 1000, sourceTimeUs(clip, offset));
+  const id = uid();
+  const next = edit(doc, (d) => {
+    const items = mainTrack(d).items;
+    let i = items.findIndex((c) => c.id === clipId); // the still goes right after items[i]
+    const left = items[i] as MediaClip;
+    // split unless the playhead is at one of the clip's ends
+    if (offset >= MIN_CLIP_US && clip.durationUs - offset >= MIN_CLIP_US) {
+      const right: MediaClip = { ...structuredClone(left), id: uid(), inUs: frameUs, fadeInUs: 0 };
+      left.outUs = frameUs;
+      left.fadeOutUs = 0;
+      items.splice(i + 1, 0, right);
+      for (const t of d.transitions) if (t.fromClipId === clipId) t.fromClipId = right.id;
+    } else if (offset < MIN_CLIP_US) i -= 1; // before the clip
+    const still: MediaClip = { ...structuredClone(left), id, freeze: true, inUs: frameUs, outUs: frameUs + FREEZE_US, speed: 1, volume: 0, fadeInUs: 0, fadeOutUs: 0 };
+    items.splice(i + 1, 0, still);
+  });
+  return { doc: next, id };
 }
 
 export function remove(doc: TimelineDoc, clipId: Id): TimelineDoc {

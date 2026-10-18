@@ -3,7 +3,7 @@
 // and vignette as layers over the picture's rectangle. Overlays get theirs in
 // OverlayMedia. Same look as the export (see look.ts).
 import { useEffect, useState, type RefObject } from "react";
-import { containRect } from "./frame";
+import { containRect, shapedSize, shapeOf } from "./frame";
 import { cssFilter, lookOf, NEUTRAL, vignetteCss, washes, type Look } from "./look";
 import { displaySize } from "./overlay";
 import { useEditor } from "./store";
@@ -43,7 +43,8 @@ export function LookLayer({
       const f = css === "none" ? "" : css;
       if (video.current && video.current.style.filter !== f) video.current.style.filter = f;
       if (image.current && image.current.style.filter !== f) image.current.style.filter = f;
-      const size = displaySize(hit ? s.assets.get(hit.clip.assetId) : undefined);
+      const src = displaySize(hit ? s.assets.get(hit.clip.assetId) : undefined);
+      const size = hit ? shapedSize(src.w, src.h, shapeOf(hit.clip)) : src;
       const rect = containRect(size.w, size.h, width, height);
       const k = JSON.stringify([look, rect]);
       if (k !== key) {

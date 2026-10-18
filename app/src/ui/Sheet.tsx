@@ -10,20 +10,24 @@ export function Sheet({
   onOpenChange,
   title,
   onBack,
+  modal = true,
   children,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   title: string;
   onBack?: () => void; // a sub-page of the sheet: back to its main page
+  // false: no scrim, and touching the preview does not close it (crop drags there)
+  modal?: boolean;
   children: ReactNode;
 }) {
   return (
-    <Dialog.Root open={open} onOpenChange={onOpenChange}>
+    <Dialog.Root open={open} onOpenChange={onOpenChange} modal={modal}>
       <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/30" />
+        {modal && <Dialog.Overlay className="fixed inset-0 z-40 bg-scrim/30" />}
         <Dialog.Content
           aria-describedby={undefined}
+          onInteractOutside={modal ? undefined : (e) => e.preventDefault()}
           className="pb-safe fixed inset-x-0 bottom-0 z-50 flex max-h-[var(--layout-sheet-max)] flex-col rounded-t-lg bg-surface shadow-sheet outline-none"
         >
           <div className="flex h-12 shrink-0 items-center justify-between border-b border-border pl-4 pr-1">

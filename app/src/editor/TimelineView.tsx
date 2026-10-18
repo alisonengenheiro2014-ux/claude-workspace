@@ -16,7 +16,8 @@ function tilesFor(clip: MediaClip, width: number, pxPerSec: number, thumbs: Thum
   if (!thumbs?.urls.length) return null;
   const n = Math.max(1, Math.ceil(width / TILE));
   return Array.from({ length: n }, (_, i) => {
-    const srcS = (clip.inUs + ((i * TILE) / pxPerSec) * 1e6 * clip.speed) / 1e6;
+    // a freeze frame shows its one frame all along
+    const srcS = (clip.inUs + (clip.freeze ? 0 : ((i * TILE) / pxPerSec) * 1e6 * clip.speed)) / 1e6;
     let best = 0;
     for (let k = 1; k < thumbs.times.length; k++) {
       if (Math.abs(thumbs.times[k] - srcS) < Math.abs(thumbs.times[best] - srcS)) best = k;

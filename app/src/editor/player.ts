@@ -13,7 +13,8 @@ import { audio } from "./audio";
 import { ALL_FORMATS, BlobSource, CanvasSink, Input } from "mediabunny";
 import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs, transitionAt } from "./timeline";
 import { fxOf, layerCss, type LayerFx } from "./transitions";
-import { containDraw, frameBgOf, drawFrame } from "./frame";
+import { frameBgOf, drawFrame, plainShape, shapedCss, shapedDraw, shapeOf } from "./frame";
+import { displaySize } from "./overlay";
 
 export class Player {
   private urls = new Map<Id, string>();
@@ -38,6 +39,7 @@ export class Player {
 
   constructor(
     private video: HTMLVideoElement,
+    private videoBox: HTMLElement, // the video's wrapper: transitions move it, the crop moves the video inside
     private canvas: HTMLCanvasElement,
     private fxCanvas: HTMLCanvasElement,
     private dip: HTMLElement,
@@ -100,6 +102,9 @@ export class Player {
         if (!s.playing) this.applyTransition(s.playheadUs);
         this.bgKey = "";
         this.paintBg();
+        const d = s.draft ?? s.doc;
+        const cur = d && mainClips(d).find((c) => c.id === this.clipId);
+        if (cur?.freeze && cur.assetId === asset.id) void this.paintPicture(cur, asset);
       });
     }
     return null;
@@ -150,7 +155,7 @@ export class Player {
     if (!d || !w) {
       if (this.fxShown) {
         this.fxShown = "";
-        this.style(this.video, null, 0);
+        this.style(this.videoBox, null, 0);
         this.style(this.canvas, null, 0);
         this.fxCanvas.style.visibility = "hidden";
         this.dip.style.opacity = "0";
@@ -162,14 +167,15 @@ export class Player {
     const stillClip = liveIsA ? w.to : w.from;
     const liveAsset = assets.get(liveClip.assetId);
     const stillAsset = assets.get(stillClip.assetId);
-    const liveEl = liveAsset?.kind === "image" ? this.canvas : this.video;
+    const liveEl = liveAsset?.kind === "image" || liveClip.freeze ? this.canvas : this.videoBox;
     const fx = fxOf(w.type, w.p);
     const liveFx = liveIsA ? fx.a : fx.b;
     const stillFx = liveIsA ? fx.b : fx.a;
     const liveOnTop = (fx.top === "a") === liveIsA;
     this.style(liveEl, liveFx, liveOnTop ? 2 : 1);
 
-    const bmp = stillAsset ? this.still(stillAsset, liveIsA ? stillClip.inUs : Math.max(stillClip.inUs, stillClip.outUs - 34_000)) : null;
+    const stillUs = liveIsA || stillClip.freeze ? stillClip.inUs : Math.max(stillClip.inUs, stillClip.outUs - 34_000);
+    const bmp = stillAsset ? this.still(stillAsset, stillUs) : null;
     const { width, height } = frameSize(d, assets, 720);
     if (this.fxCanvas.width !== width || this.fxCanvas.height !== height) {
       this.fxCanvas.width = width;
@@ -177,7 +183,7 @@ export class Player {
     }
     const key = `${stillClip.id}:${liveIsA}`;
     if (bmp && this.fxShown !== key) {
-      drawFrame(this.fxCanvas.getContext("2d")!, frameBgOf(d), containDraw(bmp, bmp.width, bmp.height));
+      drawFrame(this.fxCanvas.getContext("2d")!, frameBgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(stillClip)));
       this.fxShown = key;
     } else if (!bmp) this.fxShown = "pending";
     this.fxCanvas.style.visibility = bmp ? "visible" : "hidden";
@@ -232,18 +238,35 @@ export class Player {
     return last ? { clip: last, offsetUs: last.durationUs - 1 } : null;
   }
 
-  private async paintImage(asset: AssetRow) {
-    const bmp = await this.imageFor(asset);
+  // Photos and freeze frames are drawn on the canvas, with the clip's crop.
+  private async paintPicture(clip: MediaClip, asset: AssetRow) {
+    const bmp = clip.freeze ? this.still(asset, clip.inUs) : await this.imageFor(asset);
     const { doc, draft, assets } = useEditor.getState();
     const d = draft ?? doc;
-    if (!bmp || !d || this.disposed) return;
+    if (!d || this.disposed) return;
+    if (!bmp) return this.show("none"); // a freeze frame paints when its still is ready
     const { width, height } = frameSize(d, assets, 720);
     if (this.canvas.width !== width || this.canvas.height !== height) {
       this.canvas.width = width;
       this.canvas.height = height;
     }
-    drawFrame(this.canvas.getContext("2d")!, frameBgOf(d), containDraw(bmp, bmp.width, bmp.height));
+    drawFrame(this.canvas.getContext("2d")!, frameBgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(clip)));
     this.show("image");
+  }
+
+  // Places the <video> inside its box for the clip's crop, turn and mirror.
+  private layoutVideo(clip: MediaClip, asset: AssetRow) {
+    const shape = shapeOf(clip);
+    const st = this.video.style;
+    if (plainShape(shape)) {
+      if (st.width) {
+        st.left = st.top = st.width = st.height = st.maxWidth = st.objectFit = st.clipPath = st.transform = st.transformOrigin = "";
+      }
+      return;
+    }
+    const size = displaySize(asset);
+    const css = shapedCss(size.w, size.h, shape, this.videoBox.clientWidth, this.videoBox.clientHeight);
+    Object.assign(st, css.style);
   }
 
   // Tells the screen when a video can't be shown, instead of a silent black frame.
@@ -304,7 +327,7 @@ export class Player {
     if (!hit || !asset) return this.show("none");
     this.clipId = hit.clip.id;
     this.paintBg();
-    if (asset.kind === "image") return this.paintImage(asset);
+    if (asset.kind === "image" || hit.clip.freeze) return this.paintPicture(hit.clip, asset);
     const url = await this.urlFor(asset);
     if (!url || this.disposed) return this.show("none");
     if (this.video.getAttribute("src") !== url) {
@@ -314,6 +337,7 @@ export class Player {
       this.video.src = url;
       this.video.load();
     }
+    this.layoutVideo(hit.clip, asset);
     this.show("video");
     this.seekVideo(sourceTimeUs(hit.clip, hit.offsetUs) / 1e6);
   }
@@ -357,15 +381,16 @@ export class Player {
     this.clipId = clip.id;
     this.imageClock = null;
     this.paintBg();
-    if (!asset || asset.kind === "image") {
+    if (!asset || asset.kind === "image" || clip.freeze) {
       this.video.pause();
       this.imageClock = { wall: performance.now(), t: clip.startUs + offsetUs };
-      if (asset) void this.paintImage(asset);
+      if (asset) void this.paintPicture(clip, asset);
       else this.show("none");
       return;
     }
     const url = this.urls.get(asset.id);
     const go = () => {
+      this.layoutVideo(clip, asset);
       this.show("video");
       // browsers cap playback rate (16x); the export uses the real speed
       this.video.playbackRate = Math.min(16, Math.max(0.1, clip.speed));

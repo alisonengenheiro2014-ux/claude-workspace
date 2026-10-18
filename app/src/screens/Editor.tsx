@@ -65,10 +65,12 @@ import {
   split,
   splitItem,
   addOverlay,
+  freezeAt,
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
 import { LookLayer } from "../editor/LookLayer";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
+import { CropPan, CropSheet } from "./CropSheet";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -97,7 +99,8 @@ type Panel =
   | { name: "captions"; tab: CaptionTab }
   | { name: "opacity" }
   | { name: "filters"; id: Id }
-  | { name: "adjust"; id: Id };
+  | { name: "adjust"; id: Id }
+  | { name: "crop"; id: Id };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -126,6 +129,7 @@ function loadExportOptions(projectId: Id): ExportOptions {
 export function Editor({ projectId }: { projectId: Id }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
+  const videoBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement>(null);
   const dipRef = useRef<HTMLDivElement>(null);
@@ -200,8 +204,9 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [projectId]);
 
   useEffect(() => {
-    if (state !== "ready" || !videoRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current || !bgCanvasRef.current) return;
-    const p = new Player(videoRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current, bgCanvasRef.current);
+    if (state !== "ready" || !videoRef.current || !videoBoxRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current || !bgCanvasRef.current)
+      return;
+    const p = new Player(videoRef.current, videoBoxRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current, bgCanvasRef.current);
     player.current = p;
     p.onMediaError = setMediaError;
     void p.showAt(useEditor.getState().playheadUs);
@@ -409,6 +414,25 @@ export function Editor({ projectId }: { projectId: Id }) {
     toast("Aplicado a todos os clipes");
   }
 
+  // S04 Recortar and Congelar
+  const cropHit = doc && panel?.name === "crop" ? findItem(doc, panel.id) : null;
+  const cropClip = cropHit?.clip.type === "media" ? cropHit.clip : null;
+  function changeCrop(patch: Partial<MediaClip>) {
+    const s = useEditor.getState();
+    const cur = s.draft ?? s.doc;
+    if (cur && cropClip) s.setDraft(setItem(cur, cropClip.id, patch));
+  }
+  function onFreeze() {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc || !target) return;
+    if (assets.get(target.assetId)?.kind !== "video") return toast("Congelar funciona em vídeos.");
+    const r = freezeAt(s.doc, target.id, s.playheadUs);
+    if (!r) return toast("Esse trecho já é um quadro congelado.");
+    s.commit(r.doc, "Congelar");
+    s.select(r.id);
+  }
+
   // S12 Sobrepor: a photo or video over the main video, at the playhead
   async function onAddOverlay(files: File[]) {
     stop();
@@ -537,18 +561,23 @@ export function Editor({ projectId }: { projectId: Id }) {
             className="pointer-events-none absolute inset-0 size-full scale-110 blur-xl brightness-75"
             style={{ visibility: "hidden" }}
           />
-          <video
-            ref={videoRef}
-            aria-label="Prévia do vídeo"
-            playsInline
-            className="pointer-events-none absolute inset-0 size-full object-contain"
-          />
+          <div ref={videoBoxRef} className="pointer-events-none absolute inset-0">
+            <video
+              ref={videoRef}
+              aria-label="Prévia do vídeo"
+              playsInline
+              className="pointer-events-none absolute inset-0 size-full object-contain"
+            />
+          </div>
           <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
           {/* transitions: the clip that is not playing, as a still, and the dip colour */}
           <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
           {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
+          {cropClip && stage.w > 0 && (
+            <CropPan clip={cropClip} asset={assets.get(cropClip.assetId)} width={stage.w} height={stage.h} onChange={changeCrop} onDone={() => {}} />
+          )}
           {state === "ready" && stage.w > 0 && (
             <TextOverlay
               width={stage.w}
@@ -712,9 +741,9 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
-              <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => stub("Recortar", "S04")} />
+              <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selected!.id }))} />
               <ToolbarItem icon={<FlipHorizontal2 />} label="Inverter" onClick={() => stub("Inverter", "S04")} />
-              <ToolbarItem icon={<Snowflake />} label="Congelar" onClick={() => stub("Congelar", "S04")} />
+              <ToolbarItem icon={<Snowflake />} label="Congelar" disabled={assets.get(selected!.assetId)?.kind !== "video" || !!selected?.freeze} onClick={onFreeze} />
               <ToolbarItem icon={<Blend />} label="Mistura" onClick={() => stub("Mistura", "S12")} />
             </Toolbar>
           ) : (
@@ -843,6 +872,8 @@ export function Editor({ projectId }: { projectId: Id }) {
         )}
         <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
       </Sheet>
+
+      <CropSheet clip={cropClip} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
 
       <FilterSheet
         clip={panel?.name === "filters" ? lookClip : null}

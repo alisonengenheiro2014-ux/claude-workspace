@@ -32,7 +32,11 @@ import {
   trimItem,
   addOverlay,
   overlayTracks,
+  freezeAt,
+  trim,
+  mainClips,
 } from "./timeline";
+import { shapedCss, shapedSize } from "./frame";
 import { overlayAlpha, overlayBox, overlaysAt } from "./overlay";
 import { CAPTION_STYLE } from "./text";
 import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, captionPreset } from "./presets";
@@ -283,5 +287,39 @@ describe("overlays (picture in picture)", () => {
     const c = { ...(findItem(r.doc, r.id)!.clip as MediaClip), fadeInUs: 1_000_000, opacity: 0.8 };
     expect(overlayAlpha(c, 500_000)).toBeCloseTo(0.4);
     expect(overlayAlpha(c, 2_000_000)).toBeCloseTo(0.8);
+  });
+});
+
+describe("freeze frames and crop", () => {
+  it("freezing mid-clip splits it and holds that frame for 3 s, silent", () => {
+    const d = base(); // 10 s
+    const id = mainClips(d)[0].id;
+    const r = freezeAt(d, id, 4_000_000)!;
+    const cs = mainClips(r.doc);
+    expect(cs.map((c) => [c.startUs, c.durationUs, c.freeze])).toEqual([
+      [0, 4_000_000, false],
+      [4_000_000, 3_000_000, true],
+      [7_000_000, 6_000_000, false],
+    ]);
+    expect([cs[1].inUs, cs[1].volume]).toEqual([4_000_000, 0]);
+    expect(validateDoc(r.doc, assets)).toEqual([]);
+    // trimming or splitting it keeps the same frame
+    const t = trim(r.doc, r.id, "start", 1_000_000, A.durationUs);
+    const f = mainClips(t)[1];
+    expect([f.inUs, f.durationUs]).toEqual([4_000_000, 2_000_000]);
+    const sp = split(r.doc, r.id, 5_000_000)!;
+    expect(mainClips(sp.doc).slice(1, 3).map((c) => [c.inUs, c.durationUs])).toEqual([
+      [4_000_000, 1_000_000],
+      [4_000_000, 2_000_000],
+    ]);
+  });
+
+  it("a turned crop swaps width and height; the video css keeps the crop in the frame", () => {
+    const shape = { crop: { x: 0.25, y: 0, w: 0.5, h: 0.5 }, rotation: 90, flip: false };
+    expect(shapedSize(1000, 2000, shape)).toEqual({ w: 1000, h: 500 });
+    const css = shapedCss(1000, 2000, { ...shape, rotation: 0 }, 500, 500); // 500x1000 crop into 500x500
+    expect(css.rect).toEqual({ x: 125, y: 0, w: 250, h: 500 });
+    expect([css.style.width, css.style.height, css.style.left, css.style.top]).toEqual(["500px", "1000px", "0px", "0px"]);
+    expect(css.style.clipPath).toBe("inset(0.0000% 25.0000% 50.0000% 25.0000%)");
   });
 });

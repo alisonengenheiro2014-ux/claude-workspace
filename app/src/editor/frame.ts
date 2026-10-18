@@ -90,3 +90,73 @@ export function containDraw(src: CanvasImageSource, srcW: number, srcH: number) 
     return r;
   };
 }
+
+// A clip's crop, quarter turns and mirror (S04 Recortar). crop is 0..1 of the
+// picture as shown; the turn and the mirror apply after the crop.
+export interface Shape {
+  crop: { x: number; y: number; w: number; h: number } | null;
+  rotation: number; // 0, 90, 180, 270
+  flip: boolean;
+}
+
+export function shapeOf(c: { crop: Shape["crop"]; transform: { rotation: number }; flip?: boolean }): Shape {
+  return { crop: c.crop, rotation: ((Math.round(c.transform.rotation / 90) * 90) % 360 + 360) % 360, flip: !!c.flip };
+}
+
+export const plainShape = (s: Shape) => !s.crop && !s.rotation && !s.flip;
+
+// Size of the shaped picture, in source pixels.
+export function shapedSize(srcW: number, srcH: number, s: Shape) {
+  const w = srcW * (s.crop?.w ?? 1);
+  const h = srcH * (s.crop?.h ?? 1);
+  return s.rotation % 180 ? { w: h, h: w } : { w, h };
+}
+
+// Like containDraw, with the crop, turn and mirror.
+export function shapedDraw(src: CanvasImageSource, srcW: number, srcH: number, s: Shape) {
+  return (c: Ctx) => {
+    if (!srcW || !srcH) return null;
+    const size = shapedSize(srcW, srcH, s);
+    const r = containRect(size.w, size.h, c.canvas.width, c.canvas.height);
+    const crop = s.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+    const turned = s.rotation % 180 !== 0;
+    const dw = turned ? r.h : r.w;
+    const dh = turned ? r.w : r.h;
+    c.save();
+    c.translate(r.x + r.w / 2, r.y + r.h / 2);
+    c.rotate((s.rotation * Math.PI) / 180);
+    if (s.flip) c.scale(-1, 1);
+    c.drawImage(src, crop.x * srcW, crop.y * srcH, crop.w * srcW, crop.h * srcH, -dw / 2, -dh / 2, dw, dh);
+    c.restore();
+    return r;
+  };
+}
+
+// CSS for a <video> (showing the whole picture with object-fit: fill) so
+// that only the shaped picture shows, fitted in a W×H frame.
+export function shapedCss(srcW: number, srcH: number, s: Shape, W: number, H: number) {
+  const size = shapedSize(srcW, srcH, s);
+  const r = containRect(size.w, size.h, W, H);
+  const crop = s.crop ?? { x: 0, y: 0, w: 1, h: 1 };
+  const turned = s.rotation % 180 !== 0;
+  const k = (turned ? r.h : r.w) / (crop.w * srcW); // css px per source px
+  const ew = srcW * k;
+  const eh = srcH * k;
+  const ox = (crop.x + crop.w / 2) * ew; // crop centre inside the element
+  const oy = (crop.y + crop.h / 2) * eh;
+  const pct = (v: number) => `${(v * 100).toFixed(4)}%`;
+  return {
+    rect: r,
+    style: {
+      left: `${r.x + r.w / 2 - ox}px`,
+      top: `${r.y + r.h / 2 - oy}px`,
+      width: `${ew}px`,
+      height: `${eh}px`,
+      maxWidth: "none", // the base CSS keeps videos within their box
+      objectFit: "fill",
+      clipPath: s.crop ? `inset(${pct(crop.y)} ${pct(1 - crop.x - crop.w)} ${pct(1 - crop.y - crop.h)} ${pct(crop.x)})` : "",
+      transformOrigin: `${ox}px ${oy}px`,
+      transform: `${s.rotation ? `rotate(${s.rotation}deg)` : ""}${s.flip ? " scaleX(-1)" : ""}`.trim(),
+    },
+  };
+}
