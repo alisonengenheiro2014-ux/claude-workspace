@@ -20,7 +20,7 @@ import {
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
-import { drawContain } from "../editor/player";
+import { containDraw, containRect, drawFrame, frameBgOf } from "../editor/frame";
 import { drawText, loadFonts, textsAt } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
 import { scheduleEnvelope } from "../editor/audio";
@@ -145,6 +145,11 @@ export async function exportTimeline(
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
   const bg = doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
+  const fbg = frameBgOf(doc);
+  const sampleDraw = (s: VideoSample) => (c: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D) => {
+    s.drawWithFit(c, { fit: "contain" });
+    return containRect(s.displayWidth, s.displayHeight, c.canvas.width, c.canvas.height);
+  };
   const inputs = new Map<Id, Input>();
 
   const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target: new BufferTarget() });
@@ -176,22 +181,18 @@ export async function exportTimeline(
     const makeStill = async (clip: MediaClip, us: number) => {
       const c = new OffscreenCanvas(width, height);
       const cx = c.getContext("2d")!;
-      cx.fillStyle = bg;
-      cx.fillRect(0, 0, width, height);
       const a = assets.get(clip.assetId);
       if (a?.kind === "image") {
         const file = await assetFile(a);
-        if (file) {
-          const bmp = await createImageBitmap(file);
-          drawContain(cx, bmp, bmp.width, bmp.height, bg);
-          bmp.close();
-        }
+        const bmp = file ? await createImageBitmap(file) : null;
+        drawFrame(cx, fbg, bmp ? containDraw(bmp, bmp.width, bmp.height) : () => null);
+        bmp?.close();
       } else if (a) {
         const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
         const sample = track ? await new VideoSampleSink(track).getSample(us / 1e6) : null;
-        sample?.drawWithFit(cx, { fit: "contain" });
+        drawFrame(cx, fbg, sample ? sampleDraw(sample) : () => null);
         sample?.close();
-      }
+      } else drawFrame(cx, fbg, () => null);
       return c;
     };
 
@@ -224,8 +225,7 @@ export async function exportTimeline(
 
       if (!asset) {
         for (let f = first; f < last; f++) {
-          lctx.fillStyle = bg;
-          lctx.fillRect(0, 0, width, height);
+          drawFrame(lctx, fbg, () => null);
           await emit();
         }
       } else if (asset.kind === "image") {
@@ -234,7 +234,7 @@ export async function exportTimeline(
         const bmp = await createImageBitmap(file);
         try {
           for (let f = first; f < last; f++) {
-            drawContain(lctx, bmp, bmp.width, bmp.height, bg);
+            drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height));
             await emit();
           }
         } finally {
@@ -270,9 +270,7 @@ export async function exportTimeline(
               current = next;
               next = ended ? null : await pull();
             }
-            lctx.fillStyle = bg;
-            lctx.fillRect(0, 0, width, height);
-            current?.drawWithFit(lctx, { fit: "contain" });
+            drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null);
             await emit();
           }
         } catch (err) {

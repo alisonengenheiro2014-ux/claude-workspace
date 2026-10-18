@@ -65,7 +65,7 @@ is the only full fix. The test buttons were removed.
 | S12 Sobrepor | — | stub | everything | — |
 | S13 Efeitos / Stickers | — | stub | everything | — |
 | S14 Filtros e Ajustar | — | stub | everything | — |
-| S15 Formato | 2026-10-17 | partial | blurred and image backgrounds | — |
+| S15 Formato | 2026-10-18 | done | image background | blur without canvas `filter` (not in every Safari): shrink twice and stretch back; the preview blurs a still with CSS so HDR video is never drawn on a canvas |
 | S16 Keyframes | — | not started | — | — |
 | S17 Exportar | 2026-10-17 | done | the file is kept in memory, not in OPFS (fine up to a few minutes of 1080p; long 4K needs a streaming target) | choosing the codec at runtime: this test browser had no H.264, so it exported VP9/Opus in MP4; the iPhone should pick H.264 |
 

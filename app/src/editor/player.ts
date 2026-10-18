@@ -13,24 +13,7 @@ import { audio } from "./audio";
 import { ALL_FORMATS, BlobSource, CanvasSink, Input } from "mediabunny";
 import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs, transitionAt } from "./timeline";
 import { fxOf, layerCss, type LayerFx } from "./transitions";
-
-export function drawContain(
-  ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  src: CanvasImageSource,
-  srcW: number,
-  srcH: number,
-  bg: string,
-) {
-  const W = ctx.canvas.width;
-  const H = ctx.canvas.height;
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
-  if (!srcW || !srcH) return;
-  const s = Math.min(W / srcW, H / srcH);
-  const w = srcW * s;
-  const h = srcH * s;
-  ctx.drawImage(src, (W - w) / 2, (H - h) / 2, w, h);
-}
+import { containDraw, frameBgOf, drawFrame } from "./frame";
 
 export class Player {
   private urls = new Map<Id, string>();
@@ -58,6 +41,7 @@ export class Player {
     private canvas: HTMLCanvasElement,
     private fxCanvas: HTMLCanvasElement,
     private dip: HTMLElement,
+    private bgCanvas: HTMLCanvasElement,
   ) {
     video.playsInline = true;
     video.preload = "auto";
@@ -110,6 +94,8 @@ export class Player {
         this.stillsReady.set(key, b);
         const s = useEditor.getState();
         if (!s.playing) this.applyTransition(s.playheadUs);
+        this.bgKey = "";
+        this.paintBg();
       });
     }
     return null;
@@ -121,6 +107,34 @@ export class Player {
     el.style.transform = css.transform ?? "";
     el.style.clipPath = css.clipPath ?? "";
     el.style.zIndex = fx ? String(z) : "";
+  }
+
+  // Blurred background behind a video that does not fill the frame: a
+  // still of the clip, softened with CSS. Light, and the blur hides that it
+  // does not move.
+  private bgKey = "";
+  paintBg() {
+    const { doc, draft, assets } = useEditor.getState();
+    const d = draft ?? doc;
+    const clip = d && mainClips(d).find((c) => c.id === this.clipId);
+    const asset = clip && assets.get(clip.assetId);
+    if (!d || d.canvas.background.type !== "blur" || !clip || !asset || asset.kind === "image") {
+      this.bgCanvas.style.visibility = "hidden";
+      this.bgKey = "";
+      return;
+    }
+    const key = `${clip.id}`;
+    if (this.bgKey === key) return;
+    const bmp = this.still(asset, clip.inUs);
+    if (!bmp) return; // painted when the still is ready
+    const c = this.bgCanvas;
+    c.width = 160;
+    c.height = Math.round((160 * this.video.clientHeight) / Math.max(1, this.video.clientWidth)) || 284;
+    const ctx = c.getContext("2d")!;
+    const s = Math.max(c.width / bmp.width, c.height / bmp.height);
+    ctx.drawImage(bmp, (c.width - bmp.width * s) / 2, (c.height - bmp.height * s) / 2, bmp.width * s, bmp.height * s);
+    c.style.visibility = "visible";
+    this.bgKey = key;
   }
 
   // Shows the transition under tUs, or clears it. The playing clip is the
@@ -159,8 +173,7 @@ export class Player {
     }
     const key = `${stillClip.id}:${liveIsA}`;
     if (bmp && this.fxShown !== key) {
-      const bg = d.canvas.background.type === "color" ? d.canvas.background.color : "#000000";
-      drawContain(this.fxCanvas.getContext("2d")!, bmp, bmp.width, bmp.height, bg);
+      drawFrame(this.fxCanvas.getContext("2d")!, frameBgOf(d), containDraw(bmp, bmp.width, bmp.height));
       this.fxShown = key;
     } else if (!bmp) this.fxShown = "pending";
     this.fxCanvas.style.visibility = bmp ? "visible" : "hidden";
@@ -225,8 +238,7 @@ export class Player {
       this.canvas.width = width;
       this.canvas.height = height;
     }
-    const bg = d.canvas.background.type === "color" ? d.canvas.background.color : "#000000";
-    drawContain(this.canvas.getContext("2d")!, bmp, bmp.width, bmp.height, bg);
+    drawFrame(this.canvas.getContext("2d")!, frameBgOf(d), containDraw(bmp, bmp.width, bmp.height));
     this.show("image");
   }
 
@@ -277,6 +289,7 @@ export class Player {
     const asset = hit && assets.get(hit.clip.assetId);
     if (!hit || !asset) return this.show("none");
     this.clipId = hit.clip.id;
+    this.paintBg();
     if (asset.kind === "image") return this.paintImage(asset);
     const url = await this.urlFor(asset);
     if (!url || this.disposed) return this.show("none");
@@ -329,6 +342,7 @@ export class Player {
     const asset = useEditor.getState().assets.get(clip.assetId);
     this.clipId = clip.id;
     this.imageClock = null;
+    this.paintBg();
     if (!asset || asset.kind === "image") {
       this.video.pause();
       this.imageClock = { wall: performance.now(), t: clip.startUs + offsetUs };

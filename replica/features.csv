@@ -1,11 +1,11 @@
 feature,area,priority,original,clone,notes
 Instalar como PWA na tela de início (tela cheia; ícone próprio),app,must,no,yes,instalado e usado na tela de início do iPhone em 2026-10-17; ícone provisório até /replica-brand
-Funcionar offline depois de instalado,app,must,yes,partial,service worker guarda o app; falta testar offline no iPhone
+Funcionar offline depois de instalado,app,must,yes,partial,service worker testado offline no Chromium (início e editor abrem); falta testar no iPhone em modo avião
 Lista de rascunhos com miniatura duração e data,início,must,yes,yes,S01
 Renomear duplicar e excluir rascunho,início,must,yes,yes,duplicar compartilha os arquivos de mídia; excluir só apaga arquivos que nenhum projeto usa
 Salvar o projeto automaticamente a cada mudança,projeto,must,yes,yes,500 ms após a última edição e ao sair do app
 Importar vídeos e fotos do iPhone (seleção múltipla),mídia,must,yes,yes,pelo seletor de fotos do iOS; não há grade própria do Rolo da Câmera (limite do PWA)
-Avisar quando a mídia de um rascunho sumiu e permitir substituir,mídia,must,yes,partial,detecta ao abrir e permite substituir; ainda sem teste automatizado
+Avisar quando a mídia de um rascunho sumiu e permitir substituir,mídia,must,yes,yes,"detecta ao abrir, marca o clipe e permite substituir mantendo cortes; teste automatizado"
 Prévia com play/pausa e tempo atual/total,editor,must,yes,yes,S03
 Linha do tempo com cursor fixo no centro e rolagem,editor,must,yes,yes,S03
 Zoom da linha do tempo com pinça,editor,must,yes,partial,gestos do Safari e ctrl+roda; falta testar a pinça no iPhone
@@ -22,7 +22,7 @@ Aparecer e sumir gradualmente (fade) no áudio,áudio,must,yes,yes,fade de entra
 Adicionar texto com fonte cor contorno sombra e fundo,texto,must,yes,yes,"7 fontes abertas (OFL/Apache) dentro do app; cor, contorno, sombra, fundo, alinhamento, opacidade"
 Mover girar e escalar texto na prévia,texto,must,yes,yes,"arrastar, alça do canto e pinça com dois dedos; encaixa em 0/90/180/270°"
 Proporção do quadro (9:16 16:9 1:1 4:5 4:3 original),formato,must,yes,yes,S15
-Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,partial,só cor; desfocado chega com o motor WebGL
+Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,yes,"cor ou desfocado; na exportação o desfocado acompanha o movimento, na prévia usa um quadro parado do clipe"
 Transições entre clipes com duração,transição,must,yes,yes,"8 tipos próprios (dissolver, escurecer, clarear, deslizar, subir, cobrir, cortina, zoom), 0,1 s até metade do clipe; não muda a duração do vídeo"
 Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,yes,"escolhe H.264/HEVC no iPhone, VP9/AV1 onde não houver"
 Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,yes,folha de compartilhamento do iOS; testado no iPhone em 2026-10-17

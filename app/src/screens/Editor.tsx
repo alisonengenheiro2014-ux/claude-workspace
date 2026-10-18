@@ -117,6 +117,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement>(null);
   const dipRef = useRef<HTMLDivElement>(null);
+  const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const stageBox = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const player = useRef<Player | null>(null);
@@ -167,8 +168,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [projectId]);
 
   useEffect(() => {
-    if (state !== "ready" || !videoRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current) return;
-    const p = new Player(videoRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current);
+    if (state !== "ready" || !videoRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current || !bgCanvasRef.current) return;
+    const p = new Player(videoRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current, bgCanvasRef.current);
     player.current = p;
     void p.showAt(useEditor.getState().playheadUs);
     // repaint the frame under the playhead whenever it or the doc changes
@@ -259,6 +260,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const fit = Math.min(box.w / frame.width, box.h / frame.height) || 0;
   const stage = { w: Math.floor(frame.width * fit), h: Math.floor(frame.height * fit) };
   const bg = doc?.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
+  const blurBg = doc?.canvas.background.type === "blur";
 
   function togglePlay() {
     if (!player.current) return;
@@ -446,6 +448,13 @@ export function Editor({ projectId }: { projectId: Id }) {
           className={cn("relative overflow-hidden", state !== "ready" && "hidden")}
           style={{ width: stage.w, height: stage.h, background: bg }}
         >
+          {/* blurred background (when the format sheet asks for it) */}
+          <canvas
+            ref={bgCanvasRef}
+            aria-hidden
+            className="pointer-events-none absolute inset-0 size-full scale-110 blur-xl brightness-75"
+            style={{ visibility: "hidden" }}
+          />
           <video
             ref={videoRef}
             aria-label="Prévia do vídeo"
@@ -719,7 +728,23 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               ))}
             </div>
-            <div role="radiogroup" aria-label="Cor do fundo" className="flex gap-3">
+            <div role="radiogroup" aria-label="Cor do fundo" className="flex flex-wrap gap-3">
+              <button
+                type="button"
+                role="radio"
+                aria-checked={blurBg}
+                aria-label="Fundo desfocado"
+                onClick={() => {
+                  const d = useEditor.getState().doc!;
+                  ed.commit({ ...d, canvas: { ...d.canvas, background: { type: "blur", amount: 30 } } }, "Fundo");
+                }}
+                className={cn(
+                  "flex h-11 items-center rounded-pill border border-border-input px-4 text-sm",
+                  blurBg && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
+                )}
+              >
+                Desfocado
+              </button>
               {BACKGROUNDS.map((c) => {
                 const on = doc.canvas.background.type === "color" && doc.canvas.background.color === c;
                 return (
@@ -739,7 +764,10 @@ export function Editor({ projectId }: { projectId: Id }) {
                 );
               })}
             </div>
-            <p className="text-xs text-text-muted">Fundo desfocado chega com o novo motor de prévia.</p>
+            <p className="text-xs text-text-muted">
+              O fundo aparece quando o vídeo não preenche o quadro (um vídeo vertical num formato 16:9, por exemplo). Na prévia, o
+              desfocado usa um quadro parado do clipe; no vídeo exportado ele acompanha o movimento.
+            </p>
           </div>
         )}
       </Sheet>
