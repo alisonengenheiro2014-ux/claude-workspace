@@ -72,3 +72,51 @@ export async function requestPersistence() {
     // not supported; the backup feature is the safety net
   }
 }
+
+// A WritableStream into an OPFS file, for the export (mediabunny's
+// StreamTarget writes { data, position } chunks). Each write waits for the
+// worker, which keeps memory flat and lets the encoder slow down to the disk.
+export async function openStreamFile(path: string) {
+  const w = new Worker(new URL("./opfs-stream.worker.ts", import.meta.url), { type: "module" });
+  let next = 1;
+  const calls = new Map<number, { resolve: () => void; reject: (e: Error) => void }>();
+  w.onmessage = (e: MessageEvent<{ id: number; ok?: boolean; error?: string }>) => {
+    const c = calls.get(e.data.id);
+    if (!c) return;
+    calls.delete(e.data.id);
+    if (e.data.error) c.reject(new Error(e.data.error));
+    else c.resolve();
+  };
+  const call = (msg: object, transfer: Transferable[] = []) =>
+    new Promise<void>((resolve, reject) => {
+      const id = next++;
+      calls.set(id, { resolve, reject });
+      w.postMessage({ ...msg, id }, transfer);
+    });
+  await call({ op: "open", path });
+  const stream = new WritableStream<{ type: "write"; data: Uint8Array; position: number }>({
+    write: (chunk) => {
+      const copy = chunk.data.slice(); // the encoder may reuse its buffer
+      return call({ op: "write", data: copy, position: chunk.position }, [copy.buffer]);
+    },
+    close: async () => {
+      await call({ op: "close" });
+      w.terminate();
+    },
+    abort: async () => {
+      await call({ op: "abort" }).catch(() => {});
+      w.terminate();
+    },
+  });
+  return stream;
+}
+
+// Old exports are deleted when a new one starts: only the latest is kept.
+export async function clearDir(name: string) {
+  try {
+    const root = await navigator.storage.getDirectory();
+    await root.removeEntry(name, { recursive: true });
+  } catch {
+    // nothing there
+  }
+}

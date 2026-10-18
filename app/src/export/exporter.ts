@@ -7,6 +7,7 @@ import {
   AudioBufferSource,
   BlobSource,
   BufferTarget,
+  StreamTarget,
   CanvasSource,
   Input,
   Mp4OutputFormat,
@@ -20,6 +21,7 @@ import {
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
+import { clearDir, openStreamFile, readFile } from "../data/opfs";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { overlayAt, overlaysAt } from "../editor/overlay";
@@ -254,7 +256,22 @@ export async function exportTimeline(
   };
   const inputs = new Map<Id, Input>();
 
-  const output = new Output({ format: new Mp4OutputFormat({ fastStart: "in-memory" }), target: new BufferTarget() });
+  // Straight to a file in OPFS when the browser allows it (long videos don't
+  // fit in the iPhone's memory); otherwise in memory, as before.
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  const name = `video-${stamp}.mp4`;
+  let stream: WritableStream | null = null;
+  try {
+    await clearDir("exports");
+    stream = await openStreamFile(`exports/${name}`);
+  } catch {
+    stream = null;
+  }
+  const output = new Output({
+    // with a stream: the index goes at the end (fast start would need the whole file in memory)
+    format: new Mp4OutputFormat({ fastStart: stream ? false : "in-memory" }),
+    target: stream ? new StreamTarget(stream, { chunked: true, chunkSize: 4 * 1024 * 1024 }) : new BufferTarget(),
+  });
   const videoSource = new CanvasSource(canvas, { codec: codecs.video, bitrate, keyFrameInterval: 2 });
   output.addVideoTrack(videoSource, { frameRate: opts.fps });
 
@@ -516,11 +533,18 @@ export async function exportTimeline(
     videoSource.close();
     onProgress(1, "finishing");
     await output.finalize();
-    const buffer = (output.target as BufferTarget).buffer;
-    if (!buffer) throw new Error("A exportação não gerou arquivo.");
-    const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+    let file: File;
+    if (stream) {
+      const f = await readFile(`exports/${name}`);
+      if (!f) throw new Error("A exportação não gerou arquivo.");
+      file = new File([f], name, { type: "video/mp4" }); // a File backed by the disk, not memory
+    } else {
+      const buffer = (output.target as BufferTarget).buffer;
+      if (!buffer) throw new Error("A exportação não gerou arquivo.");
+      file = new File([buffer], name, { type: "video/mp4" });
+    }
     return {
-      file: new File([buffer], `video-${stamp}.mp4`, { type: "video/mp4" }),
+      file,
       videoCodec: codecs.video,
       audioCodec: audioOrNull(codecs.audio, output),
     };
