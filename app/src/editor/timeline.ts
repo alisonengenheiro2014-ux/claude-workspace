@@ -3,6 +3,7 @@
 import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Transform, Us } from "../data/db";
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 import { captionPreset, type CaptionGrouping } from "./presets";
+import { animatedAt, keyNear, shiftKeys, withKeyAt, withoutKeyAt, type Animated } from "./keyframes";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
 export const MIN_CLIP_US: Us = 100_000; // shortest clip a split or trim may leave
@@ -151,6 +152,7 @@ export function split(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: TimelineDo
     const right: MediaClip = left.freeze
       ? { ...structuredClone(left), id: rightId, outUs: left.inUs + (left.outUs - cut) }
       : { ...structuredClone(left), id: rightId, inUs: cut };
+    right.keyframes = shiftKeys(left.keyframes, atUs - left.startUs);
     left.outUs = cut;
     items.splice(i + 1, 0, right);
     // a transition that followed the clip now follows its right part
@@ -198,7 +200,21 @@ export function freezeAt(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: Timelin
       items.splice(i + 1, 0, right);
       for (const t of d.transitions) if (t.fromClipId === clipId) t.fromClipId = right.id;
     } else if (offset < MIN_CLIP_US) i -= 1; // before the clip
-    const still: MediaClip = { ...structuredClone(left), id, freeze: true, inUs: frameUs, outUs: frameUs + FREEZE_US, speed: 1, volume: 0, fadeInUs: 0, fadeOutUs: 0 };
+    const at = animatedAt(clip, offset); // keeps the zoom it had at that moment
+    const still: MediaClip = {
+      ...structuredClone(left),
+      id,
+      freeze: true,
+      inUs: frameUs,
+      outUs: frameUs + FREEZE_US,
+      speed: 1,
+      volume: 0,
+      fadeInUs: 0,
+      fadeOutUs: 0,
+      transform: { ...at.transform },
+      opacity: at.opacity,
+      keyframes: [],
+    };
     items.splice(i + 1, 0, still);
   });
   return { doc: next, id };
@@ -435,6 +451,7 @@ export function splitItem(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDo
     const left = h.clip as MediaClip;
     const cut = sourceTimeUs(left, atUs - left.startUs);
     const right: MediaClip = { ...structuredClone(left), id: rightId, inUs: cut, startUs: atUs, fadeInUs: 0 };
+    right.keyframes = shiftKeys(left.keyframes, atUs - left.startUs);
     left.outUs = cut;
     left.fadeOutUs = 0;
     left.durationUs = clipDuration(left);
@@ -442,6 +459,38 @@ export function splitItem(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDo
     h.track.items.push(right);
   });
   return { doc: next, rightId };
+}
+
+// ---------- keyframes ----------
+
+// Adds a keyframe at the playhead with the item's current values, or removes
+// the one that is there.
+export function toggleKeyframe(doc: TimelineDoc, id: Id, atUs: Us): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit) return;
+    const c = hit.clip;
+    const local = Math.max(0, Math.min(c.durationUs, atUs - c.startUs));
+    c.keyframes = keyNear(c, local) !== null ? withoutKeyAt(c, local) : withKeyAt(c, local, animatedAt(c, local));
+  });
+}
+
+// Moving or sizing an item on the preview: with keyframes, it sets (or adds)
+// the keyframe at the playhead; without, it changes the item for its whole length.
+export function setAnimated(doc: TimelineDoc, id: Id, atUs: Us, a: Partial<Animated>): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit) return;
+    const c = hit.clip;
+    const local = Math.max(0, Math.min(c.durationUs, atUs - c.startUs));
+    const cur = animatedAt(c, local);
+    const next = { transform: a.transform ?? cur.transform, opacity: a.opacity ?? cur.opacity };
+    if (c.keyframes.length) c.keyframes = withKeyAt(c, local, next);
+    else {
+      c.transform = { ...next.transform };
+      c.opacity = next.opacity;
+    }
+  });
 }
 
 // Patch for any item (audio volume, fades, mute).

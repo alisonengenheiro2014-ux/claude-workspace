@@ -8,6 +8,7 @@ import { formatTime } from "../ui/Transport";
 import { useEditor, type Thumbs } from "./store";
 import type { Track } from "../data/db";
 import { PEAKS_PER_SEC } from "./audio";
+import { keyTimes } from "./keyframes";
 import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
@@ -290,6 +291,7 @@ export function TimelineView({
               label={label}
               selected={sel}
               missing={!!media && (missing.has(media.assetId) || !asset)}
+              keyframes={keyTimes(c).map((t) => t / Math.max(1, c.durationUs))}
               thumbs={
                 thumb
                   ? Array.from({ length: Math.min(40, Math.ceil(w / 36)) }, (_, i) => (
@@ -386,6 +388,7 @@ export function TimelineView({
                     selected={clip.id === selectedId}
                     missing={missing.has(clip.assetId) || !asset}
                     thumbs={tilesFor(clip, w, pxPerSec, thumbs.get(clip.assetId))}
+                    keyframes={keyTimes(clip).map((t) => t / Math.max(1, clip.durationUs))}
                     onSelect={() => select(clip.id === selectedId ? null : clip.id)}
                   />
                   {i < clips.length - 1 && (

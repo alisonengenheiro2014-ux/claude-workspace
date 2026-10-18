@@ -38,7 +38,7 @@ Modo de mistura e opacidade,sobrepor,should,yes,no,
 Filtros de cor com intensidade,cor,should,yes,yes,"17 filtros próprios (vívido, quente, frio, cinema, P&B, noir, retrô, vintage...), intensidade, aplicar a todos; também em sobreposições"
 Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,partial,"brilho, contraste, saturação, exposição, temperatura, matiz, vinheta; faltam nitidez, realces e sombras"
 Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
-Keyframes de posição escala rotação e opacidade,keyframes,should,yes,no,S16
+Keyframes de posição escala rotação e opacidade,keyframes,should,yes,yes,"botão de keyframe (losango) ao lado do desfazer; vídeo principal (zoom e posição), sobreposições e textos; losangos na timeline; suavização automática"
 Recortar (crop) e girar o clipe,clipe,should,yes,yes,"formatos 1:1 9:16 16:9 4:5 3:4, zoom, arrastar na prévia, girar 90°, espelhar"
 Inverter clipe (reverso),clipe,should,yes,no,
 Congelar quadro,clipe,should,yes,yes,"3 s do quadro sob o cursor, sem som; aparar ou dividir mantém o quadro"

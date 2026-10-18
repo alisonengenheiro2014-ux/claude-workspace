@@ -22,7 +22,8 @@ import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
-import { overlayAlpha, overlayBox, overlaysAt } from "../editor/overlay";
+import { overlayAt, overlaysAt } from "../editor/overlay";
+import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
 import { scheduleEnvelope } from "../editor/audio";
@@ -180,6 +181,26 @@ export async function exportTimeline(
     s.draw(shapeScratch.getContext("2d")!, 0, 0);
     return shapedDraw(shapeScratch, s.displayWidth, s.displayHeight, shape)(c);
   };
+  // The main clip's zoom and pan (keyframes) around a picture's draw().
+  type Draw = (c: OffscreenCanvasRenderingContext2D | CanvasRenderingContext2D) => { x: number; y: number; w: number; h: number } | null;
+  const zoomed = (draw: Draw, z: ReturnType<typeof mainZoom>): Draw => {
+    if (!isZoomed(z)) return draw;
+    return (c) => {
+      const W = c.canvas.width;
+      const H = c.canvas.height;
+      const cx = W / 2 + z.dx * W;
+      const cy = H / 2 + z.dy * H;
+      c.save();
+      c.globalAlpha *= Math.max(0, z.opacity);
+      c.translate(cx, cy);
+      c.scale(z.scale, z.scale);
+      c.translate(-W / 2, -H / 2);
+      const r = draw(c);
+      c.restore();
+      return r && { x: cx + (r.x - W / 2) * z.scale, y: cy + (r.y - H / 2) * z.scale, w: r.w * z.scale, h: r.h * z.scale };
+    };
+  };
+
   // A video frame kept as a picture (freeze frames, transition stills).
   const frameAsPicture = async (asset: AssetRow, us: number) => {
     const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
@@ -218,7 +239,7 @@ export async function exportTimeline(
     const windows = transitionWindows(doc);
 
     // A clip's frame at source time us, letterboxed to the output size.
-    const makeStill = async (clip: MediaClip, us: number) => {
+    const makeStill = async (clip: MediaClip, us: number, localUs: number) => {
       const c = new OffscreenCanvas(width, height);
       const cx = c.getContext("2d")!;
       const a = assets.get(clip.assetId);
@@ -227,7 +248,7 @@ export async function exportTimeline(
         const file = await assetFile(a);
         pic = file ? await createImageBitmap(file) : null;
       } else if (a) pic = await frameAsPicture(a, clip.freeze ? clip.inUs : us);
-      const r = drawFrame(cx, fbg, pic ? shapedDraw(pic, pic.width, pic.height, shapeOf(clip)) : () => null);
+      const r = drawFrame(cx, fbg, pic ? zoomed(shapedDraw(pic, pic.width, pic.height, shapeOf(clip)), mainZoom(clip, localUs)) : () => null);
       if (r) applyLook(cx, r, lookOf(clip));
       if (pic instanceof ImageBitmap) pic.close();
       return c;
@@ -296,10 +317,10 @@ export async function exportTimeline(
           }
         }
         if (!draw) continue;
-        const b = overlayBox(a, width, height, c.transform);
+        const { box: b, alpha } = overlayAt(a, c, width, height, tUs);
         const look = lookOf(c);
         ctx.save();
-        ctx.globalAlpha = overlayAlpha(c, tUs);
+        ctx.globalAlpha = alpha;
         ctx.translate(b.cx, b.cy);
         ctx.rotate((b.rotation * Math.PI) / 180);
         if (isNeutral(look)) draw(ctx, b);
@@ -332,10 +353,12 @@ export async function exportTimeline(
         // this clip's decoder starts so two decoders never run at once
         const into = windows.find((w) => w.to.id === clip.id);
         const outOf = windows.find((w) => w.from.id === clip.id);
-        const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000)) : null;
-        const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs) : null;
+        const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000), into.from.durationUs) : null;
+        const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs, 0) : null;
 
-        // the clip's filter and adjustments, on its picture only
+        // zoom and pan at output frame f (keyframes)
+      const zoomAt = (f: number) => mainZoom(clip, (f / opts.fps) * 1e6 - clip.startUs);
+      // the clip's filter and adjustments, on its picture only
       const look = lookOf(clip);
       const paint = (r: { x: number; y: number; w: number; h: number } | null) => r && applyLook(lctx, r, look);
 
@@ -376,7 +399,7 @@ export async function exportTimeline(
           const shape = shapeOf(clip);
           try {
             for (let f = first; f < last; f++) {
-              paint(drawFrame(lctx, fbg, pic ? shapedDraw(pic, pic.width, pic.height, shape) : () => null));
+              paint(drawFrame(lctx, fbg, pic ? zoomed(shapedDraw(pic, pic.width, pic.height, shape), zoomAt(f)) : () => null));
               await emit();
             }
           } finally {
@@ -413,7 +436,7 @@ export async function exportTimeline(
                 current = next;
                 next = ended ? null : await pull();
               }
-              paint(drawFrame(lctx, fbg, current ? sampleDraw(current, shape) : () => null));
+              paint(drawFrame(lctx, fbg, current ? zoomed(sampleDraw(current, shape), zoomAt(f)) : () => null));
               await emit();
             }
           } catch (err) {

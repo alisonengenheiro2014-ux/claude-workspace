@@ -4,10 +4,11 @@
 // canvas above (TextOverlay), which handles every on-screen gesture.
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { AssetRow, Id } from "../data/db";
+import type { TextBox } from "./text";
 import { assetFile } from "../media/import";
 import { cssFilter, lookOf } from "./look";
 import { LookWashes } from "./LookLayer";
-import { overlayAlpha, overlayBox, overlaysAt } from "./overlay";
+import { overlayAt, overlaysAt } from "./overlay";
 import { useEditor } from "./store";
 import { findItem, sourceTimeUs } from "./timeline";
 
@@ -58,10 +59,21 @@ function Item({
   );
 }
 
+function place(el: HTMLElement, b: TextBox) {
+  const st = el.style;
+  st.left = `${b.cx - b.w / 2}px`;
+  st.top = `${b.cy - b.h / 2}px`;
+  st.width = `${b.w}px`;
+  st.height = `${b.h}px`;
+  st.transform = `rotate(${b.rotation}deg)`;
+}
+
 export function OverlayMedia({ width, height }: { width: number; height: number }) {
   const [, rerender] = useReducer((x: number) => x + 1, 0);
   const els = useRef(new Map<Id, HTMLElement>());
   const syncRef = useRef<() => void>(() => {});
+  const sizeRef = useRef({ w: width, h: height });
+  sizeRef.current = { w: width, h: height };
 
   // keep every video at the playhead's source time, and fades on the picture
   syncRef.current = () => {
@@ -73,7 +85,11 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
       const hit = findItem(doc, id);
       if (!hit || hit.clip.type !== "media") continue;
       const c = hit.clip;
-      (el.parentElement ?? el).style.opacity = String(overlayAlpha(c, t)); // the wrapper: picture and washes together
+      // the wrapper holds picture and washes: it moves (keyframes) and fades
+      const at = overlayAt(s.assets.get(c.assetId), c, sizeRef.current.w, sizeRef.current.h, t);
+      const wrap = el.parentElement ?? el;
+      place(wrap, at.box);
+      wrap.style.opacity = String(at.alpha);
       if (!(el instanceof HTMLVideoElement) || el.readyState < 1) continue;
       const target = sourceTimeUs(c, Math.max(0, t - c.startUs)) / 1e6;
       if (s.playing) {
@@ -137,7 +153,7 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
     <div aria-hidden className="pointer-events-none absolute inset-0 z-[3]">
       {overlaysAt(doc, s.playheadUs).map((c) => {
         const asset = s.assets.get(c.assetId);
-        const b = overlayBox(asset, width, height, c.transform);
+        const { box: b } = overlayAt(asset, c, width, height, s.playheadUs);
         const look = lookOf(c);
         return (
           <div

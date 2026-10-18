@@ -21,6 +21,7 @@ import "@fontsource/playfair-display/latin-800-italic.css";
 import "@fontsource/montserrat/latin-900.css";
 import "@fontsource/montserrat/latin-900-italic.css";
 import type { AnimRef, CaptionClip, TextClip, TextStyle, Track, Us } from "../data/db";
+import { animatedAt } from "./keyframes";
 import { captionPreset, type CaptionPreset, type WordHighlight } from "./presets";
 
 // Open fonts shipped with the app (OFL / Apache), latin subset only.
@@ -419,7 +420,7 @@ export function textsAt(tracks: Track[], tUs: Us): DrawableText[] {
     if ((t.kind !== "text" && t.kind !== "caption") || t.hidden) continue;
     for (const c of t.items) {
       if (tUs < c.startUs || tUs >= c.startUs + c.durationUs) continue;
-      if (c.type === "text") out.push(c);
+      if (c.type === "text") out.push(c.keyframes.length ? { ...c, ...animatedAt(c, tUs - c.startUs) } : c);
       else if (c.type === "caption") out.push(captionDrawable(c, t.style, t.preset, tUs - c.startUs));
     }
   }

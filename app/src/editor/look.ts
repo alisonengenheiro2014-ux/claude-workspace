@@ -189,10 +189,11 @@ let scratch: OffscreenCanvas | null = null;
 // Applies a look to the picture already drawn in rect (frame pixels).
 export function applyLook(ctx: Ctx, rect: Rect, l: Look) {
   if (isNeutral(l)) return;
+  // the part of rect inside the canvas (a zoomed picture can stick out)
   const x = Math.max(0, Math.floor(rect.x));
   const y = Math.max(0, Math.floor(rect.y));
-  const w = Math.min(ctx.canvas.width - x, Math.ceil(rect.w));
-  const h = Math.min(ctx.canvas.height - y, Math.ceil(rect.h));
+  const w = Math.min(ctx.canvas.width, Math.ceil(rect.x + rect.w)) - x;
+  const h = Math.min(ctx.canvas.height, Math.ceil(rect.y + rect.h)) - y;
   if (w < 1 || h < 1) return;
   const css = cssFilter(l);
   if (css !== "none") {
@@ -234,8 +235,8 @@ export function applyLook(ctx: Ctx, rect: Rect, l: Look) {
     ctx.rect(x, y, w, h);
     ctx.clip();
     // an ellipse filling the rect, like CSS "ellipse at center" (farthest corner)
-    ctx.translate(x + w / 2, y + h / 2);
-    ctx.scale(w / Math.SQRT2 / 100, h / Math.SQRT2 / 100);
+    ctx.translate(rect.x + rect.w / 2, rect.y + rect.h / 2); // the whole picture, even where it sticks out
+    ctx.scale(rect.w / Math.SQRT2 / 100, rect.h / Math.SQRT2 / 100);
     const g = ctx.createRadialGradient(0, 0, 0, 0, 0, 100);
     g.addColorStop(0.45, "rgba(0,0,0,0)");
     g.addColorStop(1, `rgba(0,0,0,${(l.vignette * 0.8).toFixed(3)})`);

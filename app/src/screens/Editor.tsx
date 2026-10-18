@@ -66,9 +66,11 @@ import {
   splitItem,
   addOverlay,
   freezeAt,
+  toggleKeyframe,
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
 import { LookLayer } from "../editor/LookLayer";
+import { isZoomed, keyNear, mainZoom } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import type { ExportOptions } from "../export/exporter";
@@ -130,6 +132,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const videoBoxRef = useRef<HTMLDivElement>(null);
+  const zoomBoxRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const fxCanvasRef = useRef<HTMLCanvasElement>(null);
   const dipRef = useRef<HTMLDivElement>(null);
@@ -202,6 +205,24 @@ export function Editor({ projectId }: { projectId: Id }) {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId]);
+
+  // the main clip's zoom and pan at the playhead (S16 keyframes)
+  useEffect(() => {
+    const el = zoomBoxRef.current;
+    if (state !== "ready" || !el) return;
+    const apply = () => {
+      const s = useEditor.getState();
+      const d = s.draft ?? s.doc;
+      const hit = d ? clipAt(d, s.playheadUs) : null;
+      const z = hit ? mainZoom(hit.clip, hit.offsetUs) : null;
+      const t = z && isZoomed(z) ? `translate(${z.dx * 100}%, ${z.dy * 100}%) scale(${z.scale})` : "";
+      if (el.style.transform !== t) el.style.transform = t;
+      const o = z && z.opacity < 0.999 ? String(Math.max(0, z.opacity)) : "";
+      if (el.style.opacity !== o) el.style.opacity = o;
+    };
+    apply();
+    return useEditor.subscribe(apply);
+  }, [state]);
 
   useEffect(() => {
     if (state !== "ready" || !videoRef.current || !videoBoxRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current || !bgCanvasRef.current)
@@ -414,6 +435,11 @@ export function Editor({ projectId }: { projectId: Id }) {
     toast("Aplicado a todos os clipes");
   }
 
+  // S16: the selected video, overlay or text can take keyframes while the playhead is on it
+  const keyCandidate = selected ?? selectedOverlay ?? selectedText;
+  const keyClip =
+    keyCandidate && playheadUs >= keyCandidate.startUs && playheadUs <= keyCandidate.startUs + keyCandidate.durationUs ? keyCandidate : null;
+
   // S04 Recortar and Congelar
   const cropHit = doc && panel?.name === "crop" ? findItem(doc, panel.id) : null;
   const cropClip = cropHit?.clip.type === "media" ? cropHit.clip : null;
@@ -561,16 +587,19 @@ export function Editor({ projectId }: { projectId: Id }) {
             className="pointer-events-none absolute inset-0 size-full scale-110 blur-xl brightness-75"
             style={{ visibility: "hidden" }}
           />
-          <div ref={videoBoxRef} className="pointer-events-none absolute inset-0">
-            <video
-              ref={videoRef}
-              aria-label="Prévia do vídeo"
-              playsInline
-              className="pointer-events-none absolute inset-0 size-full object-contain"
-            />
+          {/* the main video's zoom and pan (keyframes) move this box */}
+          <div ref={zoomBoxRef} className="pointer-events-none absolute inset-0">
+            <div ref={videoBoxRef} className="pointer-events-none absolute inset-0">
+              <video
+                ref={videoRef}
+                aria-label="Prévia do vídeo"
+                playsInline
+                className="pointer-events-none absolute inset-0 size-full object-contain"
+              />
+            </div>
+            <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+            {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
           </div>
-          <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
-          {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
           {/* transitions: the clip that is not playing, as a still, and the dip colour */}
           <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
@@ -634,6 +663,17 @@ export function Editor({ projectId }: { projectId: Id }) {
           ed.redo();
         }}
         onFullscreen={() => setFullscreen((f) => !f)}
+        keyframe={
+          keyClip && !playing
+            ? {
+                on: keyNear(keyClip, playheadUs - keyClip.startUs) !== null,
+                onToggle: () => {
+                  const s = useEditor.getState();
+                  if (s.doc) s.commit(toggleKeyframe(s.doc, keyClip.id, s.playheadUs), "Keyframe");
+                },
+              }
+            : null
+        }
       />
 
       {!fullscreen && (

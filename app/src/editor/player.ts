@@ -115,7 +115,9 @@ export class Player {
     el.style.opacity = css.opacity ?? "";
     el.style.transform = css.transform ?? "";
     el.style.clipPath = css.clipPath ?? "";
-    el.style.zIndex = fx ? String(z) : "";
+    // the live clip sits inside the zoom box (keyframes): order that box instead
+    const zEl = el === this.fxCanvas ? el : (el.parentElement ?? el);
+    zEl.style.zIndex = fx ? String(z) : "";
   }
 
   // Blurred background behind a video that does not fill the frame: a

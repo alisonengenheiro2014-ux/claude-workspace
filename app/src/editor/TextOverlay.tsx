@@ -6,8 +6,11 @@ import { useEffect, useRef, type PointerEvent } from "react";
 import type { Id, Transform } from "../data/db";
 import { useEditor } from "./store";
 import { drawText, hitBox, loadFonts, textsAt, type TextBox } from "./text";
-import { overlayBox, overlaysAt } from "./overlay";
-import { findItem, setCaptionTransform, setItem, setText } from "./timeline";
+import type { Clip } from "../data/db";
+import { containRect, shapedSize, shapeOf } from "./frame";
+import { animatedAt, mainZoom } from "./keyframes";
+import { displaySize, overlayAt, overlaysAt } from "./overlay";
+import { findItem, mainClips, setAnimated, setCaptionTransform } from "./timeline";
 
 const HANDLE = 14; // css px radius of the corner handle
 
@@ -43,7 +46,16 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
         const ctx = el.getContext("2d")!;
         ctx.clearRect(0, 0, W, H);
         boxes.current.clear();
-        for (const c of overlaysAt(doc, s.playheadUs)) boxes.current.set(c.id, overlayBox(s.assets.get(c.assetId), W, H, c.transform));
+        // the main video, when selected, can be zoomed and moved too
+        const main = s.selectedId ? mainClips(doc).find((c) => c.id === s.selectedId) : undefined;
+        if (main && s.playheadUs >= main.startUs && s.playheadUs < main.startUs + main.durationUs) {
+          const src = displaySize(s.assets.get(main.assetId));
+          const size = shapedSize(src.w, src.h, shapeOf(main));
+          const r = containRect(size.w, size.h, W, H);
+          const z = mainZoom(main, s.playheadUs - main.startUs);
+          boxes.current.set(main.id, { cx: W / 2 + z.dx * W, cy: H / 2 + z.dy * H, w: r.w * z.scale, h: r.h * z.scale, rotation: 0 });
+        }
+        for (const c of overlaysAt(doc, s.playheadUs)) boxes.current.set(c.id, overlayAt(s.assets.get(c.assetId), c, W, H, s.playheadUs).box);
         for (const c of textsAt(doc.tracks, s.playheadUs)) {
           const b = drawText(ctx, c, W, H, s.playheadUs - c.startUs, s.playing);
           if (b) boxes.current.set(c.id, b);
@@ -81,21 +93,25 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     const s = useEditor.getState();
     const hit = s.doc && findItem(s.doc, id);
     if (!hit) return null;
-    if (hit.clip.type === "text" || hit.clip.type === "caption" || hit.track.kind === "overlay") return hit.clip;
+    if (hit.clip.type === "text" || hit.clip.type === "caption" || hit.track.kind === "overlay" || hit.track.kind === "main") return hit.clip;
     return null;
+  }
+  const isMain = (id: Id) => {
+    const d = useEditor.getState().doc;
+    return !!d && mainClips(d).some((c) => c.id === id);
+  };
+
+  // where the item is at the playhead (keyframes included)
+  function nowTransform(c: Clip): Transform {
+    if (c.type === "caption") return { ...c.transform };
+    return { ...animatedAt(c, useEditor.getState().playheadUs - c.startUs).transform };
   }
 
   function apply(id: Id, transform: Transform) {
     const s = useEditor.getState();
     if (!s.doc) return;
     const c = textOf(id);
-    s.setDraft(
-      c?.type === "caption"
-        ? setCaptionTransform(s.doc, transform)
-        : c?.type === "media"
-          ? setItem(s.doc, id, { transform })
-          : setText(s.doc, id, { transform }),
-    );
+    s.setDraft(c?.type === "caption" ? setCaptionTransform(s.doc, transform) : setAnimated(s.doc, id, s.playheadUs, { transform }));
   }
 
   function onDown(e: PointerEvent) {
@@ -112,7 +128,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
       const id = gesture.current.id;
       const t = textOf(id);
       const [a, b] = [...pointers.current.values()];
-      if (t) gesture.current = { kind: "pinch", id, t0: { ...t.transform }, d0: Math.hypot(b.x - a.x, b.y - a.y), a0: Math.atan2(b.y - a.y, b.x - a.x) };
+      if (t) gesture.current = { kind: "pinch", id, t0: nowTransform(t), d0: Math.hypot(b.x - a.x, b.y - a.y), a0: Math.atan2(b.y - a.y, b.x - a.x) };
       return;
     }
 
@@ -126,7 +142,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
           kind: "handle",
           id: t.id,
           box: selBox,
-          t0: { ...t.transform },
+          t0: nowTransform(t),
           d0: Math.hypot(p.x - selBox.cx, p.y - selBox.cy),
           a0: Math.atan2(p.y - selBox.cy, p.x - selBox.cx),
         };
@@ -139,7 +155,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     if (hits) {
       const [id] = hits;
       const now = performance.now();
-      if (lastTap.current?.id === id && now - lastTap.current.at < 350 && textOf(id)?.type !== "media") {
+      if (lastTap.current?.id === id && now - lastTap.current.at < 350 && textOf(id)?.type !== "media" && !isMain(id)) {
         lastTap.current = null;
         onEdit(id);
         return;
@@ -147,7 +163,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
       lastTap.current = { id, at: now };
       s.select(id);
       const tt = textOf(id)!;
-      gesture.current = { kind: "move", id, x0: p.x / W, y0: p.y / H, t0: { ...tt.transform } };
+      gesture.current = { kind: "move", id, x0: p.x / W, y0: p.y / H, t0: nowTransform(tt) };
       return;
     }
     if (s.selectedId && textOf(s.selectedId)) s.select(null);
@@ -168,12 +184,14 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     } else if (g.kind === "handle") {
       const d = Math.hypot(p.x - g.box.cx, p.y - g.box.cy);
       const a = Math.atan2(p.y - g.box.cy, p.x - g.box.cx);
-      apply(g.id, { ...g.t0, scale: clampScale(g.t0.scale * (d / g.d0)), rotation: snapAngle(g.t0.rotation + ((a - g.a0) * 180) / Math.PI) });
+      const rotation = isMain(g.id) ? g.t0.rotation : snapAngle(g.t0.rotation + ((a - g.a0) * 180) / Math.PI);
+      apply(g.id, { ...g.t0, scale: clampScale(g.t0.scale * (d / g.d0)), rotation });
     } else if (g.kind === "pinch" && pointers.current.size >= 2) {
       const [a, b] = [...pointers.current.values()];
       const d = Math.hypot(b.x - a.x, b.y - a.y);
       const ang = Math.atan2(b.y - a.y, b.x - a.x);
-      apply(g.id, { ...g.t0, scale: clampScale(g.t0.scale * (d / g.d0)), rotation: snapAngle(g.t0.rotation + ((ang - g.a0) * 180) / Math.PI) });
+      const rotation = isMain(g.id) ? g.t0.rotation : snapAngle(g.t0.rotation + ((ang - g.a0) * 180) / Math.PI);
+      apply(g.id, { ...g.t0, scale: clampScale(g.t0.scale * (d / g.d0)), rotation });
     }
   }
 
