@@ -498,6 +498,17 @@ export function toggleKeyframe(doc: TimelineDoc, id: Id, atUs: Us): TimelineDoc 
   });
 }
 
+// The keyframe at the playhead eases (slow start and end) or moves at a
+// constant speed toward the next one.
+export function setKeyEasing(doc: TimelineDoc, id: Id, atUs: Us, easing: "linear" | "ease-in-out"): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit) return;
+    const at = keyNear(hit.clip, atUs - hit.clip.startUs);
+    if (at !== null) for (const k of hit.clip.keyframes) if (k.tUs === at) k.easing = easing;
+  });
+}
+
 // Moving or sizing an item on the preview: with keyframes, it sets (or adds)
 // the keyframe at the playhead; without, it changes the item for its whole length.
 export function setAnimated(doc: TimelineDoc, id: Id, atUs: Us, a: Partial<Animated>): TimelineDoc {

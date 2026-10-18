@@ -71,6 +71,7 @@ import {
   addOverlay,
   freezeAt,
   toggleKeyframe,
+  setKeyEasing,
   addEffect,
   setEffect,
 } from "../editor/timeline";
@@ -577,6 +578,10 @@ export function Editor({ projectId }: { projectId: Id }) {
     setPanel(null);
   }
 
+  // the keyframe under the playhead, if any, and its curve
+  const keyAt = keyClip ? keyNear(keyClip, playheadUs - keyClip.startUs) : null;
+  const keyLinear = keyClip && keyAt !== null ? keyClip.keyframes.some((k) => k.tUs === keyAt && k.easing === "linear") : false;
+
   // S04 Recortar and Congelar
   const cropHit = doc && panel?.name === "crop" ? findItem(doc, panel.id) : null;
   const cropClip = cropHit?.clip.type === "media" ? cropHit.clip : null;
@@ -764,6 +769,25 @@ export function Editor({ projectId }: { projectId: Id }) {
             </Button>
           </div>
         )}
+          {keyClip && keyAt !== null && !playing && (
+            <div className="absolute bottom-2 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-pill bg-surface-3/90 py-1 pl-3 pr-1 text-xs">
+              <span className="text-text-muted">Até o próximo:</span>
+              {(["ease-in-out", "linear"] as const).map((e) => (
+                <button
+                  key={e}
+                  type="button"
+                  aria-pressed={(e === "linear") === keyLinear}
+                  onClick={() => {
+                    const s = useEditor.getState();
+                    if (s.doc) s.commit(setKeyEasing(s.doc, keyClip.id, s.playheadUs, e), "Curva do keyframe");
+                  }}
+                  className={cn("h-7 rounded-pill border px-3", (e === "linear") === keyLinear ? "border-accent bg-accent text-on-accent" : "border-border-input")}
+                >
+                  {e === "linear" ? "Constante" : "Suave"}
+                </button>
+              ))}
+            </div>
+          )}
         {copying.size > 0 && (
           <span role="status" className="absolute bottom-2 left-1/2 -translate-x-1/2 rounded-pill bg-surface-3/90 px-3 py-1 text-xs text-text">
             Guardando {copying.size > 1 ? `${copying.size} vídeos` : "vídeo"} no app…{" "}
