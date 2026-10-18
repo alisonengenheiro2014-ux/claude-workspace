@@ -1,16 +1,15 @@
 // S10 Legendas automáticas: generate captions from speech on the iPhone,
 // then fix words, timing and style for all of them at once.
-import { Trash2 } from "lucide-react";
-import { useRef, useState } from "react";
+import { Captions, Check, ChevronDown, ChevronRight, Languages, ScanText, Trash2 } from "lucide-react";
+import { useRef, useState, type ReactNode } from "react";
 import { NoSpeechError, transcribe, type CaptionSource, type TranscribeEvent } from "../captions/transcribe";
 import type { AsrModel } from "../captions/asr.worker";
 import type { TextStyle } from "../data/db";
 import { useEditor } from "../editor/store";
 import { CAPTION_STYLE } from "../editor/text";
 import { applyCaptionPreset, captionTrack, remove, removeCaptions, setCaptions, setCaptionStyle, setCaptionText } from "../editor/timeline";
-import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET } from "../editor/presets";
-import { OptionGrid } from "../ui/OptionGrid";
-import { StylePreview } from "../ui/StylePreview";
+import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, type CaptionPreset } from "../editor/presets";
+import { CaptionTemplateTile } from "../ui/CaptionTemplateTile";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { ProgressBar } from "../ui/Progress";
@@ -26,10 +25,10 @@ const LANGUAGES = [
   { value: "portuguese", label: "Português" },
   { value: "english", label: "Inglês" },
   { value: "spanish", label: "Espanhol" },
-  { value: "", label: "Detectar" },
+  { value: "", label: "Automático" },
 ];
 const SOURCES: { value: CaptionSource; label: string }[] = [
-  { value: "video", label: "Som dos vídeos" },
+  { value: "video", label: "Vídeo" },
   { value: "audio", label: "Narração e áudios" },
   { value: "all", label: "Tudo" },
 ];
@@ -91,6 +90,75 @@ function Choice<T extends string>({ label, value, options, onChange }: { label: 
   );
 }
 
+// A setting row: icon, name, current value, chevron (opens its own page)
+function Row({ icon, label, value, onClick }: { icon: ReactNode; label: string; value: string; onClick: () => void }) {
+  return (
+    <button type="button" onClick={onClick} className="flex h-14 w-full items-center gap-3 rounded-lg bg-surface-2 px-4 text-left">
+      <span aria-hidden className="text-text">
+        {icon}
+      </span>
+      <span className="flex-1 text-sm">{label}</span>
+      <span className="text-sm text-text-muted">{value}</span>
+      <ChevronRight aria-hidden className="size-4 text-text-muted" />
+    </button>
+  );
+}
+
+function ListPicker<T extends string>({ label, value, options, onPick }: { label: string; value: T; options: { value: T; label: string }[]; onPick: (v: T) => void }) {
+  return (
+    <div role="radiogroup" aria-label={label} className="flex flex-col">
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          role="radio"
+          aria-checked={o.value === value}
+          onClick={() => onPick(o.value)}
+          className="flex h-12 items-center justify-between border-b border-border text-left text-sm last:border-b-0"
+        >
+          {o.label}
+          {o.value === value && <Check aria-hidden className="size-5 text-accent" />}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TemplateButton({ preset, checked, onPick, small }: { preset: CaptionPreset; checked: boolean; onPick: (id: string) => void; small?: boolean }) {
+  return (
+    <button
+      type="button"
+      role="radio"
+      aria-checked={checked}
+      aria-label={preset.label}
+      data-id={preset.id}
+      onClick={() => onPick(preset.id)}
+      className={cn(
+        "relative flex aspect-square items-center justify-center overflow-hidden rounded-lg bg-surface-3",
+        checked && "ring-2 ring-text",
+        small && "w-24 shrink-0",
+      )}
+    >
+      {preset.id === "classic" ? (
+        <span className={cn("font-semibold", small ? "text-base" : "text-2xl")}>Padrão</span>
+      ) : (
+        <CaptionTemplateTile preset={preset} />
+      )}
+    </button>
+  );
+}
+
+// all templates, two big tiles per row (the "Modelos" page)
+function TemplateGrid({ value, onPick }: { value: string; onPick: (id: string) => void }) {
+  return (
+    <div role="radiogroup" aria-label="Modelos de legenda" className="grid grid-cols-2 gap-3">
+      {CAPTION_PRESETS.map((p) => (
+        <TemplateButton key={p.id} preset={p} checked={p.id === value} onPick={onPick} />
+      ))}
+    </div>
+  );
+}
+
 type Run = { label: string; fraction: number | null } | null;
 
 function describe(e: TranscribeEvent): Run {
@@ -121,6 +189,9 @@ export function CaptionSheet({
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
   const [run, setRun] = useState<Run>(null);
   const abort = useRef<AbortController | null>(null);
+  // pages inside the generate view
+  const [page, setPage] = useState<"main" | "source" | "language" | "templates">("main");
+  const [advanced, setAdvanced] = useState(false);
   const track = doc ? captionTrack(doc) : undefined;
   const style = track?.style ?? CAPTION_STYLE;
 
@@ -159,7 +230,8 @@ export function CaptionSheet({
       const next = setCaptions(now.doc!, words, prefs.preset);
       now.commit(next, "Legendas automáticas");
       toast(`${captionTrack(next)?.items.length ?? 0} legendas criadas`);
-      onTab("edit");
+      setPage("main");
+      onClose();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") toast("Legendas canceladas");
       else if (err instanceof NoSpeechError) toast(err.message, "error");
@@ -187,15 +259,37 @@ export function CaptionSheet({
     if (cur) s.setDraft(fn(cur));
   }
 
-  const generateTab = (
-    <div className="flex flex-col gap-5">
-      <Choice label="Idioma da fala" value={prefs.language} options={LANGUAGES} onChange={(language) => savePrefs({ ...prefs, language })} />
-      <Choice label="De onde vem a fala" value={prefs.source} options={SOURCES} onChange={(source) => savePrefs({ ...prefs, source })} />
-      <Choice label="Qualidade" value={prefs.model} options={MODELS} onChange={(model) => savePrefs({ ...prefs, model })} />
-      <p className="text-xs text-text-muted">
-        Tudo roda no seu iPhone; nada é enviado. {MODELS.find((m) => m.value === prefs.model)?.note}, depois funciona offline.
-        {track ? " Gerar de novo substitui as legendas atuais." : ""}
-      </p>
+  const generateMain = (
+    <div className="flex flex-col gap-3">
+      <Row icon={<ScanText className="size-5" />} label="Gerar a partir de" value={SOURCES.find((o) => o.value === prefs.source)!.label} onClick={() => setPage("source")} />
+      <Row icon={<Languages className="size-5" />} label="Idioma de origem" value={LANGUAGES.find((o) => o.value === prefs.language)!.label} onClick={() => setPage("language")} />
+      <div className="flex flex-col gap-3 rounded-lg bg-surface-2 pb-4">
+        <button type="button" onClick={() => setPage("templates")} className="flex h-14 items-center gap-3 px-4 text-left">
+          <Captions aria-hidden className="size-5" />
+          <span className="flex-1 text-sm">Modelos</span>
+          <ChevronRight aria-hidden className="size-4 text-text-muted" />
+        </button>
+        <div role="radiogroup" aria-label="Modelos de legenda" className="no-scrollbar flex gap-3 overflow-x-auto px-4 py-1">
+          {CAPTION_PRESETS.map((p) => (
+            <TemplateButton key={p.id} preset={p} checked={p.id === prefs.preset} onPick={(preset) => savePrefs({ ...prefs, preset })} small />
+          ))}
+        </div>
+      </div>
+      <div className="rounded-lg bg-surface-2">
+        <button type="button" aria-expanded={advanced} onClick={() => setAdvanced(!advanced)} className="flex h-14 w-full items-center gap-3 px-4 text-left">
+          <span className="flex-1 text-sm">Opções avançadas</span>
+          <ChevronDown aria-hidden className={cn("size-4 text-text-muted transition-transform", advanced && "rotate-180")} />
+        </button>
+        {advanced && (
+          <div className="flex flex-col gap-3 px-4 pb-4">
+            <Choice label="Qualidade" value={prefs.model} options={MODELS} onChange={(model) => savePrefs({ ...prefs, model })} />
+            <p className="text-xs text-text-muted">
+              Tudo roda no seu iPhone; nada é enviado. {MODELS.find((m) => m.value === prefs.model)?.note}, depois funciona offline.
+            </p>
+          </div>
+        )}
+      </div>
+      {track && <p className="text-xs text-text-muted">Gerar de novo substitui as legendas atuais.</p>}
       {run ? (
         <div className="flex flex-col gap-2" aria-live="polite">
           <p className="text-sm">{run.label}</p>
@@ -211,11 +305,24 @@ export function CaptionSheet({
         </div>
       ) : (
         <Button variant="primary" size="lg" onClick={() => void generate()}>
-          {track ? "Gerar de novo" : "Gerar legendas"}
+          Gerar
         </Button>
       )}
     </div>
   );
+
+  const generatePages = {
+    main: { title: "Gere legendas automáticas", body: generateMain },
+    source: {
+      title: "Gerar a partir de",
+      body: <ListPicker label="Gerar a partir de" value={prefs.source} options={SOURCES} onPick={(source) => (savePrefs({ ...prefs, source }), setPage("main"))} />,
+    },
+    language: {
+      title: "Idioma de origem",
+      body: <ListPicker label="Idioma de origem" value={prefs.language} options={LANGUAGES} onPick={(language) => (savePrefs({ ...prefs, language }), setPage("main"))} />,
+    },
+    templates: { title: "Modelos", body: <TemplateGrid value={prefs.preset} onPick={(preset) => (savePrefs({ ...prefs, preset }), setPage("main"))} /> },
+  }[page];
 
   const editTab = track ? (
     <div className="flex flex-col gap-3">
@@ -256,28 +363,15 @@ export function CaptionSheet({
     <p className="text-sm text-text-muted">Ainda não há legendas. Gere na primeira aba.</p>
   );
 
-  // Templates: pick one before generating, or switch later (same words, regrouped)
+  // Templates on existing captions: the same words, regrouped
   const templatesTab = (
-    <div className="flex flex-col gap-3">
-      <OptionGrid
-        label="Modelo de legenda"
-        allowNone={false}
-        value={track?.preset ?? prefs.preset}
-        onChange={(id) => {
-          if (!id) return;
-          savePrefs({ ...prefs, preset: id });
-          if (track) draft((d) => applyCaptionPreset(d, id));
-        }}
-        options={CAPTION_PRESETS.map((p) => ({
-          id: p.id,
-          label: p.label,
-          preview: <StylePreview style={p.style} sample={p.group === "word" ? "LEGENDA" : "sua legenda aqui"} highlight={p.highlight} />,
-        }))}
-      />
-      <p className="text-xs text-text-muted">
-        {track ? "Trocar o modelo reorganiza as mesmas palavras, sem transcrever de novo." : "O modelo escolhido é usado ao gerar as legendas."}
-      </p>
-    </div>
+    <TemplateGrid
+      value={track?.preset ?? prefs.preset}
+      onPick={(id) => {
+        savePrefs({ ...prefs, preset: id });
+        if (track) draft((d) => applyCaptionPreset(d, id));
+      }}
+    />
   );
 
   const styleTab = (
@@ -287,26 +381,34 @@ export function CaptionSheet({
     </div>
   );
 
+  const generating = tab === "generate";
   return (
     <Sheet
       open={open}
       onOpenChange={(o) => {
         if (!o && run) return; // cancel first
-        if (!o) onClose();
+        if (!o) {
+          setPage("main");
+          onClose();
+        }
       }}
-      title="Legendas"
+      title={generating ? generatePages.title : "Legendas"}
+      onBack={generating && page !== "main" ? () => setPage("main") : undefined}
     >
-      <Tabs
-        label="Legendas"
-        value={tab}
-        onValueChange={(v) => onTab(v as CaptionTab)}
-        tabs={[
-          { value: "generate", label: "Gerar", content: generateTab },
-          { value: "templates", label: "Modelos", content: templatesTab },
-          { value: "edit", label: "Editar", content: editTab },
-          { value: "style", label: "Estilo", content: styleTab },
-        ]}
-      />
+      {generating ? (
+        generatePages.body
+      ) : (
+        <Tabs
+          label="Legendas"
+          value={tab}
+          onValueChange={(v) => onTab(v as CaptionTab)}
+          tabs={[
+            { value: "templates", label: "Modelos", content: templatesTab },
+            { value: "edit", label: "Editar", content: editTab },
+            { value: "style", label: "Estilo", content: styleTab },
+          ]}
+        />
+      )}
     </Sheet>
   );
 }

@@ -6,6 +6,7 @@ import {
   AudioLines,
   Blend,
   Captions,
+  LayoutGrid,
   ChevronLeft,
   Copy,
   Crop,
@@ -573,6 +574,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               }
             >
+              <ToolbarItem icon={<LayoutGrid />} label="Modelos" onClick={() => openCaptions("templates")} />
               <ToolbarItem icon={<Type />} label="Editar" onClick={() => openCaptions("edit")} />
               <ToolbarItem icon={<Palette />} label="Estilo" onClick={() => openCaptions("style")} />
               <ToolbarItem icon={<Captions />} label="Gerar de novo" onClick={() => openCaptions("generate")} />

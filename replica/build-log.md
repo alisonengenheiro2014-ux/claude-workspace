@@ -83,6 +83,18 @@ the same words without transcribing again. Text items got 8 style presets,
 "Neon" matching the phone number in the reference. Side by side with a frame
 of the reference, the exported word is the same size and position.
 
+**Captions like CapCut (2026-10-18):** from the user's CapCut screenshots,
+"Legendas" now opens "Gere legendas automáticas": rows for "Gerar a partir
+de" and "Idioma de origem" (each opens its own list), a "Modelos" card with
+a strip of templates and a chevron to the full two-column grid, "Opções
+avançadas" (quality) folded away, and one "Gerar" button; the sheet closes
+when the captions are ready. 27 templates, each tile playing a sample
+caption with the same drawing code as the video. New highlight kinds: a
+box behind the spoken word (optionally with a border), a bigger spoken word,
+and words revealed as they are spoken. Four more open fonts (Poppins, Lilita
+One, Luckiest Guy, DM Serif Display). Touching the timeline while it plays
+now pauses, as in CapCut.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

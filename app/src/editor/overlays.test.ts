@@ -32,6 +32,7 @@ import {
   trimItem,
 } from "./timeline";
 import { CAPTION_STYLE } from "./text";
+import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, captionPreset } from "./presets";
 
 const A: AssetRow = {
   id: "a", projectId: "p", kind: "video", opfsPath: "p/a", name: "a", mime: "video/mp4", sizeBytes: 1,
@@ -243,5 +244,14 @@ describe("captions", () => {
     const after = findItem(e, c.id)!.clip as CaptionClip;
     expect(after.words.map((x) => x.word)).toEqual(["hoje", "vou", "falar", "demais"]);
     expect(after.words[after.words.length - 1].endUs).toBeLessThanOrEqual(after.durationUs);
+  });
+});
+
+describe("caption templates", () => {
+  it("have unique ids and fall back to the default", () => {
+    const ids = CAPTION_PRESETS.map((p) => p.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.length).toBeGreaterThanOrEqual(20);
+    expect(captionPreset("gone").id).toBe(DEFAULT_CAPTION_PRESET);
   });
 });
