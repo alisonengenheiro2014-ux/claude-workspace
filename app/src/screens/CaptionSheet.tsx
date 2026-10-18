@@ -354,6 +354,13 @@ export function CaptionSheet({
 
   const editTab = track ? (
     <div className="flex flex-col gap-3">
+      {/* at the top: with one caption per word the list runs very long */}
+      <div className="sticky -top-4 z-10 -mx-4 flex items-center gap-3 bg-surface px-4 py-2">
+        <span className="flex-1 text-sm text-text-muted">{track.items.length} legendas</span>
+        <Button variant="danger" icon={<Trash2 aria-hidden className="size-4" />} onClick={() => draft(removeCaptions)}>
+          Apagar todas
+        </Button>
+      </div>
       <ul className="flex flex-col gap-2">
         {track.items.map((c) => (
           <li key={c.id} className="flex items-start gap-2">
@@ -370,7 +377,7 @@ export function CaptionSheet({
               value={c.type === "caption" ? c.text : ""}
               rows={2}
               onChange={(e) => draft((d) => setCaptionText(d, c.id, e.target.value))}
-              className="min-w-0 flex-1 resize-none rounded-md border border-border-input bg-surface-2 p-2 text-sm text-text"
+              className="min-w-0 flex-1 resize-none rounded-md border border-border-input bg-surface-2 p-2 text-base text-text"
             />
             <button
               type="button"
@@ -383,9 +390,6 @@ export function CaptionSheet({
           </li>
         ))}
       </ul>
-      <Button variant="danger" onClick={() => draft(removeCaptions)}>
-        Apagar todas as legendas
-      </Button>
     </div>
   ) : (
     <p className="text-sm text-text-muted">Ainda não há legendas. Gere na primeira aba.</p>
