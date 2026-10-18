@@ -97,6 +97,10 @@ const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
 ];
 const BACKGROUNDS = ["#000000", "#ffffff", "#1f1f24", "#24324a", "#3b2a2a", "#2b3b2b"];
 
+function formatSpeed(v: number) {
+  return `${v < 1 ? v.toFixed(2).replace(/0$/, "") : v < 10 ? v.toFixed(1) : Math.round(v)}x`.replace(".", ",");
+}
+
 function loadExportOptions(projectId: Id): ExportOptions {
   try {
     const raw = localStorage.getItem(`export:${projectId}`);
@@ -337,6 +341,12 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (!r) return toast("Mova o cursor para dentro do áudio para dividir.");
     s.commit(r.doc, "Dividir áudio");
     s.select(r.rightId);
+  }
+
+  function setSpeed(v: number) {
+    if (!selected) return;
+    const speed = Math.min(100, Math.max(0.1, v < 1 ? Math.round(v * 100) / 100 : Math.round(v * 10) / 10));
+    ed.setDraft(setClip(useEditor.getState().doc!, selected.id, { speed }));
   }
 
   function moveSelected(step: -1 | 1) {
@@ -638,18 +648,38 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       <Sheet open={panel?.name === "speed"} onOpenChange={(o) => !o && closeEditing("Velocidade")} title="Velocidade">
         {selected && doc && (
-          <Slider
-            label="Velocidade"
-            value={selected.speed}
-            min={0.1}
-            max={10}
-            step={0.1}
-            defaultValue={1}
-            format={(v) => `${v.toFixed(1)}x`}
-            onChange={(v) => ed.setDraft(setClip(useEditor.getState().doc!, selected.id, { speed: Math.round(v * 10) / 10 }))}
-          />
+          <div className="flex flex-col gap-4">
+            {/* logarithmic: the same drag covers 0.1x-1x, 1x-10x and 10x-100x */}
+            <Slider
+              label="Velocidade"
+              value={Math.round(Math.log10(selected.speed) * 100) / 100}
+              min={-1}
+              max={2}
+              step={0.01}
+              defaultValue={0}
+              format={(v) => formatSpeed(10 ** v)}
+              onChange={(v) => setSpeed(10 ** v)}
+            />
+            <div role="radiogroup" aria-label="Velocidades prontas" className="flex flex-wrap gap-2">
+              {[0.25, 0.5, 1, 2, 4, 10, 50, 100].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  role="radio"
+                  aria-checked={selected.speed === v}
+                  onClick={() => setSpeed(v)}
+                  className={cn(
+                    "h-9 min-w-12 rounded-pill border px-3 text-sm",
+                    selected.speed === v ? "border-accent bg-accent text-on-accent" : "border-border-input",
+                  )}
+                >
+                  {formatSpeed(v)}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
-        <p className="mt-3 text-xs text-text-muted">Curvas de velocidade e manter o tom da voz chegam depois.</p>
+        <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
       </Sheet>
 
       <Sheet open={panel?.name === "volume"} onOpenChange={(o) => !o && closeEditing("Volume")} title="Volume">

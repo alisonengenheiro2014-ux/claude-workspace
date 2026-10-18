@@ -1,5 +1,5 @@
 feature,area,priority,original,clone,notes
-Instalar como PWA na tela de início (tela cheia; ícone próprio),app,must,no,partial,"manifest, ícones provisórios e service worker prontos; falta instalar e testar no iPhone"
+Instalar como PWA na tela de início (tela cheia; ícone próprio),app,must,no,yes,instalado e usado na tela de início do iPhone em 2026-10-17; ícone provisório até /replica-brand
 Funcionar offline depois de instalado,app,must,yes,partial,service worker guarda o app; falta testar offline no iPhone
 Lista de rascunhos com miniatura duração e data,início,must,yes,yes,S01
 Renomear duplicar e excluir rascunho,início,must,yes,yes,duplicar compartilha os arquivos de mídia; excluir só apaga arquivos que nenhum projeto usa
@@ -9,13 +9,13 @@ Avisar quando a mídia de um rascunho sumiu e permitir substituir,mídia,must,ye
 Prévia com play/pausa e tempo atual/total,editor,must,yes,yes,S03
 Linha do tempo com cursor fixo no centro e rolagem,editor,must,yes,yes,S03
 Zoom da linha do tempo com pinça,editor,must,yes,partial,gestos do Safari e ctrl+roda; falta testar a pinça no iPhone
-Miniaturas dos quadros e forma de onda na linha do tempo,editor,must,yes,partial,miniaturas sim; forma de onda chega com as faixas de áudio
+Miniaturas dos quadros e forma de onda na linha do tempo,editor,must,yes,yes,"miniaturas no vídeo, forma de onda nos áudios"
 Desfazer e refazer,editor,must,yes,yes,histórico em memória; não sobrevive a fechar o app
 Dividir clipe no cursor,clipe,must,yes,yes,F03
 Aparar arrastando as bordas do clipe,clipe,must,yes,yes,"prévia ao vivo, um passo de desfazer ao soltar"
 Excluir e duplicar clipe,clipe,must,yes,yes,
 Reordenar clipes arrastando,clipe,must,yes,yes,"segurar ~0,4 s e arrastar; também botões Mover ← / →"
-Velocidade constante 0.1x a 100x,clipe,must,yes,partial,"0,1x a 10x; o original vai até 100x"
+Velocidade constante 0.1x a 100x,clipe,must,yes,yes,"0,1x a 100x (régua logarítmica + atalhos); a prévia toca no máximo a 16x"
 Volume do clipe e silenciar a faixa,áudio,must,yes,yes,"som do vídeo passa pelo Web Audio, então o volume funciona na prévia do iPhone; botão de tirar o som do vídeo inteiro"
 Adicionar música a partir do app Arquivos,áudio,must,yes,yes,"mp3, m4a, wav; termina com o vídeo por padrão; forma de onda na linha do tempo"
 Aparecer e sumir gradualmente (fade) no áudio,áudio,must,yes,yes,fade de entrada e saída em áudios e no som dos clipes; mesmo envelope na prévia e na exportação

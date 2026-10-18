@@ -339,7 +339,8 @@ export class Player {
     const url = this.urls.get(asset.id);
     const go = () => {
       this.show("video");
-      this.video.playbackRate = clip.speed;
+      // browsers cap playback rate (16x); the export uses the real speed
+      this.video.playbackRate = Math.min(16, Math.max(0.1, clip.speed));
       // volume and fades are a GainNode now; muted only while recording a
       // voice-over, which also lets iOS start it without a tap
       this.video.muted = this.monitorMuted;
