@@ -142,10 +142,18 @@ function TemplateButton({ preset, checked, onPick, small }: { preset: CaptionPre
       {preset.id === "classic" ? (
         <span className={cn("font-semibold", small ? "text-base" : "text-2xl")}>Padrão</span>
       ) : (
-        <CaptionTemplateTile preset={preset} />
+        <CaptionTemplateTile preset={preset} size={small ? 160 : 240} />
       )}
     </button>
   );
+}
+
+// the first few templates, plus the chosen one if it is further down (the
+// chevron opens all of them; fewer canvases on the iPhone)
+function stripPresets(chosen: string) {
+  const first = CAPTION_PRESETS.slice(0, 12);
+  const pick = CAPTION_PRESETS.find((p) => p.id === chosen);
+  return pick && !first.includes(pick) ? [first[0], pick, ...first.slice(1)] : first;
 }
 
 // all templates, two big tiles per row (the "Modelos" page)
@@ -270,7 +278,7 @@ export function CaptionSheet({
           <ChevronRight aria-hidden className="size-4 text-text-muted" />
         </button>
         <div role="radiogroup" aria-label="Modelos de legenda" className="no-scrollbar flex gap-3 overflow-x-auto px-4 py-1">
-          {CAPTION_PRESETS.map((p) => (
+          {stripPresets(prefs.preset).map((p) => (
             <TemplateButton key={p.id} preset={p} checked={p.id === prefs.preset} onPick={(preset) => savePrefs({ ...prefs, preset })} small />
           ))}
         </div>

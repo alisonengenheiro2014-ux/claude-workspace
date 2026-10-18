@@ -95,6 +95,18 @@ and words revealed as they are spoken. Four more open fonts (Poppins, Lilita
 One, Luckiest Guy, DM Serif Display). Touching the timeline while it plays
 now pauses, as in CapCut.
 
+**All of CapCut's caption templates (2026-10-18):** from 13 screenshots of
+CapCut's grid, 87 templates now, in CapCut's order (ours after). New in the
+caption drawing: words re-flowed into lines of N (stacked when 1) with a
+sideways stagger, colour and size per word position, a colour for words not
+spoken yet, each word popping in as spoken, a gradient fill (metal, blue), a
+background with rotation (badge), an emoji above the caption (one matching a
+word, Portuguese and English list, else the template's), a typing cursor, and
+a blur-in entrance done with a moved shadow since canvas filters are missing
+in some Safari versions. Fonts added: Bangers, Chewy, Playfair Display,
+Montserrat 900. CapCut's own fonts and textures can't be copied; the looks
+are rebuilt with open fonts.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |

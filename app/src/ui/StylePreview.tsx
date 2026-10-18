@@ -3,7 +3,7 @@ import type { TextClip, TextStyle } from "../data/db";
 import { drawText, loadFonts } from "../editor/text";
 
 // A small sample of a text style, drawn with the same code as the video.
-export function StylePreview({ style, sample, highlight }: { style: TextStyle; sample: string; highlight?: string | null }) {
+export function StylePreview({ style, sample }: { style: TextStyle; sample: string }) {
   const ref = useRef<HTMLCanvasElement>(null);
   useEffect(() => {
     const draw = () => {
@@ -12,7 +12,7 @@ export function StylePreview({ style, sample, highlight }: { style: TextStyle; s
       const ctx = c.getContext("2d")!;
       ctx.fillStyle = "#3a3a42";
       ctx.fillRect(0, 0, c.width, c.height);
-      const clip: TextClip & { highlight?: { color: string; index: number } } = {
+      const clip: TextClip = {
         id: "preview",
         type: "text",
         text: sample,
@@ -24,7 +24,6 @@ export function StylePreview({ style, sample, highlight }: { style: TextStyle; s
         blendMode: "normal",
         animation: { in: null, out: null, loop: null },
         keyframes: [],
-        ...(highlight ? { highlight: { color: highlight, index: 0 } } : {}),
       };
       // measure first, then size the sample to fill most of the tile
       const box = drawText(ctx, clip, c.width, c.height, 0, false);
@@ -36,6 +35,6 @@ export function StylePreview({ style, sample, highlight }: { style: TextStyle; s
     };
     draw();
     void loadFonts().then(draw);
-  }, [style, sample, highlight]);
+  }, [style, sample]);
   return <canvas ref={ref} width={360} height={360} aria-hidden className="size-full" />;
 }

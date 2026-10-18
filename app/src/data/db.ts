@@ -278,6 +278,7 @@ export interface TextStyle {
   italic: boolean;
   uppercase?: boolean; // drawn in capitals; the stored text keeps its case
   glow?: { color: string; blur: number } | null; // neon
+  gradient?: string[] | null; // fill from top to bottom (metal, gradient looks)
 }
 
 export interface TextClip extends ClipBase {

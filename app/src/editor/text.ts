@@ -14,8 +14,14 @@ import "@fontsource/poppins/latin-800-italic.css";
 import "@fontsource/lilita-one/latin-400.css";
 import "@fontsource/luckiest-guy/latin-400.css";
 import "@fontsource/dm-serif-display/latin-400.css";
+import "@fontsource/bangers/latin-400.css";
+import "@fontsource/chewy/latin-400.css";
+import "@fontsource/playfair-display/latin-800.css";
+import "@fontsource/playfair-display/latin-800-italic.css";
+import "@fontsource/montserrat/latin-900.css";
+import "@fontsource/montserrat/latin-900-italic.css";
 import type { AnimRef, CaptionClip, TextClip, TextStyle, Track, Us } from "../data/db";
-import { captionPreset, type WordHighlight } from "./presets";
+import { captionPreset, type CaptionPreset, type WordHighlight } from "./presets";
 
 // Open fonts shipped with the app (OFL / Apache), latin subset only.
 export const FONTS: { id: string; label: string; family: string; weight: number }[] = [
@@ -30,6 +36,10 @@ export const FONTS: { id: string; label: string; family: string; weight: number 
   { id: "lilita", label: "Lilita", family: "Lilita One", weight: 400 },
   { id: "luckiest", label: "Luckiest", family: "Luckiest Guy", weight: 400 },
   { id: "dmserif", label: "Serifa", family: "DM Serif Display", weight: 400 },
+  { id: "playfair", label: "Playfair", family: "Playfair Display", weight: 800 },
+  { id: "black", label: "Montserrat Black", family: "Montserrat", weight: 900 },
+  { id: "bangers", label: "Bangers", family: "Bangers", weight: 400 },
+  { id: "chewy", label: "Chewy", family: "Chewy", weight: 400 },
 ];
 
 export function fontOf(id: string) {
@@ -43,6 +53,8 @@ export function loadFonts() {
     ...FONTS.map((f) => document.fonts.load(`${f.weight} 48px "${f.family}"`)),
     document.fonts.load(`italic 800 48px "Montserrat"`),
     document.fonts.load(`italic 800 48px "Poppins"`),
+    document.fonts.load(`italic 800 48px "Playfair Display"`),
+    document.fonts.load(`italic 900 48px "Montserrat"`),
   ]);
   return fontsReady;
 }
@@ -83,6 +95,7 @@ export const ANIMS_IN = [
   { id: "slide-up", label: "Subir" },
   { id: "pop", label: "Pular" },
   { id: "typewriter", label: "Digitar" },
+  { id: "blur", label: "Desfocar" },
 ];
 export const ANIMS_OUT = [
   { id: "fade", label: "Sumir" },
@@ -98,10 +111,13 @@ interface AnimState {
   dy: number; // fraction of the font size
   scale: number;
   chars: number; // 0..1 of the text shown
+  blur: number; // 0..1, out of focus
 }
 
+const STILL: AnimState = { alpha: 1, dy: 0, scale: 1, chars: 1, blur: 0 };
+
 function animState(clip: TextClip, localUs: Us): AnimState {
-  const s: AnimState = { alpha: 1, dy: 0, scale: 1, chars: 1 };
+  const s: AnimState = { ...STILL };
   const apply = (a: AnimRef | null, p: number, entering: boolean) => {
     if (!a) return;
     const k = ease(p); // 0 = hidden, 1 = fully shown
@@ -116,6 +132,10 @@ function animState(clip: TextClip, localUs: Us): AnimState {
       s.alpha *= Math.min(1, k * 2);
       s.scale *= entering ? 0.4 + 0.6 * k + Math.sin(k * Math.PI) * 0.15 : 0.4 + 0.6 * k;
     } else if (a.id === "typewriter") s.chars = Math.min(s.chars, p);
+    else if (a.id === "blur") {
+      s.alpha *= Math.min(1, 0.3 + k);
+      s.blur = Math.max(s.blur, 1 - k);
+    }
   };
   const { in: aIn, out: aOut } = clip.animation;
   if (aIn) apply(aIn, localUs / aIn.durationUs, true);
@@ -136,15 +156,31 @@ function fontCss(style: TextStyle, px: number) {
   return `${style.italic ? "italic " : ""}${f.weight} ${px}px "${f.family}"`;
 }
 
+const EMOJI_FONT = `"Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif`;
+
+// How a caption's words are laid out and coloured, from its template, at
+// one moment: which word is being spoken and how long ago each one started.
+export interface CaptionLook {
+  index: number; // the word being spoken
+  sinceUs: number[]; // per word: time since it was spoken (negative = not yet)
+  highlight: WordHighlight | null;
+  reveal?: boolean; // hide the words not spoken yet
+  wordPop?: boolean; // each word pops in as it is spoken
+  future?: string; // colour of the words not spoken yet
+  colors?: string[]; // per word, by position
+  scales?: number[];
+  perLine?: number; // words per line (1 = stacked)
+  stagger?: number[]; // per line, sideways shift in font sizes
+  align?: "left" | "center" | "right";
+  emoji?: string | null; // drawn above the caption
+  cursor?: boolean; // a typing cursor after the last letter
+}
+
 // Draws one text item onto a frame of size W×H at local time localUs (from
 // the item's start). Returns its box for hit-testing, or null if hidden.
 // animate=false draws it fully shown: the paused preview, so a text sitting
 // at the start of its entrance animation is still visible while you edit.
-export type DrawableText = TextClip & {
-  // captions: the word being spoken (index across all lines) and how it stands
-  // out; reveal hides the words not spoken yet
-  highlight?: WordHighlight & { index: number; reveal?: boolean };
-};
+export type DrawableText = TextClip & { look?: CaptionLook };
 
 export function drawText(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -155,41 +191,48 @@ export function drawText(
   animate = true,
 ): TextBox | null {
   const st = clip.style;
-  const anim = animate ? animState(clip, localUs) : { alpha: 1, dy: 0, scale: 1, chars: 1 };
+  const look = clip.look;
+  const anim = animate ? animState(clip, localUs) : STILL;
   const unit = Math.min(W, H) / 1080;
-  const px = Math.max(4, st.size * unit * clip.transform.scale);
+  const k0 = clip.transform.scale;
+  const px = Math.max(4, st.size * unit * k0);
   const shape = (t: string) => (st.uppercase ? t.toLocaleUpperCase("pt-BR") : t);
   const full = shape(clip.text || " ");
   const shown = anim.chars < 1 ? full.slice(0, Math.ceil(full.length * anim.chars)) : full;
-  const lines = full.split("\n");
-  const shownLines = shown.split("\n");
 
   ctx.save();
   ctx.font = fontCss(st, px);
-  const lineH = px * 1.2;
-  const hl = clip.highlight;
   const space = ctx.measureText(" ").width;
-  // captions are laid out word by word: the spoken word may be bigger
-  let wordIndex = 0;
-  const layout = lines.map((line) =>
-    line
-      .split(" ")
-      .filter(Boolean)
-      .map((text) => {
-        const index = wordIndex++;
-        const scale = hl && hl.index === index && hl.scale ? hl.scale : 1;
-        if (scale !== 1) ctx.font = fontCss(st, px * scale);
-        const width = ctx.measureText(text).width;
-        if (scale !== 1) ctx.font = fontCss(st, px);
-        return { text, index, scale, width };
-      }),
-  );
-  const widths = hl
-    ? layout.map((ws) => ws.reduce((n, x) => n + x.width, 0) + space * Math.max(0, ws.length - 1))
-    : lines.map((l) => ctx.measureText(l || " ").width);
-  const pad = st.background ? st.background.padding * unit * clip.transform.scale : 0;
-  const w = Math.max(...widths) + pad * 2;
-  const h = lineH * lines.length + pad * 2;
+
+  // lines of words; captions may re-flow the words by their template
+  type Word = { text: string; index: number; scale: number; width: number };
+  type Line = { words: Word[]; width: number; height: number; dx: number };
+  let rows: string[][];
+  if (look?.perLine) {
+    const all = full.split(/\s+/).filter(Boolean);
+    rows = [];
+    for (let i = 0; i < all.length; i += look.perLine) rows.push(all.slice(i, i + look.perLine));
+  } else rows = full.split("\n").map((l) => (look ? l.split(" ").filter(Boolean) : [l]));
+  let n = 0;
+  const lines: Line[] = rows.map((row, li) => {
+    let height = 0;
+    const words = row.map((text) => {
+      const index = n++;
+      let scale = look?.scales?.length ? look.scales[index % look.scales.length] : 1;
+      if (look?.highlight?.scale && index === look.index) scale *= look.highlight.scale;
+      if (scale !== 1) ctx.font = fontCss(st, px * scale);
+      const width = ctx.measureText(text || " ").width;
+      if (scale !== 1) ctx.font = fontCss(st, px);
+      height = Math.max(height, px * scale * 1.18);
+      return { text, index, scale, width };
+    });
+    const width = words.reduce((a, w) => a + w.width, 0) + space * Math.max(0, words.length - 1);
+    const dx = look?.stagger?.length ? look.stagger[li % look.stagger.length] * px : 0;
+    return { words, width, height: height || px * 1.18, dx };
+  });
+  const pad = st.background ? st.background.padding * unit * k0 : 0;
+  const w = Math.max(...lines.map((l) => l.width + Math.abs(l.dx) * 2)) + pad * 2;
+  const h = lines.reduce((a, l) => a + l.height, 0) + pad * 2;
   const cx = clip.transform.x * W;
   const cy = clip.transform.y * H;
   const box: TextBox = { cx, cy, w, h, rotation: clip.transform.rotation };
@@ -206,14 +249,35 @@ export function drawText(
 
   if (st.background) {
     ctx.fillStyle = st.background.color;
-    const r = st.background.radius * unit * clip.transform.scale;
     ctx.beginPath();
-    ctx.roundRect(-w / 2, -h / 2, w, h, r);
+    ctx.roundRect(-w / 2, -h / 2, w, h, st.background.radius * unit * k0);
     ctx.fill();
   }
 
   // one run of text with every layer of the style: glow, shadow, outline, fill
-  const paint = (t: string, x: number, y: number, color: string, k = 1) => {
+  const paint = (t: string, x: number, y: number, color: string, size: number) => {
+    const fill = () => {
+      if (st.gradient?.length && color === st.color) {
+        const g = ctx.createLinearGradient(0, y - size * 0.45, 0, y + size * 0.45);
+        st.gradient.forEach((c, i) => g.addColorStop(i / Math.max(1, st.gradient!.length - 1), c));
+        ctx.fillStyle = g;
+      } else ctx.fillStyle = color;
+    };
+    if (anim.blur > 0.02) {
+      // out of focus: draw only the shadow, moved back under the text (a
+      // canvas blur filter is missing in some Safari versions)
+      const m = ctx.getTransform();
+      ctx.shadowColor = color;
+      ctx.shadowBlur = anim.blur * size * 0.5 * Math.hypot(m.a, m.b);
+      ctx.shadowOffsetX = m.a * 10000;
+      ctx.shadowOffsetY = m.b * 10000;
+      ctx.fillStyle = color;
+      ctx.fillText(t, x - 10000, y);
+      ctx.shadowColor = "transparent";
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      return;
+    }
     if (st.glow) {
       ctx.shadowColor = st.glow.color;
       ctx.shadowBlur = st.glow.blur * unit;
@@ -229,12 +293,12 @@ export function drawText(
     } else ctx.shadowColor = "transparent";
     if (st.stroke) {
       ctx.lineJoin = "round";
-      ctx.lineWidth = st.stroke.width * unit * clip.transform.scale * k;
+      ctx.lineWidth = st.stroke.width * unit * k0 * (size / px);
       ctx.strokeStyle = st.stroke.color;
       ctx.strokeText(t, x, y);
       ctx.shadowColor = "transparent";
     }
-    ctx.fillStyle = color;
+    fill();
     ctx.fillText(t, x, y);
     ctx.shadowColor = "transparent";
     ctx.shadowOffsetX = 0;
@@ -242,47 +306,90 @@ export function drawText(
   };
 
   ctx.textBaseline = "middle";
-  const xStart = (lw: number) => (st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad - lw : -lw / 2);
-  if (!hl) {
+  const align = look?.align ?? st.align;
+  const xStart = (lw: number) => (align === "left" ? -w / 2 + pad : align === "right" ? w / 2 - pad - lw : -lw / 2);
+  let y = -h / 2 + pad;
+
+  if (!look) {
     ctx.textAlign = st.align;
-    shownLines.forEach((line, i) => {
-      const y = -h / 2 + pad + lineH * (i + 0.5);
-      paint(line, st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad : 0, y, st.color);
+    const shownLines = shown.split("\n");
+    lines.forEach((l, i) => {
+      y += l.height / 2;
+      paint(shownLines[i] ?? "", st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad : 0, y, st.color, px);
+      y += l.height / 2;
     });
   } else {
-    // word by word, so the spoken word can stand out
+    // word by word, so each word can have its own colour, size and timing
     ctx.textAlign = "left";
     let charsLeft = anim.chars < 1 ? shown.length : Infinity;
-    layout.forEach((ws, i) => {
-      const y = -h / 2 + pad + lineH * (i + 0.5);
-      let x = xStart(widths[i]);
-      for (const word of ws) {
-        const on = word.index === hl.index;
-        const visible = !(hl.reveal && word.index > hl.index) && charsLeft > 0;
+    let end: { x: number; y: number; size: number } | null = null;
+    for (const l of lines) {
+      y += l.height / 2;
+      let x = xStart(l.width) + l.dx;
+      for (const word of l.words) {
+        const i = word.index;
+        const on = i === look.index;
+        const since = look.sinceUs[i] ?? 0;
+        const visible = !((look.reveal || look.wordPop) && since < 0) && charsLeft > 0;
         const text = charsLeft < word.text.length ? word.text.slice(0, charsLeft) : word.text;
         charsLeft -= word.text.length + 1;
         if (visible) {
-          if (word.scale !== 1) ctx.font = fontCss(st, px * word.scale);
-          if (on && hl.box) {
+          const size = px * word.scale;
+          ctx.font = fontCss(st, size);
+          ctx.save();
+          if (look.wordPop && since < 180_000) {
+            const k = ease(since / 180_000);
+            const cxw = x + word.width / 2;
+            ctx.translate(cxw, y);
+            ctx.scale(0.3 + 0.7 * k + Math.sin(k * Math.PI) * 0.15, 0.3 + 0.7 * k + Math.sin(k * Math.PI) * 0.15);
+            ctx.translate(-cxw, -y);
+            ctx.globalAlpha *= Math.min(1, k * 2);
+          }
+          const hl = look.highlight;
+          if (on && hl?.box) {
             const b = hl.box;
-            const bp = b.padding * unit * clip.transform.scale * word.scale;
-            const bh = px * word.scale * 1.12 + bp;
+            const bp = b.padding * unit * k0 * word.scale;
+            const bh = size * 1.12 + bp;
             ctx.beginPath();
-            ctx.roundRect(x - bp, y - bh / 2, word.width + bp * 2, bh, b.radius * unit * clip.transform.scale);
-            ctx.fillStyle = b.color;
-            ctx.fill();
+            ctx.roundRect(x - bp, y - bh / 2, word.width + bp * 2, bh, b.radius * unit * k0);
+            if (b.color !== "transparent") {
+              ctx.fillStyle = b.color;
+              ctx.fill();
+            }
             if (b.border) {
-              ctx.lineWidth = 4 * unit * clip.transform.scale;
+              ctx.lineWidth = 4 * unit * k0;
               ctx.strokeStyle = b.border;
               ctx.stroke();
             }
           }
-          paint(text, x, y, on && hl.color ? hl.color : st.color, word.scale);
-          if (word.scale !== 1) ctx.font = fontCss(st, px);
+          const color =
+            on && hl?.color
+              ? hl.color
+              : look.future && since < 0
+                ? look.future
+                : look.colors?.length
+                  ? look.colors[i % look.colors.length]
+                  : st.color;
+          paint(text, x, y, color, size);
+          ctx.restore();
+          ctx.font = fontCss(st, px);
+          ctx.textAlign = "left";
+          ctx.textBaseline = "middle";
+          end = { x: x + ctx.measureText(text).width * word.scale, y, size };
         }
         x += word.width + space;
       }
-    });
+      y += l.height / 2;
+    }
+    if (look.cursor && end && (anim.chars < 1 || Math.floor(localUs / 450_000) % 2 === 0)) {
+      ctx.fillStyle = st.color;
+      ctx.fillRect(end.x + end.size * 0.06, end.y - end.size * 0.5, end.size * 0.42, end.size);
+    }
+    if (look.emoji) {
+      ctx.textAlign = "center";
+      ctx.font = `${px * 1.1}px ${EMOJI_FONT}`;
+      ctx.fillText(look.emoji, 0, -h / 2 - px * 0.7);
+    }
   }
   ctx.restore();
   return box;
@@ -319,17 +426,54 @@ export function textsAt(tracks: Track[], tUs: Us): DrawableText[] {
   return out;
 }
 
-// A caption at localUs from its start, with its template's word highlight.
+// Small word -> emoji list for the emoji templates (Portuguese and English).
+const EMOJIS: [RegExp, string][] = [
+  [/^(dinheiro|grana|lucro|pre[cç]o|r\$|money|cash)/i, "💰"],
+  [/^(amor|amo|cora[cç][aã]o|love)/i, "❤️"],
+  [/^(fogo|quente|incr[ií]vel|top|fire|hot)/i, "🔥"],
+  [/^(rir|risada|engra[cç]ad|kkk|haha)/i, "😂"],
+  [/^(internet|wi-?fi|conex|fibra|velocidade|r[aá]pid|mega|giga)/i, "⚡"],
+  [/^(ligue|liga|telefone|whats|contato|chama)/i, "📞"],
+  [/^(casa|lar|home)/i, "🏠"],
+  [/^(jogo|jogar|game|gamer)/i, "🎮"],
+  [/^(dica|ideia|idea)/i, "💡"],
+  [/^(sucesso|ganh|venc|win)/i, "🏆"],
+  [/^(aten[cç][aã]o|cuidado|alerta)/i, "⚠️"],
+  [/^(feliz|alegr|happy)/i, "😄"],
+  [/^(obrigad|valeu|thanks)/i, "🙏"],
+];
+export function emojiFor(text: string, fallback: string | null): string | null {
+  for (const w of text.split(/\s+/)) {
+    const clean = w.replace(/[^\p{L}\p{N}$-]/gu, "");
+    for (const [re, e] of EMOJIS) if (re.test(clean)) return e;
+  }
+  return fallback;
+}
+
+// A caption at localUs from its start, laid out by its template.
 export function captionDrawable(c: CaptionClip, style: TextStyle | undefined, presetId: string | undefined, localUs: Us): DrawableText {
   const item: DrawableText = captionAsText(c, style);
-  const p = captionPreset(presetId);
-  if ((p.highlight || p.reveal) && c.words.length) {
-    let index = 0;
-    c.words.forEach((w, i) => {
-      if (localUs >= w.startUs) index = i;
-    });
-    item.highlight = { ...p.highlight, index, reveal: p.reveal };
-  }
+  const p: CaptionPreset = captionPreset(presetId);
+  const words = c.words.length ? c.words : c.text.split(/\s+/).filter(Boolean).map(() => ({ startUs: 0, endUs: c.durationUs, word: "" }));
+  let index = 0;
+  words.forEach((w, i) => {
+    if (localUs >= w.startUs) index = i;
+  });
+  item.look = {
+    index: p.highlight || p.future || p.reveal || p.wordPop ? index : -1,
+    sinceUs: words.map((w) => localUs - w.startUs),
+    highlight: p.highlight,
+    reveal: p.reveal,
+    wordPop: p.wordPop,
+    future: p.future,
+    colors: p.wordColors,
+    scales: p.wordScales,
+    perLine: p.layout?.perLine,
+    stagger: p.layout?.stagger,
+    align: p.layout?.align,
+    emoji: p.emoji ? emojiFor(c.text, p.emoji) : null,
+    cursor: p.cursor,
+  };
   return item;
 }
 

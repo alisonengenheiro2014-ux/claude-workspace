@@ -569,7 +569,7 @@ export function setCaptions(doc: TimelineDoc, words: SpeechWord[], presetId: str
         words: g.map((w) => ({ startUs: Math.round(w.start * 1e6) - startUs, endUs: Math.round(w.end * 1e6) - startUs, word: w.word })),
         startUs,
         durationUs: endUs - startUs,
-        transform: { x: 0.5, y: preset.y, scale: 1, rotation: 0 },
+        transform: { x: 0.5, y: preset.y, scale: 1, rotation: preset.rotation ?? 0 },
         opacity: 1,
         blendMode: "normal",
         animation: { in: preset.anim, out: null, loop: null },

@@ -21,7 +21,7 @@ function sampleCaptions(p: CaptionPreset): CaptionClip[] {
   return groupWords(WORDS, p.group, p.maxWords).map((g, i, all) => {
     const startUs = Math.round(g[0].start * 1e6);
     const next = all[i + 1];
-    const endUs = next ? Math.round(next[0].start * 1e6) : CYCLE_US - 200_000;
+    const endUs = next ? Math.round(next[0].start * 1e6) : CYCLE_US; // no blank gap before it loops
     return {
       id: `s${i}`,
       type: "caption",
@@ -29,7 +29,7 @@ function sampleCaptions(p: CaptionPreset): CaptionClip[] {
       words: g.map((w) => ({ startUs: Math.round(w.start * 1e6) - startUs, endUs: Math.round(w.end * 1e6) - startUs, word: w.word })),
       startUs,
       durationUs: endUs - startUs,
-      transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0 },
+      transform: { x: 0.5, y: 0.5, scale: 1, rotation: p.rotation ?? 0 },
       opacity: 1,
       blendMode: "normal",
       animation: { in: p.anim, out: null, loop: null },
