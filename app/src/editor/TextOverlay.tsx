@@ -15,6 +15,7 @@ import { displaySize, overlayAt, overlaysAt } from "./overlay";
 import { findItem, mainClips, setAnimated, setCaptionTransform } from "./timeline";
 
 const HANDLE = 14; // css px radius of the corner handle
+const CORNER_OUT = 12; // css px the delete/duplicate buttons sit past the corners, clear of short text
 
 type Gesture =
   | { kind: "move"; id: Id; x0: number; y0: number; t0: Transform }
@@ -157,12 +158,12 @@ export function TextOverlay({
     const selBox = s.selectedId ? boxes.current.get(s.selectedId) : undefined;
     if (selBox && s.selectedId && hasCorners(s.selectedId)) {
       const near = (c: { x: number; y: number }) => Math.hypot(p.x - c.x, p.y - c.y) <= HANDLE * dpr * 1.6;
-      if (near(cornerPos(selBox, -1, -1))) {
+      if (near(cornerPos(selBox, -1, -1, CORNER_OUT * dpr))) {
         pointers.current.delete(e.pointerId);
         onRemove();
         return;
       }
-      if (near(cornerPos(selBox, -1, 1))) {
+      if (near(cornerPos(selBox, -1, 1, CORNER_OUT * dpr))) {
         pointers.current.delete(e.pointerId);
         onDuplicate();
         return;
@@ -260,11 +261,12 @@ function snapAngle(deg: number) {
   return Math.round(r * 10) / 10;
 }
 
-// a corner of the (turned) box: sx, sy are -1 (left/top) or 1 (right/bottom)
-function cornerPos(b: TextBox, sx: number, sy: number) {
+// a corner of the (turned) box: sx, sy are -1 (left/top) or 1 (right/bottom);
+// `out` moves it that far further out, past the corner
+function cornerPos(b: TextBox, sx: number, sy: number, out = 0) {
   const a = (b.rotation * Math.PI) / 180;
-  const hx = (sx * b.w) / 2;
-  const hy = (sy * b.h) / 2;
+  const hx = sx * (b.w / 2 + out);
+  const hy = sy * (b.h / 2 + out);
   return { x: b.cx + hx * Math.cos(a) - hy * Math.sin(a), y: b.cy + hx * Math.sin(a) + hy * Math.cos(a) };
 }
 const handlePos = (b: TextBox) => cornerPos(b, 1, 1);
@@ -325,7 +327,7 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: TextBox, dpr: number, c
   ctx.strokeStyle = "#000000";
   ctx.stroke();
   if (corners) {
-    drawCornerButton(ctx, cornerPos(b, -1, -1), dpr, "x");
-    drawCornerButton(ctx, cornerPos(b, -1, 1), dpr, "copy");
+    drawCornerButton(ctx, cornerPos(b, -1, -1, CORNER_OUT * dpr), dpr, "x");
+    drawCornerButton(ctx, cornerPos(b, -1, 1, CORNER_OUT * dpr), dpr, "copy");
   }
 }

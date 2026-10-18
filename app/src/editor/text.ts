@@ -20,6 +20,22 @@ import "@fontsource/playfair-display/latin-800.css";
 import "@fontsource/playfair-display/latin-800-italic.css";
 import "@fontsource/montserrat/latin-900.css";
 import "@fontsource/montserrat/latin-900-italic.css";
+import "@fontsource/racing-sans-one/latin-400.css";
+import "@fontsource/orbitron/latin-900.css";
+import "@fontsource/audiowide/latin-400.css";
+import "@fontsource/russo-one/latin-400.css";
+import "@fontsource/black-ops-one/latin-400.css";
+import "@fontsource/teko/latin-600.css";
+import "@fontsource/kanit/latin-800.css";
+import "@fontsource/archivo-black/latin-400.css";
+import "@fontsource/bungee/latin-400.css";
+import "@fontsource/righteous/latin-400.css";
+import "@fontsource/fredoka/latin-700.css";
+import "@fontsource/caveat/latin-700.css";
+import "@fontsource/dancing-script/latin-700.css";
+import "@fontsource/lobster/latin-400.css";
+import "@fontsource/abril-fatface/latin-400.css";
+import "@fontsource/great-vibes/latin-400.css";
 import type { AnimRef, CaptionClip, TextClip, TextStyle, Track, Us } from "../data/db";
 import { animatedAt } from "./keyframes";
 import { captionPreset, type CaptionPreset, type WordHighlight } from "./presets";
@@ -41,6 +57,23 @@ export const FONTS: { id: string; label: string; family: string; weight: number 
   { id: "black", label: "Montserrat Black", family: "Montserrat", weight: 900 },
   { id: "bangers", label: "Bangers", family: "Bangers", weight: 400 },
   { id: "chewy", label: "Chewy", family: "Chewy", weight: 400 },
+  // racing, tech and title faces for car videos, then handwriting
+  { id: "racing", label: "Racing", family: "Racing Sans One", weight: 400 },
+  { id: "orbitron", label: "Orbitron", family: "Orbitron", weight: 900 },
+  { id: "audiowide", label: "Audiowide", family: "Audiowide", weight: 400 },
+  { id: "russo", label: "Russo", family: "Russo One", weight: 400 },
+  { id: "blackops", label: "Black Ops", family: "Black Ops One", weight: 400 },
+  { id: "teko", label: "Teko", family: "Teko", weight: 600 },
+  { id: "kanit", label: "Kanit", family: "Kanit", weight: 800 },
+  { id: "archivo", label: "Archivo Black", family: "Archivo Black", weight: 400 },
+  { id: "bungee", label: "Bungee", family: "Bungee", weight: 400 },
+  { id: "righteous", label: "Righteous", family: "Righteous", weight: 400 },
+  { id: "fredoka", label: "Fredoka", family: "Fredoka", weight: 700 },
+  { id: "caveat", label: "Caveat", family: "Caveat", weight: 700 },
+  { id: "dancing", label: "Dancing", family: "Dancing Script", weight: 700 },
+  { id: "lobster", label: "Lobster", family: "Lobster", weight: 400 },
+  { id: "abril", label: "Abril", family: "Abril Fatface", weight: 400 },
+  { id: "vibes", label: "Great Vibes", family: "Great Vibes", weight: 400 },
 ];
 
 export function fontOf(id: string) {
