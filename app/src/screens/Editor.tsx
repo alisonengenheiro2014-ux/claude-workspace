@@ -31,7 +31,22 @@ import { assetFile, onImportEvent } from "../media/import";
 import { Player } from "../editor/player";
 import { useEditor } from "../editor/store";
 import { TimelineView } from "../editor/TimelineView";
-import { canSplit, clipAt, durationOf, duplicate, findClip, frameSize, insertMedia, remove, setClip, split } from "../editor/timeline";
+import { TextOverlay } from "../editor/TextOverlay";
+import { TextSheet, type TextTab } from "./TextSheet";
+import {
+  addText,
+  canSplit,
+  clipAt,
+  durationOf,
+  duplicate,
+  findClip,
+  findItem,
+  frameSize,
+  insertMedia,
+  remove,
+  setClip,
+  split,
+} from "../editor/timeline";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -51,7 +66,8 @@ type Panel =
   | { name: "format" }
   | { name: "export" }
   | { name: "missing"; assetId: Id }
-  | { name: "stub"; title: string; screen: string };
+  | { name: "stub"; title: string; screen: string }
+  | { name: "text"; id: Id; tab: TextTab };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -187,6 +203,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   }
 
   const selected = doc && selectedId ? findClip(doc, selectedId) : undefined;
+  const selectedItem = doc && selectedId ? findItem(doc, selectedId) : null;
+  const selectedText = selectedItem?.clip.type === "text" ? selectedItem.clip : null;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
   const totalUs = doc ? durationOf(doc) : 0;
   const frame = doc ? frameSize(doc, assets, 1080) : { width: 9, height: 16 };
@@ -217,16 +235,32 @@ export function Editor({ projectId }: { projectId: Id }) {
   function onDelete() {
     stop();
     const s = useEditor.getState();
-    if (!s.doc || !selected) return;
-    s.commit(remove(s.doc, selected.id), "Excluir");
+    if (!s.doc || !s.selectedId) return;
+    s.commit(remove(s.doc, s.selectedId), "Excluir");
   }
 
   function onDuplicate() {
     const s = useEditor.getState();
-    if (!s.doc || !selected) return;
-    const r = duplicate(s.doc, selected.id);
+    if (!s.doc || !s.selectedId) return;
+    const r = duplicate(s.doc, s.selectedId);
     s.commit(r.doc, "Duplicar");
     s.select(r.id);
+  }
+
+  function onAddText() {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addText(s.doc, s.playheadUs, "Seu texto");
+    s.commit(r.doc, "Adicionar texto");
+    s.select(r.id);
+    setPanel({ name: "text", id: r.id, tab: "text" });
+  }
+
+  function editText(id: Id, tab: TextTab = "text") {
+    stop();
+    useEditor.getState().select(id);
+    setPanel({ name: "text", id, tab });
   }
 
   async function onAddFiles(files: File[]) {
@@ -305,6 +339,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             className="pointer-events-none absolute inset-0 size-full object-contain"
           />
           <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+          {state === "ready" && stage.w > 0 && <TextOverlay width={stage.w} height={stage.h} onEdit={(id) => editText(id)} />}
         </div>
         {state === "ready" && totalUs === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
@@ -353,7 +388,22 @@ export function Editor({ projectId }: { projectId: Id }) {
             onTransition={() => stub("Transições", "S06")}
           />
 
-          {clipTools ? (
+          {selectedText ? (
+            <Toolbar
+              label="Ferramentas do texto"
+              leading={
+                <button type="button" aria-label="Voltar às ferramentas" onClick={() => ed.select(null)} className="flex size-11 items-center justify-center">
+                  <ChevronLeft aria-hidden className="size-6" />
+                </button>
+              }
+            >
+              <ToolbarItem icon={<Type />} label="Editar" onClick={() => editText(selectedText.id, "text")} />
+              <ToolbarItem icon={<Palette />} label="Estilo" onClick={() => editText(selectedText.id, "style")} />
+              <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => editText(selectedText.id, "anim")} />
+              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+            </Toolbar>
+          ) : clipTools ? (
             <Toolbar
               label="Ferramentas do clipe"
               leading={
@@ -382,7 +432,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             <Toolbar label="Ferramentas">
               <ToolbarItem icon={<Scissors />} label="Editar" disabled={!target} onClick={() => target && ed.select(target.id)} />
               <ToolbarItem icon={<AudioLines />} label="Áudio" onClick={() => stub("Áudio", "S07")} />
-              <ToolbarItem icon={<Type />} label="Texto" onClick={() => stub("Texto", "S09")} />
+              <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
               <ToolbarItem icon={<Layers />} label="Sobrepor" onClick={() => stub("Sobrepor", "S12")} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => stub("Efeitos", "S13")} />
@@ -495,6 +545,13 @@ export function Editor({ projectId }: { projectId: Id }) {
           <code className="font-mono text-xs">replica/features.csv</code>.
         </p>
       </Sheet>
+
+      <TextSheet
+        id={panel?.name === "text" ? panel.id : null}
+        tab={panel?.name === "text" ? panel.tab : "text"}
+        onTab={(tab) => panel?.name === "text" && setPanel({ ...panel, tab })}
+        onClose={() => closeEditing("Editar texto")}
+      />
 
       <ExportSheet
         open={panel?.name === "export"}

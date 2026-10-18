@@ -5,7 +5,8 @@ import type { Id, MediaClip } from "../data/db";
 import { AddClipButton, Playhead, TimelineClip, TransitionMarker } from "../ui/Timeline";
 import { formatTime } from "../ui/Transport";
 import { useEditor, type Thumbs } from "./store";
-import { durationOf, mainClips, trim } from "./timeline";
+import type { TextClip } from "../data/db";
+import { durationOf, mainClips, moveItem, textTracks, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -59,7 +60,7 @@ export function TimelineView({
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   // Trim handles: drag shows a live draft, release commits one undo step.
-  const drag = useRef<{ edge: "start" | "end"; x: number; clipId: Id } | null>(null);
+  const drag = useRef<{ mode: "start" | "end" | "move"; x: number; clipId: Id; overlay: boolean; moved: boolean } | null>(null);
   const programmatic = useRef(false);
   const [viewW, setViewW] = useState(0);
   const doc = useEditor((s) => s.draft ?? s.doc);
@@ -146,24 +147,34 @@ export function TimelineView({
   }
 
   const base = useEditor.getState().doc;
-  function onHandleDown(e: PointerEvent, edge: "start" | "end", clipId: Id) {
+  function onHandleDown(e: PointerEvent, edge: "start" | "end" | "move", clipId: Id, overlay = false) {
     e.stopPropagation();
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { edge, x: e.clientX, clipId };
+    drag.current = { mode: edge, x: e.clientX, clipId, overlay, moved: false };
   }
   function onHandleMove(e: PointerEvent) {
     const d = drag.current;
     if (!d || !base) return;
+    const deltaUs = ((e.clientX - d.x) / pxPerSec) * 1e6;
+    if (Math.abs(e.clientX - d.x) > 3) d.moved = true;
+    if (d.overlay) {
+      const item = base.tracks.flatMap((t) => t.items).find((c) => c.id === d.clipId);
+      if (!item) return;
+      setDraft(d.mode === "move" ? moveItem(base, d.clipId, item.startUs + deltaUs) : trimItem(base, d.clipId, d.mode, deltaUs));
+      return;
+    }
     const clip = mainClips(base).find((c) => c.id === d.clipId);
     if (!clip) return;
     const asset = assets.get(clip.assetId);
     const mediaUs = asset?.kind === "video" ? asset.durationUs : null;
-    setDraft(trim(base, d.clipId, d.edge, ((e.clientX - d.x) / pxPerSec) * 1e6, mediaUs));
+    if (d.mode !== "move") setDraft(trim(base, d.clipId, d.mode, deltaUs, mediaUs));
   }
   function onHandleUp() {
+    const d = drag.current;
     const draft = useEditor.getState().draft;
     drag.current = null;
-    if (draft) commit(draft, "Aparar");
+    if (draft && d?.moved) commit(draft, d.mode === "move" ? "Mover" : "Aparar");
+    else if (draft) setDraft(null);
   }
 
   const selected = clips.find((c) => c.id === selectedId);
@@ -188,6 +199,52 @@ export function TimelineView({
       >
         <div className="relative flex h-full flex-col justify-center gap-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
+          {[...textTracks(doc)].reverse().map((track) => (
+            <div key={track.id} className="relative h-[var(--layout-track-sub)]">
+              {(track.items as TextClip[]).map((c) => {
+                const sel = c.id === selectedId;
+                return (
+                  <div
+                    key={c.id}
+                    className="absolute inset-y-0"
+                    style={{ left: px(c.startUs), width: Math.max(2, px(c.durationUs)) }}
+                    onPointerDown={sel ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
+                    onPointerMove={sel ? onHandleMove : undefined}
+                    onPointerUp={sel ? onHandleUp : undefined}
+                    onPointerCancel={sel ? onHandleUp : undefined}
+                  >
+                    <TimelineClip
+                      kind="text"
+                      width={Math.max(2, px(c.durationUs))}
+                      label={c.text.split("\n")[0] || "Texto"}
+                      selected={sel}
+                      onSelect={() => !drag.current?.moved && select(sel ? null : c.id)}
+                    />
+                    {sel && (
+                      <>
+                        <div
+                          role="presentation"
+                          onPointerDown={(e) => onHandleDown(e, "start", c.id, true)}
+                          onPointerMove={onHandleMove}
+                          onPointerUp={onHandleUp}
+                          onPointerCancel={onHandleUp}
+                          className="absolute inset-y-0 -left-3 z-20 w-6 cursor-ew-resize touch-none"
+                        />
+                        <div
+                          role="presentation"
+                          onPointerDown={(e) => onHandleDown(e, "end", c.id, true)}
+                          onPointerMove={onHandleMove}
+                          onPointerUp={onHandleUp}
+                          onPointerCancel={onHandleUp}
+                          className="absolute inset-y-0 -right-3 z-20 w-6 cursor-ew-resize touch-none"
+                        />
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
           <div className="relative flex items-center">
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));

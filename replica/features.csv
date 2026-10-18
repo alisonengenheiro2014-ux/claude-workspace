@@ -19,8 +19,8 @@ Velocidade constante 0.1x a 100x,clipe,must,yes,partial,"0,1x a 10x; o original 
 Volume do clipe e silenciar a faixa,áudio,must,yes,partial,volume vale na exportação; na prévia do iPhone só o mudo; silenciar faixa ainda não
 Adicionar música a partir do app Arquivos,áudio,must,yes,no,F04; sem a biblioteca licenciada
 Aparecer e sumir gradualmente (fade) no áudio,áudio,must,yes,no,S08
-Adicionar texto com fonte cor contorno sombra e fundo,texto,must,yes,no,S09; fontes abertas
-Mover girar e escalar texto na prévia,texto,must,yes,no,
+Adicionar texto com fonte cor contorno sombra e fundo,texto,must,yes,yes,"7 fontes abertas (OFL/Apache) dentro do app; cor, contorno, sombra, fundo, alinhamento, opacidade"
+Mover girar e escalar texto na prévia,texto,must,yes,yes,"arrastar, alça do canto e pinça com dois dedos; encaixa em 0/90/180/270°"
 Proporção do quadro (9:16 16:9 1:1 4:5 4:3 original),formato,must,yes,yes,S15
 Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,partial,só cor; desfocado chega com o motor WebGL
 Transições entre clipes com duração,transição,must,yes,no,S06; recriar os tipos com código próprio
@@ -28,7 +28,7 @@ Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,yes,"escolhe H
 Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,yes,folha de compartilhamento do iOS; testado no iPhone em 2026-10-17
 Legendas automáticas a partir da fala,legendas,should,yes,no,S10; Whisper no aparelho ou API própria
 Editar legendas em lote (texto e estilo),legendas,should,yes,no,
-Animações de texto (entrada saída loop),texto,should,yes,no,
+Animações de texto (entrada saída loop),texto,should,yes,partial,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
 Narração gravada pelo microfone,áudio,should,yes,no,S07
 Extrair o áudio de um vídeo,áudio,should,yes,no,
 Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,no,S12

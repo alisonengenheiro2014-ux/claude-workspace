@@ -1,6 +1,7 @@
 // Pure operations on the timeline document. Every function takes a doc and
 // returns a new one; the store keeps the old one for undo.
-import type { AspectRatio, AssetRow, Clip, Id, MediaClip, TimelineDoc, Track, Us } from "../data/db";
+import type { AspectRatio, AssetRow, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Us } from "../data/db";
+import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
 export const MIN_CLIP_US: Us = 100_000; // shortest clip a split or trim may leave
@@ -75,6 +76,9 @@ function edit(doc: TimelineDoc, fn: (draft: TimelineDoc) => void): TimelineDoc {
   const draft = structuredClone(doc);
   fn(draft);
   relayout(mainTrack(draft));
+  // other tracks: keep items in time order, drop text tracks left empty
+  for (const t of draft.tracks) if (t.kind !== "main") t.items.sort((a, b) => a.startUs - b.startUs);
+  draft.tracks = draft.tracks.filter((t) => t.kind === "main" || t.items.length > 0);
   // drop transitions whose clips are gone or no longer adjacent
   const items = mainTrack(draft).items;
   draft.transitions = draft.transitions.filter((t) => {
@@ -164,13 +168,23 @@ export function trim(doc: TimelineDoc, clipId: Id, edge: "start" | "end", deltaU
 
 export function remove(doc: TimelineDoc, clipId: Id): TimelineDoc {
   return edit(doc, (d) => {
-    const t = mainTrack(d);
-    t.items = t.items.filter((c) => c.id !== clipId);
+    for (const t of d.tracks) t.items = t.items.filter((c) => c.id !== clipId);
   });
 }
 
 export function duplicate(doc: TimelineDoc, clipId: Id): { doc: TimelineDoc; id: Id } {
   const id = uid();
+  const hit = findItem(doc, clipId);
+  if (hit && hit.track.kind !== "main") {
+    // a copy right after the original, in whichever lane has room
+    const c = hit.clip;
+    const total = durationOf(doc);
+    const start = Math.min(c.startUs + c.durationUs, Math.max(0, total - c.durationUs));
+    const next = edit(doc, (d) => {
+      placeInLane(d, { ...structuredClone(c), id, startUs: start }, hit.track.kind);
+    });
+    return { doc: next, id };
+  }
   const next = edit(doc, (d) => {
     const items = mainTrack(d).items;
     const i = items.findIndex((c) => c.id === clipId);
@@ -218,4 +232,100 @@ export function frameSize(doc: TimelineDoc, assets: Map<Id, AssetRow>, shortSide
   return ratio >= 1
     ? { width: even(shortSide * ratio), height: even(shortSide) }
     : { width: even(shortSide), height: even(shortSide / ratio) };
+}
+
+// ---------- overlay tracks (text for now) ----------
+
+export function findItem(doc: TimelineDoc, id: Id): { track: Track; clip: Clip } | null {
+  for (const track of doc.tracks) {
+    const clip = track.items.find((c) => c.id === id);
+    if (clip) return { track, clip };
+  }
+  return null;
+}
+
+function overlaps(track: Track, start: Us, end: Us, ignoreId?: Id) {
+  return track.items.some((c) => c.id !== ignoreId && start < c.startUs + c.durationUs && c.startUs < end);
+}
+
+// Puts an item in the first lane of its kind with room, or in a new lane on top.
+function placeInLane(d: TimelineDoc, item: Clip, kind: Track["kind"], skip?: Track) {
+  const end = item.startUs + item.durationUs;
+  let lane = d.tracks.find((t) => t.kind === kind && t !== skip && !overlaps(t, item.startUs, end, item.id));
+  if (!lane) {
+    lane = { id: uid(), kind, muted: false, hidden: false, locked: false, items: [] };
+    d.tracks.push(lane);
+  }
+  lane.items.push(item);
+}
+
+export function textTracks(doc: TimelineDoc) {
+  return doc.tracks.filter((t) => t.kind === "text");
+}
+
+// A new text item at the playhead, default length, inside the video.
+export function addText(doc: TimelineDoc, atUs: Us, text: string, style: TextStyle = DEFAULT_STYLE): { doc: TimelineDoc; id: Id } {
+  const id = uid();
+  const total = durationOf(doc);
+  const dur = Math.max(MIN_CLIP_US, Math.min(DEFAULT_TEXT_US, total || DEFAULT_TEXT_US));
+  const start = Math.max(0, Math.min(atUs, (total || dur) - dur));
+  const clip: TextClip = {
+    id,
+    type: "text",
+    text,
+    style: structuredClone(style),
+    startUs: start,
+    durationUs: dur,
+    transform: { x: 0.5, y: 0.5, scale: 1, rotation: 0 },
+    opacity: 1,
+    blendMode: "normal",
+    animation: { in: null, out: null, loop: null },
+    keyframes: [],
+  };
+  return { doc: edit(doc, (d) => placeInLane(d, clip, "text")), id };
+}
+
+// Moves an overlay item in time. If it would collide in its lane, it hops to
+// another lane (or a new one), like dragging between rows.
+export function moveItem(doc: TimelineDoc, id: Id, startUs: Us): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit || hit.track.kind === "main") return;
+    const c = hit.clip;
+    const total = durationOf(d);
+    c.startUs = Math.max(0, Math.min(Math.round(startUs), Math.max(0, total - c.durationUs)));
+    if (overlaps(hit.track, c.startUs, c.startUs + c.durationUs, c.id)) {
+      hit.track.items = hit.track.items.filter((x) => x.id !== id);
+      placeInLane(d, c, hit.track.kind, hit.track);
+    }
+  });
+}
+
+// Trims an overlay item's start or end, stopping at its neighbours and the video's end.
+export function trimItem(doc: TimelineDoc, id: Id, edge: "start" | "end", deltaUs: Us): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit || hit.track.kind === "main") return;
+    const c = hit.clip;
+    const end = c.startUs + c.durationUs;
+    const others = hit.track.items.filter((x) => x.id !== id);
+    const prevEnd = Math.max(0, ...others.filter((x) => x.startUs + x.durationUs <= c.startUs).map((x) => x.startUs + x.durationUs));
+    const nextStart = Math.min(durationOf(d) || end, ...others.filter((x) => x.startUs >= end).map((x) => x.startUs));
+    if (edge === "start") {
+      const s = Math.max(prevEnd, Math.min(end - MIN_CLIP_US, c.startUs + Math.round(deltaUs)));
+      c.durationUs = end - s;
+      c.startUs = s;
+    } else {
+      c.durationUs = Math.max(MIN_CLIP_US, Math.min(nextStart - c.startUs, c.durationUs + Math.round(deltaUs)));
+    }
+  });
+}
+
+export function setText(doc: TimelineDoc, id: Id, patch: Partial<TextClip>): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit || hit.clip.type !== "text") return;
+    const i = hit.track.items.indexOf(hit.clip);
+    hit.track.items[i] = { ...hit.clip, ...patch } as TextClip;
+  });
 }

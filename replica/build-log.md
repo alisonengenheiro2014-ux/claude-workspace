@@ -59,7 +59,7 @@ is the only full fix. The test buttons were removed.
 | S06 Transição | — | stub | everything | — |
 | S07 Áudio | — | stub | everything | — |
 | S08 Ferramentas de áudio | — | not started | needs audio tracks | — |
-| S09 Texto | — | stub | everything | — |
+| S09 Texto | 2026-10-18 | done | loop animations; text presets/templates | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |
 | S10 Legendas automáticas | — | not started | — | — |
 | S11 Texto para fala | — | not started | — | — |
 | S12 Sobrepor | — | stub | everything | — |

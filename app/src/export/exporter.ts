@@ -21,6 +21,7 @@ import {
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { drawContain } from "../editor/player";
+import { drawText, loadFonts, textsAt } from "../editor/text";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
 
 export interface ExportOptions {
@@ -133,6 +134,7 @@ export async function exportTimeline(
   const codecs = await pickCodecs(width, height, bitrate);
   if (!codecs.video) throw new Error("Este aparelho não consegue gerar vídeo neste tamanho.");
 
+  await loadFonts();
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
   const bg = doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
@@ -163,24 +165,34 @@ export async function exportTimeline(
       const last = Math.min(totalFrames, Math.round(((clip.startUs + clip.durationUs) / 1e6) * opts.fps));
       if (last <= first) continue;
 
+      // text and other overlays go on top of whatever the clip drew
       const emit = async () => {
         if (signal.aborted) throw new ExportCancelled();
+        const tUs = Math.round(frame * frameS * 1e6);
+        for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
         await videoSource.add(frame * frameS, frameS);
         frame++;
         if (frame % 10 === 0) onProgress(frame / totalFrames, "video");
       };
 
       if (!asset) {
-        ctx.fillStyle = bg;
-        ctx.fillRect(0, 0, width, height);
-        for (let f = first; f < last; f++) await emit();
+        for (let f = first; f < last; f++) {
+          ctx.fillStyle = bg;
+          ctx.fillRect(0, 0, width, height);
+          await emit();
+        }
       } else if (asset.kind === "image") {
         const file = await assetFile(asset);
         if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
         const bmp = await createImageBitmap(file);
-        drawContain(ctx, bmp, bmp.width, bmp.height, bg);
-        bmp.close();
-        for (let f = first; f < last; f++) await emit();
+        try {
+          for (let f = first; f < last; f++) {
+            drawContain(ctx, bmp, bmp.width, bmp.height, bg);
+            await emit();
+          }
+        } finally {
+          bmp.close();
+        }
       } else {
         const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
         if (!track) throw new Error(`Sem vídeo em ${asset.name}`);
@@ -211,11 +223,9 @@ export async function exportTimeline(
               current = next;
               next = ended ? null : await pull();
             }
-            if (current) {
-              ctx.fillStyle = bg;
-              ctx.fillRect(0, 0, width, height);
-              current.drawWithFit(ctx, { fit: "contain" });
-            }
+            ctx.fillStyle = bg;
+            ctx.fillRect(0, 0, width, height);
+            current?.drawWithFit(ctx, { fit: "contain" });
             await emit();
           }
         } catch (err) {
