@@ -983,6 +983,8 @@ export function Editor({ projectId }: { projectId: Id }) {
             <TextOverlay
               width={stage.w}
               height={stage.h}
+              onRemove={onDelete}
+              onDuplicate={onDuplicate}
               onEdit={(id) => {
                 const d = useEditor.getState().doc;
                 if (d && findItem(d, id)?.clip.type === "caption") {

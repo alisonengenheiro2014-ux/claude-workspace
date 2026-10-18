@@ -1,7 +1,9 @@
 // Text drawn over the preview, and the gestures to place it and the photos
 // and videos on top (drawn below by OverlayMedia): tap to select, drag to
 // move, drag the corner handle (or pinch with two fingers) to scale and
-// rotate, double-tap to edit a text. Each gesture is one undo step.
+// rotate, double-tap to edit a text. Each gesture is one undo step. A
+// selected layer or text also has CapCut's corner buttons: X deletes it
+// (top left), the other duplicates it (bottom left).
 import { useEffect, useRef, type PointerEvent } from "react";
 import type { Id, Transform } from "../data/db";
 import { useEditor } from "./store";
@@ -19,7 +21,19 @@ type Gesture =
   | { kind: "handle"; id: Id; box: TextBox; t0: Transform; d0: number; a0: number }
   | { kind: "pinch"; id: Id; t0: Transform; d0: number; a0: number };
 
-export function TextOverlay({ width, height, onEdit }: { width: number; height: number; onEdit: (id: Id) => void }) {
+export function TextOverlay({
+  width,
+  height,
+  onEdit,
+  onRemove,
+  onDuplicate,
+}: {
+  width: number;
+  height: number;
+  onEdit: (id: Id) => void;
+  onRemove: () => void; // the selected item
+  onDuplicate: () => void;
+}) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const boxes = useRef(new Map<Id, TextBox>());
   const gesture = useRef<Gesture | null>(null);
@@ -61,7 +75,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
           if (b) boxes.current.set(c.id, b);
         }
         const sel = s.selectedId && boxes.current.get(s.selectedId);
-        if (sel && !s.playing) drawSelection(ctx, sel, dpr);
+        if (sel && !s.playing) drawSelection(ctx, sel, dpr, hasCorners(s.selectedId!));
       });
     };
     draw();
@@ -95,6 +109,13 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     if (!hit) return null;
     if (hit.clip.type === "text" || hit.clip.type === "caption" || hit.track.kind === "overlay" || hit.track.kind === "main") return hit.clip;
     return null;
+  }
+  // layers and texts get the delete and duplicate corners (not the main
+  // video, captions, or anything on a locked lane)
+  function hasCorners(id: Id) {
+    const d = useEditor.getState().doc;
+    const hit = d && findItem(d, id);
+    return !!hit && !hit.track.locked && (hit.track.kind === "overlay" || hit.clip.type === "text");
   }
   const isMain = (id: Id) => {
     const d = useEditor.getState().doc;
@@ -134,6 +155,19 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
 
     // corner handle of the selected text
     const selBox = s.selectedId ? boxes.current.get(s.selectedId) : undefined;
+    if (selBox && s.selectedId && hasCorners(s.selectedId)) {
+      const near = (c: { x: number; y: number }) => Math.hypot(p.x - c.x, p.y - c.y) <= HANDLE * dpr * 1.6;
+      if (near(cornerPos(selBox, -1, -1))) {
+        pointers.current.delete(e.pointerId);
+        onRemove();
+        return;
+      }
+      if (near(cornerPos(selBox, -1, 1))) {
+        pointers.current.delete(e.pointerId);
+        onDuplicate();
+        return;
+      }
+    }
     const t = s.selectedId ? textOf(s.selectedId) : null;
     if (selBox && t && !(s.doc && findItem(s.doc, t.id)?.track.locked)) {
       const h = handlePos(selBox);
@@ -226,16 +260,46 @@ function snapAngle(deg: number) {
   return Math.round(r * 10) / 10;
 }
 
-function handlePos(b: TextBox) {
+// a corner of the (turned) box: sx, sy are -1 (left/top) or 1 (right/bottom)
+function cornerPos(b: TextBox, sx: number, sy: number) {
   const a = (b.rotation * Math.PI) / 180;
-  const hx = b.w / 2;
-  const hy = b.h / 2;
+  const hx = (sx * b.w) / 2;
+  const hy = (sy * b.h) / 2;
   return { x: b.cx + hx * Math.cos(a) - hy * Math.sin(a), y: b.cy + hx * Math.sin(a) + hy * Math.cos(a) };
+}
+const handlePos = (b: TextBox) => cornerPos(b, 1, 1);
+
+// CapCut's corner buttons: a dark round button with a white sign
+function drawCornerButton(ctx: CanvasRenderingContext2D, at: { x: number; y: number }, dpr: number, sign: "x" | "copy") {
+  const r = HANDLE * dpr * 0.85;
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(at.x, at.y, r, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(20,20,20,.85)";
+  ctx.fill();
+  ctx.strokeStyle = "#ffffff";
+  ctx.lineWidth = 1.6 * dpr;
+  ctx.lineCap = "round";
+  const k = r * 0.38;
+  if (sign === "x") {
+    ctx.beginPath();
+    ctx.moveTo(at.x - k, at.y - k);
+    ctx.lineTo(at.x + k, at.y + k);
+    ctx.moveTo(at.x + k, at.y - k);
+    ctx.lineTo(at.x - k, at.y + k);
+    ctx.stroke();
+  } else {
+    // two overlapping squares
+    const q = k * 1.25;
+    ctx.strokeRect(at.x - q * 0.8, at.y - q * 0.3, q * 1.1, q * 1.1);
+    ctx.strokeRect(at.x - q * 0.3, at.y - q * 0.8, q * 1.1, q * 1.1);
+  }
+  ctx.restore();
 }
 
 // Selection frame: a light dashed box and the corner handle. Raw colours on
 // purpose: it sits on video, so it needs white with a dark edge.
-function drawSelection(ctx: CanvasRenderingContext2D, b: TextBox, dpr: number) {
+function drawSelection(ctx: CanvasRenderingContext2D, b: TextBox, dpr: number, corners: boolean) {
   ctx.save();
   ctx.translate(b.cx, b.cy);
   ctx.rotate((b.rotation * Math.PI) / 180);
@@ -260,4 +324,8 @@ function drawSelection(ctx: CanvasRenderingContext2D, b: TextBox, dpr: number) {
   ctx.arc(h.x, h.y, HANDLE * dpr * 0.35, 0.3, Math.PI * 1.6);
   ctx.strokeStyle = "#000000";
   ctx.stroke();
+  if (corners) {
+    drawCornerButton(ctx, cornerPos(b, -1, -1), dpr, "x");
+    drawCornerButton(ctx, cornerPos(b, -1, 1), dpr, "copy");
+  }
 }
