@@ -59,7 +59,7 @@ Texto para fala,IA,could,yes,partial,"voz em português (MMS da Meta) rodando no
 Efeitos visuais (tremor brilho desfoque zoom etc),efeitos,could,yes,yes,"14 efeitos próprios: tremor, pulsar, zoom lento, flash, pisca-pisca, desfoque, P&B, sépia, negativo, vinheta, luz quente, cinema, escurecer, clarear"
 Stickers (imagens e emoji),stickers,could,yes,partial,"48 emojis com animação em loop; PNG próprio entra por Sobrepor"
 Marcar batidas da música,áudio,could,yes,no,
-Templates próprios reutilizáveis,templates,could,no,no,diferente dos templates da comunidade CapCut
+Templates próprios reutilizáveis,templates,could,no,yes,"Salvar como modelo no menu do projeto; tocar num modelo abre uma cópia"
 Backup e restauração do projeto em arquivo,projeto,could,no,no,protege contra o Safari apagar o armazenamento
 Biblioteca de músicas e efeitos sonoros,áudio,skip,yes,skip,conteúdo licenciado da CapCut
 Templates da comunidade,templates,skip,yes,skip,é a rede de usuários deles

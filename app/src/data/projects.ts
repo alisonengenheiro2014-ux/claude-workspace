@@ -60,8 +60,9 @@ export async function renameProject(id: Id, name: string) {
   await db.projects.update(id, { name: name.trim().slice(0, 120) || "Sem nome", updatedAt: Date.now() });
 }
 
-// Copies the records; the media files are shared, not copied.
-export async function duplicateProject(id: Id): Promise<Id | null> {
+// Copies the records; the media files are shared, not copied. A template
+// is a copy kept as a starting point; using one makes a normal project.
+export async function duplicateProject(id: Id, as: { template?: boolean; name?: string } = {}): Promise<Id | null> {
   const src = await loadProject(id);
   if (!src) return null;
   const now = Date.now();
@@ -79,7 +80,8 @@ export async function duplicateProject(id: Id): Promise<Id | null> {
     await db.projects.add({
       ...src.project,
       id: newId,
-      name: `${src.project.name} (cópia)`.slice(0, 120),
+      name: (as.name ?? `${src.project.name} (cópia)`).slice(0, 120),
+      template: as.template || undefined,
       thumbAssetKey: src.project.thumbAssetKey ? (idMap.get(src.project.thumbAssetKey) ?? null) : null,
       createdAt: now,
       updatedAt: now,

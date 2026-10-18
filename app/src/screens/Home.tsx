@@ -1,5 +1,5 @@
 // S01 Início: new project and the drafts list.
-import { Copy, Film, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Film, LayoutTemplate, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
@@ -20,6 +20,7 @@ import {
 import { insertMedia } from "../editor/timeline";
 import type { ImportProgress } from "../app/importFlow";
 import { importsInProgress } from "../media/import";
+import { makeBackup, restoreBackup, shareFile } from "../data/backup";
 import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { DraftCard } from "../ui/DraftCard";
@@ -45,6 +46,8 @@ export function Home() {
   const [renaming, setRenaming] = useState<ProjectRow | null>(null);
   const [newName, setNewName] = useState("");
   const [deleting, setDeleting] = useState<ProjectRow | null>(null);
+  const backupPicker = useRef<HTMLInputElement>(null);
+  const [working, setWorking] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -90,6 +93,45 @@ export function Home() {
     await refresh();
   }
 
+  async function onBackup(p: ProjectRow) {
+    setMenuFor(null);
+    if (importsInProgress()) return toast("Espere terminar de guardar os vídeos para fazer o backup.");
+    setWorking("Preparando o backup…");
+    try {
+      await shareFile(await makeBackup(p.id));
+    } catch (err) {
+      toast(`Não foi possível fazer o backup: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  async function onRestore(file: File | undefined) {
+    if (!file) return;
+    setWorking("Abrindo o backup…");
+    try {
+      const id = await restoreBackup(file);
+      navigate(`/p/${id}`);
+    } catch (err) {
+      toast(err instanceof Error ? err.message : String(err), "error");
+    } finally {
+      setWorking(null);
+    }
+  }
+
+  // Modelos: a project kept as a starting point; using one makes a copy
+  async function onSaveTemplate(p: ProjectRow) {
+    setMenuFor(null);
+    if (importsInProgress()) return toast("Espere terminar de guardar os vídeos.");
+    await duplicateProject(p.id, { template: true, name: `Modelo – ${p.name}` });
+    toast("Salvo em Modelos");
+    await refresh();
+  }
+  async function onUseTemplate(p: ProjectRow) {
+    const id = await duplicateProject(p.id, { name: p.name.replace(/^Modelo – /, "") });
+    if (id) navigate(`/p/${id}`);
+  }
+
   async function onRename() {
     if (!renaming) return;
     await renameProject(renaming.id, newName);
@@ -122,11 +164,49 @@ export function Home() {
           Novo projeto
         </Button>
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
+        <Button variant="ghost" className="mt-2 w-full" icon={<ArchiveRestore aria-hidden className="size-4" />} onClick={() => backupPicker.current?.click()}>
+          Abrir backup
+        </Button>
+        <input
+          ref={backupPicker}
+          type="file"
+          accept=".garagem,application/octet-stream"
+          hidden
+          onChange={(e) => {
+            void onRestore(e.target.files?.[0]);
+            e.target.value = "";
+          }}
+        />
         <p className="mt-2 text-xs text-text-muted">
           Dica: pela Fototeca, o iPhone converte o vídeo antes de entregar (demora e perde qualidade). Para abrir na hora, salve o
           vídeo em Arquivos e escolha <span className="text-text">Escolher Arquivo</span>.
         </p>
       </div>
+
+      {projects && projects.some((p) => p.template) && (
+        <section aria-labelledby="templates" className="mt-6 px-3">
+          <h2 id="templates" className="px-1 pb-2 text-sm font-semibold">
+            Modelos
+          </h2>
+          <ul className="flex flex-col gap-1">
+            {projects
+              .filter((p) => p.template)
+              .map((p) => (
+                <li key={p.id}>
+                  <DraftCard
+                    name={p.name}
+                    durationUs={p.durationUs}
+                    updatedAt={p.updatedAt}
+                    thumb={p.thumbAssetKey ? thumbs.get(p.thumbAssetKey) : undefined}
+                    onOpen={() => void onUseTemplate(p)}
+                    onMenu={() => setMenuFor(p)}
+                  />
+                </li>
+              ))}
+          </ul>
+          <p className="px-1 pt-1 text-xs text-text-muted">Tocar num modelo abre uma cópia; o modelo continua igual.</p>
+        </section>
+      )}
 
       <section aria-labelledby="drafts" className="mt-6 flex flex-1 flex-col px-3">
         <div className="flex items-baseline justify-between px-1 pb-2">
@@ -160,7 +240,7 @@ export function Home() {
           </div>
         ) : (
           <ul className="flex flex-col gap-1">
-            {projects.map((p) => (
+            {projects.filter((p) => !p.template).map((p) => (
               <li key={p.id}>
                 <DraftCard
                   name={p.name}
@@ -191,6 +271,18 @@ export function Home() {
           </Button>
           <Button className="justify-start" icon={<Copy aria-hidden className="size-4" />} onClick={() => void onDuplicate(menuFor!)}>
             Duplicar
+          </Button>
+          {menuFor?.template ? (
+            <Button className="justify-start" icon={<LayoutTemplate aria-hidden className="size-4" />} onClick={() => (setMenuFor(null), void onUseTemplate(menuFor))}>
+              Usar modelo
+            </Button>
+          ) : (
+            <Button className="justify-start" icon={<LayoutTemplate aria-hidden className="size-4" />} onClick={() => void onSaveTemplate(menuFor!)}>
+              Salvar como modelo
+            </Button>
+          )}
+          <Button className="justify-start" icon={<Archive aria-hidden className="size-4" />} onClick={() => void onBackup(menuFor!)}>
+            Salvar backup (arquivo)
           </Button>
           <Button
             variant="danger"
@@ -231,6 +323,14 @@ export function Home() {
         onConfirm={() => void onDelete()}
       />
 
+      {working && (
+        <div role="dialog" aria-modal aria-label={working} className="fixed inset-0 z-40 flex items-center justify-center bg-scrim/70 px-8">
+          <div className="flex items-center gap-3 rounded-lg bg-surface-2 px-5 py-4 shadow-pop">
+            <span aria-hidden className="size-5 animate-spin rounded-pill border-2 border-surface-3 border-t-accent" />
+            <p className="text-sm">{working}</p>
+          </div>
+        </div>
+      )}
       {importing && <ImportOverlay progress={importing} />}
     </main>
   );

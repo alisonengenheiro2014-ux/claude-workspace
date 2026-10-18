@@ -23,6 +23,7 @@ export interface ProjectRow {
   durationUs: Us; // derived from the doc, cached for the drafts list
   thumbAssetKey: string | null; // OPFS path of the cover thumbnail
   docVersion: number; // bumped on every save
+  template?: boolean; // a project kept as a starting point (Modelos)
   createdAt: number;
   updatedAt: number;
 }
