@@ -17,14 +17,25 @@ export const PEAKS_PER_SEC = 20;
 // at local time fromUs, at context time whenS.
 export function scheduleEnvelope(param: AudioParam, clip: MediaClip, fromUs: Us, whenS: number) {
   param.cancelScheduledValues(0);
-  param.setValueAtTime(gainAt(clip, fromUs), whenS);
-  const at = (localUs: Us) => whenS + (localUs - fromUs) / 1e6;
-  if (clip.fadeInUs > fromUs) param.linearRampToValueAtTime(clip.volume, at(clip.fadeInUs));
-  const fadeOutStart = clip.durationUs - clip.fadeOutUs;
-  if (clip.fadeOutUs > 0) {
-    if (fadeOutStart > fromUs) param.setValueAtTime(gainAt(clip, fadeOutStart), at(fadeOutStart));
-    param.linearRampToValueAtTime(0, at(clip.durationUs));
+  const plain = !clip.keyframes?.some((k) => k.property === "volume");
+  if (plain) {
+    // fades only: a few ramps
+    param.setValueAtTime(gainAt(clip, fromUs), whenS);
+    const at = (localUs: Us) => whenS + (localUs - fromUs) / 1e6;
+    if (clip.fadeInUs > fromUs) param.linearRampToValueAtTime(clip.volume, at(clip.fadeInUs));
+    const fadeOutStart = clip.durationUs - clip.fadeOutUs;
+    if (clip.fadeOutUs > 0) {
+      if (fadeOutStart > fromUs) param.setValueAtTime(gainAt(clip, fadeOutStart), at(fadeOutStart));
+      param.linearRampToValueAtTime(0, at(clip.durationUs));
+    }
+    return;
   }
+  // volume keyframes: the same curve as gainAt, sampled every 20 ms
+  const step = 20_000;
+  const n = Math.max(2, Math.ceil((clip.durationUs - fromUs) / step) + 1);
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) curve[i] = gainAt(clip, Math.min(clip.durationUs, fromUs + i * step));
+  param.setValueCurveAtTime(curve, whenS, Math.max(0.001, ((n - 1) * step) / 1e6));
 }
 
 // Decodes a file's whole audio track into one AudioBuffer.

@@ -50,7 +50,7 @@ Encaixe magnético dos itens no cursor e nas bordas,editor,should,yes,no,
 Mostrar tamanho estimado do arquivo e não oferecer 4K sem mídia 4K,exportar,should,yes,yes,fonte 3
 Curvas de velocidade (presets e pontos),clipe,could,yes,no,S05
 Câmera lenta suave com fluxo óptico,clipe,could,yes,no,pesado em PWA; avaliar depois
-Máscaras (linear espelho círculo retângulo coração estrela),clipe,could,yes,partial,"nas sobreposições: 6 formatos, tamanho, borda suave, girar, posição, inverter; no vídeo principal ainda não"
+Máscaras (linear espelho círculo retângulo coração estrela),clipe,could,yes,yes,"no vídeo principal e nas sobreposições: 6 formatos, tamanho, borda suave, girar, posição, inverter"
 Chroma key,clipe,could,yes,yes,"nas sobreposições: verde, verde vivo, azul, branco, preto; intensidade e limpeza das bordas"
 Remover fundo automático (sem tela verde),IA,could,yes,no,modelo de segmentação aberto via WebGPU
 Estabilizar vídeo,clipe,could,yes,no,caro em processamento

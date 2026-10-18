@@ -354,3 +354,20 @@ describe("chroma key and masks", () => {
     expect(darkGreen.data[3]).toBeLessThan(60);
   });
 });
+
+describe("volume keyframes", () => {
+  it("volume follows its keyframes; without them it is the clip's", async () => {
+    const { toggleKeyframe, setVolumeAt, gainAt } = await import("./timeline");
+    const d0 = base();
+    const id = mainClips(d0)[0].id;
+    let d = setVolumeAt(d0, id, 5_000_000, 0.5); // no keyframes: the whole clip
+    expect(mainClips(d)[0].volume).toBe(0.5);
+    d = toggleKeyframe(d, id, 0); // keyframe at 0 holds 0.5
+    d = setVolumeAt(d, id, 4_000_000, 1.5); // a second one at 4 s
+    const c = mainClips(d)[0];
+    expect(gainAt(c, 0)).toBeCloseTo(0.5);
+    expect(gainAt(c, 2_000_000)).toBeCloseTo(1); // half way, eased
+    expect(gainAt(c, 6_000_000)).toBeCloseTo(1.5);
+    expect(validateDoc(d, assets)).toEqual([]);
+  });
+});

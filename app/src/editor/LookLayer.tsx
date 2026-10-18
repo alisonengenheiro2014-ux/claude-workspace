@@ -5,6 +5,7 @@
 import { useEffect, useState, type RefObject } from "react";
 import { containRect, shapedSize, shapeOf } from "./frame";
 import { cssFilter, lookOf, NEUTRAL, vignetteCss, washes, type Look } from "./look";
+import { maskUrl } from "./mask";
 import { displaySize } from "./overlay";
 import { useEditor } from "./store";
 import { clipAt } from "./timeline";
@@ -46,6 +47,20 @@ export function LookLayer({
       const src = displaySize(hit ? s.assets.get(hit.clip.assetId) : undefined);
       const size = hit ? shapedSize(src.w, src.h, shapeOf(hit.clip)) : src;
       const rect = containRect(size.w, size.h, width, height);
+      // the clip's mask, placed on its picture
+      const mask = hit?.clip.mask ?? null;
+      const m = mask ? maskUrl(mask, rect.w / Math.max(1, rect.h)) : "";
+      for (const el of [video.current?.parentElement, image.current]) {
+        if (!el) continue;
+        const st = el.style as CSSStyleDeclaration & { webkitMaskImage: string; webkitMaskSize: string; webkitMaskPosition: string; webkitMaskRepeat: string };
+        const img = m ? `url(${m})` : "";
+        if (st.maskImage !== img && st.webkitMaskImage !== img) {
+          st.maskImage = st.webkitMaskImage = img;
+          st.maskSize = st.webkitMaskSize = m ? `${rect.w}px ${rect.h}px` : "";
+          st.maskPosition = st.webkitMaskPosition = m ? `${rect.x}px ${rect.y}px` : "";
+          st.maskRepeat = st.webkitMaskRepeat = m ? "no-repeat" : "";
+        }
+      }
       const k = JSON.stringify([look, rect]);
       if (k !== key) {
         key = k;

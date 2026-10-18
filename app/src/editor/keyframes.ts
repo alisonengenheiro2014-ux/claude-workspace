@@ -16,24 +16,31 @@ function baseValue(c: Pick<ClipBase, "transform" | "opacity">, p: (typeof KEY_PR
   return p === "opacity" ? c.opacity : c.transform[p];
 }
 
+function valueAt(ks: Keyframe[], p: KeyframeProperty, localUs: Us, base: number) {
+  let before: Keyframe | null = null;
+  let after: Keyframe | null = null;
+  for (const k of ks) {
+    if (k.property !== p) continue;
+    if (k.tUs <= localUs) before = k;
+    else if (!after) after = k;
+  }
+  if (!before && !after) return base;
+  if (!before) return after!.value;
+  if (!after) return before.value;
+  const t = (localUs - before.tUs) / (after.tUs - before.tUs);
+  const k = before.easing === "linear" ? t : easeInOut(t);
+  return before.value + (after.value - before.value) * k;
+}
+
 export function animatedAt(c: Pick<ClipBase, "transform" | "opacity" | "keyframes">, localUs: Us): Animated {
   if (!c.keyframes.length) return { transform: c.transform, opacity: c.opacity };
-  const v = (p: (typeof KEY_PROPS)[number]) => {
-    let before: Keyframe | null = null;
-    let after: Keyframe | null = null;
-    for (const k of c.keyframes) {
-      if (k.property !== p) continue;
-      if (k.tUs <= localUs) before = k;
-      else if (!after) after = k;
-    }
-    if (!before && !after) return baseValue(c, p);
-    if (!before) return after!.value;
-    if (!after) return before.value;
-    const t = (localUs - before.tUs) / (after.tUs - before.tUs);
-    const k = before.easing === "linear" ? t : easeInOut(t);
-    return before.value + (after.value - before.value) * k;
-  };
+  const v = (p: (typeof KEY_PROPS)[number]) => valueAt(c.keyframes, p, localUs, baseValue(c, p));
   return { transform: { x: v("x"), y: v("y"), scale: v("scale"), rotation: v("rotation") }, opacity: v("opacity") };
+}
+
+// Video and audio clips: their volume at a moment (keyframes too).
+export function volumeAt(c: { volume: number; keyframes: Keyframe[] }, localUs: Us) {
+  return c.keyframes?.length ? valueAt(c.keyframes, "volume", localUs, c.volume) : c.volume;
 }
 
 export function keyTimes(c: Pick<ClipBase, "keyframes">): Us[] {
@@ -47,16 +54,24 @@ export function keyNear(c: Pick<ClipBase, "keyframes">, localUs: Us, tol = KEY_T
 }
 
 function sorted(ks: Keyframe[]) {
-  return ks.sort((a, b) => a.tUs - b.tUs || KEY_PROPS.indexOf(a.property as never) - KEY_PROPS.indexOf(b.property as never));
+  const order: KeyframeProperty[] = [...KEY_PROPS, "volume"];
+  return ks.sort((a, b) => a.tUs - b.tUs || order.indexOf(a.property) - order.indexOf(b.property));
 }
 
 // The keyframes with one at localUs holding these values (replacing one
-// that was there).
-export function withKeyAt(c: Pick<ClipBase, "keyframes">, localUs: Us, a: Animated): Keyframe[] {
+// that was there, and keeping its curve). Video and audio clips pass their
+// volume too.
+export function withKeyAt(c: Pick<ClipBase, "keyframes">, localUs: Us, a: Animated, volume?: number): Keyframe[] {
   const at = keyNear(c, localUs) ?? Math.round(localUs);
+  const easing = c.keyframes.find((k) => k.tUs === at)?.easing ?? "ease-in-out";
   const rest = c.keyframes.filter((k) => k.tUs !== at);
-  const values: Record<(typeof KEY_PROPS)[number], number> = { ...a.transform, opacity: a.opacity };
-  return sorted([...rest, ...KEY_PROPS.map((property) => ({ tUs: at, property, value: values[property], easing: "ease-in-out" as const }))]);
+  const values: Record<string, number> = { ...a.transform, opacity: a.opacity };
+  const props: KeyframeProperty[] = [...KEY_PROPS];
+  if (volume !== undefined) {
+    values.volume = volume;
+    props.push("volume");
+  }
+  return sorted([...rest, ...props.map((property) => ({ tUs: at, property, value: values[property], easing }))]);
 }
 
 export function withoutKeyAt(c: Pick<ClipBase, "keyframes">, localUs: Us): Keyframe[] {

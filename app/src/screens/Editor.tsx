@@ -72,6 +72,7 @@ import {
   freezeAt,
   toggleKeyframe,
   setKeyEasing,
+  setVolumeAt,
   addEffect,
   setEffect,
 } from "../editor/timeline";
@@ -86,7 +87,7 @@ import { reverseRange } from "../media/reverse";
 import { speak } from "../captions/tts";
 import { ChromaSheet, MaskSheet } from "./OverlaySheets";
 import { STICKERS, STICKER_STYLE } from "../editor/text";
-import { isZoomed, keyNear, mainZoom } from "../editor/keyframes";
+import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import type { ExportOptions } from "../export/exporter";
@@ -456,7 +457,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   }
 
   // S16: the selected video, overlay or text can take keyframes while the playhead is on it
-  const keyCandidate = selected ?? selectedOverlay ?? selectedText;
+  const keyCandidate = selected ?? selectedOverlay ?? selectedText ?? selectedAudio;
   const keyClip =
     keyCandidate && playheadUs >= keyCandidate.startUs && playheadUs <= keyCandidate.startUs + keyCandidate.durationUs ? keyCandidate : null;
 
@@ -563,6 +564,13 @@ export function Editor({ projectId }: { projectId: Id }) {
     const s = useEditor.getState();
     const cur = s.draft ?? s.doc;
     if (cur && selectedOverlay) s.setDraft(setItem(cur, selectedOverlay.id, patch));
+  }
+
+  function changeMasked(patch: Partial<MediaClip>) {
+    const s = useEditor.getState();
+    const cur = s.draft ?? s.doc;
+    const id = selectedOverlay?.id ?? selected?.id;
+    if (cur && id) s.setDraft(setItem(cur, id, patch));
   }
 
   // S13 Efeitos: add at the playhead, or swap the selected one
@@ -956,6 +964,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
+              <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
               <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selected!.id }))} />
               <ToolbarItem
                 icon={<FlipHorizontal2 />}
@@ -1114,7 +1123,7 @@ export function Editor({ projectId }: { projectId: Id }) {
         <p className="mt-3 text-xs text-text-muted">O efeito entra no cursor por 3 s; puxe as pontas dele na linha do tempo para mudar a duração.</p>
       </Sheet>
 
-      <MaskSheet clip={panel?.name === "mask" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Máscara")} />
+      <MaskSheet clip={panel?.name === "mask" ? (selectedOverlay ?? selected ?? null) : null} onChange={changeMasked} onClose={() => closeEditing("Máscara")} />
       <ChromaSheet clip={panel?.name === "chroma" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Chroma key")} />
 
       <CropSheet clip={cropClip} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
@@ -1168,15 +1177,23 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       <Sheet open={panel?.name === "volume"} onOpenChange={(o) => !o && closeEditing("Volume")} title="Volume">
         {selectedMedia && (
-          <Slider
-            label="Volume"
-            value={Math.round(selectedMedia.volume * 100)}
-            min={0}
-            max={200}
-            defaultValue={100}
-            format={(v) => `${v}%`}
-            onChange={(v) => ed.setDraft(setItem(useEditor.getState().doc!, selectedMedia.id, { volume: v / 100 }))}
-          />
+          <>
+            <Slider
+              label="Volume"
+              value={Math.round(volumeAt(selectedMedia, playheadUs - selectedMedia.startUs) * 100)}
+              min={0}
+              max={200}
+              defaultValue={100}
+              format={(v) => `${v}%`}
+              onChange={(v) => {
+                const s = useEditor.getState();
+                ed.setDraft(setVolumeAt(s.draft ?? s.doc!, selectedMedia.id, s.playheadUs, v / 100));
+              }}
+            />
+            {selectedMedia.keyframes.length > 0 && (
+              <p className="mt-3 text-xs text-text-muted">Este clipe tem keyframes: o volume muda no keyframe do cursor (ou cria um).</p>
+            )}
+          </>
         )}
       </Sheet>
 

@@ -205,6 +205,33 @@ export async function exportTimeline(
     };
   };
 
+  // The clip's mask (S12 Máscara on the main video) around a picture's draw().
+  let maskLayer: OffscreenCanvas | null = null;
+  let maskShape: OffscreenCanvas | null = null;
+  const masked = (draw: Draw, mask: MediaClip["mask"]): Draw => {
+    if (!mask) return draw;
+    return (c) => {
+      const W = c.canvas.width;
+      const H = c.canvas.height;
+      if (!maskLayer || maskLayer.width !== W || maskLayer.height !== H) maskLayer = new OffscreenCanvas(W, H);
+      const l = maskLayer.getContext("2d")!;
+      l.clearRect(0, 0, W, H);
+      const r = draw(l);
+      if (r) {
+        const w = Math.max(1, Math.round(r.w));
+        const h = Math.max(1, Math.round(r.h));
+        if (!maskShape || maskShape.width !== w || maskShape.height !== h) maskShape = new OffscreenCanvas(w, h);
+        drawMask(maskShape.getContext("2d")!, w, h, mask);
+        l.save();
+        l.globalCompositeOperation = "destination-in";
+        l.drawImage(maskShape, r.x, r.y, r.w, r.h);
+        l.restore();
+        c.drawImage(maskLayer, 0, 0);
+      }
+      return r;
+    };
+  };
+
   // A video frame kept as a picture (freeze frames, transition stills).
   const frameAsPicture = async (asset: AssetRow, us: number) => {
     const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
@@ -252,7 +279,7 @@ export async function exportTimeline(
         const file = await assetFile(a);
         pic = file ? await createImageBitmap(file) : null;
       } else if (a) pic = await frameAsPicture(a, clip.freeze ? clip.inUs : us);
-      const r = drawFrame(cx, fbg, pic ? zoomed(shapedDraw(pic, pic.width, pic.height, shapeOf(clip)), mainZoom(clip, localUs)) : () => null);
+      const r = drawFrame(cx, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shapeOf(clip)), clip.mask), mainZoom(clip, localUs)) : () => null);
       if (r) applyLook(cx, r, lookOf(clip));
       if (pic instanceof ImageBitmap) pic.close();
       return c;
@@ -420,7 +447,7 @@ export async function exportTimeline(
           const shape = shapeOf(clip);
           try {
             for (let f = first; f < last; f++) {
-              paint(drawFrame(lctx, fbg, pic ? zoomed(shapedDraw(pic, pic.width, pic.height, shape), zoomAt(f)) : () => null));
+              paint(drawFrame(lctx, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shape), clip.mask), zoomAt(f)) : () => null));
               await emit();
             }
           } finally {
@@ -457,7 +484,7 @@ export async function exportTimeline(
                 current = next;
                 next = ended ? null : await pull();
               }
-              paint(drawFrame(lctx, fbg, current ? zoomed(sampleDraw(current, shape), zoomAt(f)) : () => null));
+              paint(drawFrame(lctx, fbg, current ? zoomed(masked(sampleDraw(current, shape), clip.mask), zoomAt(f)) : () => null));
               await emit();
             }
           } catch (err) {

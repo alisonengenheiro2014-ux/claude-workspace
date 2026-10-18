@@ -4,7 +4,7 @@ import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip,
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 import { captionPreset, type CaptionGrouping } from "./presets";
 import { newEffect } from "./effects";
-import { animatedAt, keyNear, shiftKeys, withKeyAt, withoutKeyAt, type Animated } from "./keyframes";
+import { animatedAt, keyNear, shiftKeys, volumeAt, withKeyAt, withoutKeyAt, type Animated } from "./keyframes";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
 export const MIN_CLIP_US: Us = 100_000; // shortest clip a split or trim may leave
@@ -494,7 +494,21 @@ export function toggleKeyframe(doc: TimelineDoc, id: Id, atUs: Us): TimelineDoc 
     if (!hit) return;
     const c = hit.clip;
     const local = Math.max(0, Math.min(c.durationUs, atUs - c.startUs));
-    c.keyframes = keyNear(c, local) !== null ? withoutKeyAt(c, local) : withKeyAt(c, local, animatedAt(c, local));
+    c.keyframes =
+      keyNear(c, local) !== null ? withoutKeyAt(c, local) : withKeyAt(c, local, animatedAt(c, local), c.type === "media" ? volumeAt(c, local) : undefined);
+  });
+}
+
+// Volume of a video or audio clip: with keyframes, at the playhead; otherwise
+// for the whole clip.
+export function setVolumeAt(doc: TimelineDoc, id: Id, atUs: Us, volume: number): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (hit?.clip.type !== "media") return;
+    const c = hit.clip;
+    const local = Math.max(0, Math.min(c.durationUs, atUs - c.startUs));
+    if (c.keyframes.length) c.keyframes = withKeyAt(c, local, animatedAt(c, local), volume);
+    else c.volume = volume;
   });
 }
 
@@ -519,7 +533,7 @@ export function setAnimated(doc: TimelineDoc, id: Id, atUs: Us, a: Partial<Anima
     const local = Math.max(0, Math.min(c.durationUs, atUs - c.startUs));
     const cur = animatedAt(c, local);
     const next = { transform: a.transform ?? cur.transform, opacity: a.opacity ?? cur.opacity };
-    if (c.keyframes.length) c.keyframes = withKeyAt(c, local, next);
+    if (c.keyframes.length) c.keyframes = withKeyAt(c, local, next, c.type === "media" ? volumeAt(c, local) : undefined);
     else {
       c.transform = { ...next.transform };
       c.opacity = next.opacity;
@@ -545,7 +559,7 @@ export function setTrackMuted(doc: TimelineDoc, kind: Track["kind"], muted: bool
 
 // Volume envelope of a clip at local time (0..durationUs): volume times the fades.
 export function gainAt(c: MediaClip, localUs: Us): number {
-  let g = c.volume;
+  let g = volumeAt(c, localUs);
   if (c.fadeInUs > 0 && localUs < c.fadeInUs) g *= Math.max(0, localUs / c.fadeInUs);
   const left = c.durationUs - localUs;
   if (c.fadeOutUs > 0 && left < c.fadeOutUs) g *= Math.max(0, left / c.fadeOutUs);
