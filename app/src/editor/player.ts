@@ -37,6 +37,8 @@ export class Player {
   private imageClock: { wall: number; t: Us } | null = null;
   private seekTarget: number | null = null;
   private seeking = false;
+  private seekTimer: ReturnType<typeof setTimeout> | undefined;
+  private waitingMeta = false;
   private disposed = false;
 
   constructor(
@@ -46,6 +48,7 @@ export class Player {
     video.playsInline = true;
     video.preload = "auto";
     video.addEventListener("seeked", this.onSeeked);
+    video.addEventListener("loadedmetadata", this.onMeta);
   }
 
   dispose() {
@@ -53,6 +56,8 @@ export class Player {
     cancelAnimationFrame(this.raf);
     this.release();
     this.video.removeEventListener("seeked", this.onSeeked);
+    this.video.removeEventListener("loadedmetadata", this.onMeta);
+    clearTimeout(this.seekTimer);
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     for (const b of this.images.values()) b.close();
   }
@@ -63,6 +68,7 @@ export class Player {
     this.video.removeAttribute("src");
     this.video.load();
     this.seeking = false;
+    this.waitingMeta = false;
     this.seekTarget = null;
   }
 
@@ -117,7 +123,17 @@ export class Player {
     this.show("image");
   }
 
+  // Safari ignores a seek made before the file's metadata has loaded, and
+  // then never fires "seeked": the preview stayed black. Seeks wait for it.
+  private onMeta = () => {
+    this.waitingMeta = false;
+    const t = this.seekTarget;
+    this.seekTarget = null;
+    if (t !== null) this.seekVideo(t);
+  };
+
   private onSeeked = () => {
+    clearTimeout(this.seekTimer);
     this.seeking = false;
     if (this.seekTarget !== null) {
       const t = this.seekTarget;
@@ -128,12 +144,20 @@ export class Player {
 
   // Coalesces seeks: while one is running, only the latest target is kept.
   private seekVideo(seconds: number) {
-    if (this.seeking) {
+    if (this.seeking || this.waitingMeta) {
+      this.seekTarget = seconds;
+      return;
+    }
+    if (this.video.readyState < HTMLMediaElement.HAVE_METADATA) {
+      this.waitingMeta = true;
       this.seekTarget = seconds;
       return;
     }
     this.seeking = true;
     this.video.currentTime = seconds;
+    // if "seeked" never comes (same time, or the browser skipped it), unblock
+    clearTimeout(this.seekTimer);
+    this.seekTimer = setTimeout(() => this.seeking && this.onSeeked(), 1500);
   }
 
   // Shows the frame under the playhead while paused.
@@ -150,8 +174,10 @@ export class Player {
     if (!url || this.disposed) return this.show("none");
     if (this.video.getAttribute("src") !== url) {
       this.seeking = false;
+      this.waitingMeta = false;
       this.seekTarget = null;
       this.video.src = url;
+      this.video.load();
     }
     this.show("video");
     this.seekVideo(sourceTimeUs(hit.clip, hit.offsetUs) / 1e6);
