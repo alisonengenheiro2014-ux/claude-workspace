@@ -1,11 +1,13 @@
-// Text drawn over the preview, and the gestures to place it: tap to select,
-// drag to move, drag the corner handle (or pinch with two fingers) to scale
-// and rotate, double-tap to edit. Each gesture is one undo step.
+// Text drawn over the preview, and the gestures to place it and the photos
+// and videos on top (drawn below by OverlayMedia): tap to select, drag to
+// move, drag the corner handle (or pinch with two fingers) to scale and
+// rotate, double-tap to edit a text. Each gesture is one undo step.
 import { useEffect, useRef, type PointerEvent } from "react";
 import type { Id, Transform } from "../data/db";
 import { useEditor } from "./store";
 import { drawText, hitBox, loadFonts, textsAt, type TextBox } from "./text";
-import { findItem, setCaptionTransform, setText } from "./timeline";
+import { overlayBox, overlaysAt } from "./overlay";
+import { findItem, setCaptionTransform, setItem, setText } from "./timeline";
 
 const HANDLE = 14; // css px radius of the corner handle
 
@@ -41,6 +43,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
         const ctx = el.getContext("2d")!;
         ctx.clearRect(0, 0, W, H);
         boxes.current.clear();
+        for (const c of overlaysAt(doc, s.playheadUs)) boxes.current.set(c.id, overlayBox(s.assets.get(c.assetId), W, H, c.transform));
         for (const c of textsAt(doc.tracks, s.playheadUs)) {
           const b = drawText(ctx, c, W, H, s.playheadUs - c.startUs, s.playing);
           if (b) boxes.current.set(c.id, b);
@@ -52,7 +55,14 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     draw();
     void loadFonts().then(draw);
     const unsub = useEditor.subscribe((s, p) => {
-      if (s.doc !== p.doc || s.draft !== p.draft || s.playheadUs !== p.playheadUs || s.selectedId !== p.selectedId || s.playing !== p.playing)
+      if (
+        s.doc !== p.doc ||
+        s.draft !== p.draft ||
+        s.playheadUs !== p.playheadUs ||
+        s.selectedId !== p.selectedId ||
+        s.playing !== p.playing ||
+        s.assets !== p.assets
+      )
         draw();
     });
     return () => {
@@ -66,18 +76,26 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     return { x: (e.clientX - r.left) * dpr, y: (e.clientY - r.top) * dpr };
   };
 
-  // text items and captions can be placed; captions all move together
+  // text items, captions and overlay media can be placed; captions all move together
   function textOf(id: Id) {
     const s = useEditor.getState();
     const hit = s.doc && findItem(s.doc, id);
-    return hit && (hit.clip.type === "text" || hit.clip.type === "caption") ? hit.clip : null;
+    if (!hit) return null;
+    if (hit.clip.type === "text" || hit.clip.type === "caption" || hit.track.kind === "overlay") return hit.clip;
+    return null;
   }
 
   function apply(id: Id, transform: Transform) {
     const s = useEditor.getState();
     if (!s.doc) return;
     const c = textOf(id);
-    s.setDraft(c?.type === "caption" ? setCaptionTransform(s.doc, transform) : setText(s.doc, id, { transform }));
+    s.setDraft(
+      c?.type === "caption"
+        ? setCaptionTransform(s.doc, transform)
+        : c?.type === "media"
+          ? setItem(s.doc, id, { transform })
+          : setText(s.doc, id, { transform }),
+    );
   }
 
   function onDown(e: PointerEvent) {
@@ -121,7 +139,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     if (hits) {
       const [id] = hits;
       const now = performance.now();
-      if (lastTap.current?.id === id && now - lastTap.current.at < 350) {
+      if (lastTap.current?.id === id && now - lastTap.current.at < 350 && textOf(id)?.type !== "media") {
         lastTap.current = null;
         onEdit(id);
         return;

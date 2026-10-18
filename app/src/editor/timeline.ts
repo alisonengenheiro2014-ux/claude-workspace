@@ -237,7 +237,7 @@ export function frameSize(doc: TimelineDoc, assets: Map<Id, AssetRow>, shortSide
     : { width: even(shortSide), height: even(shortSide / ratio) };
 }
 
-// ---------- overlay tracks (text for now) ----------
+// ---------- overlay tracks (text, photos and videos on top, audio) ----------
 
 export function findItem(doc: TimelineDoc, id: Id): { track: Track; clip: Clip } | null {
   for (const track of doc.tracks) {
@@ -367,6 +367,25 @@ export function addAudio(doc: TimelineDoc, asset: AssetRow, atUs: Us, inUs: Us =
   clip.startUs = start;
   clip.durationUs = clipDuration(clip);
   return { doc: edit(doc, (d) => placeInLane(d, clip, "audio")), id: clip.id };
+}
+
+// A photo or video over the main video (picture in picture), at the
+// playhead, half the frame's size, no longer than the video.
+export const OVERLAY_SCALE = 0.5;
+export function addOverlay(doc: TimelineDoc, asset: AssetRow, atUs: Us): { doc: TimelineDoc; id: Id } {
+  const total = durationOf(doc);
+  const start = Math.max(0, Math.min(atUs, Math.max(0, total - MIN_CLIP_US)));
+  const room = Math.max(MIN_CLIP_US, total - start);
+  const clip = newMediaClip(asset);
+  clip.outUs = Math.min(clip.outUs, room);
+  clip.startUs = start;
+  clip.durationUs = clipDuration(clip);
+  clip.transform = { x: 0.5, y: 0.5, scale: OVERLAY_SCALE, rotation: 0 };
+  return { doc: edit(doc, (d) => placeInLane(d, clip, "overlay")), id: clip.id };
+}
+
+export function overlayTracks(doc: TimelineDoc) {
+  return doc.tracks.filter((t) => t.kind === "overlay");
 }
 
 // Splits an audio item at atUs; the right part stays in the same lane.

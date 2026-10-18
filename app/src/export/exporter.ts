@@ -21,10 +21,11 @@ import {
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { containDraw, containRect, drawFrame, frameBgOf } from "../editor/frame";
-import { drawText, loadFonts, textsAt } from "../editor/text";
+import { overlayAlpha, overlayBox, overlaysAt } from "../editor/overlay";
+import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
 import { scheduleEnvelope } from "../editor/audio";
-import { durationOf, frameSize, mainClips, transitionAt, transitionWindows } from "../editor/timeline";
+import { durationOf, frameSize, mainClips, sourceTimeUs, transitionAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
@@ -98,8 +99,8 @@ export interface MixOptions {
   flat?: boolean;
 }
 
-// Mixes every sounding clip: the main track's video sound and the audio
-// lanes, each with its volume and fades (the same envelope as the preview).
+// Mixes every sounding clip: the main track's video sound, overlay videos
+// and the audio lanes, each with its volume and fades (the same envelope as the preview).
 export async function mixAudio(
   doc: TimelineDoc,
   assets: Map<Id, AssetRow>,
@@ -111,9 +112,9 @@ export async function mixAudio(
   const length = Math.max(1, Math.ceil((totalUs / 1e6) * opts.sampleRate));
   const ctx = new OfflineAudioContext(opts.channels, length, opts.sampleRate);
   let any = false;
-  const include = opts.include ?? ((kind: string) => kind === "main" || kind === "audio");
+  const include = opts.include ?? ((kind: string) => kind === "main" || kind === "audio" || kind === "overlay");
   const sounding = doc.tracks
-    .filter((t) => (t.kind === "main" || t.kind === "audio") && (opts.include ? true : !t.muted))
+    .filter((t) => (t.kind === "main" || t.kind === "audio" || t.kind === "overlay") && (opts.include ? true : !t.muted))
     .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media").map((c) => ({ clip: c, kind: t.kind })));
   for (const { clip, kind } of sounding) {
     const asset = assets.get(clip.assetId);
@@ -215,92 +216,171 @@ export async function exportTimeline(
       return c;
     };
 
-    for (const clip of clips) {
-      const asset = assets.get(clip.assetId);
-      const first = Math.round((clip.startUs / 1e6) * opts.fps);
-      const last = Math.min(totalFrames, Math.round(((clip.startUs + clip.durationUs) / 1e6) * opts.fps));
-      if (last <= first) continue;
-
-      // stills for the transitions into and out of this clip, made before
-      // this clip's decoder starts so two decoders never run at once
-      const into = windows.find((w) => w.to.id === clip.id);
-      const outOf = windows.find((w) => w.from.id === clip.id);
-      const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000)) : null;
-      const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs) : null;
-
-      // text and other overlays go on top of whatever the clip drew
-      const emit = async () => {
-        if (signal.aborted) throw new ExportCancelled();
-        const tUs = Math.round(frame * frameS * 1e6);
-        const w = transitionAt(doc, tUs);
-        if (w && w.to.id === clip.id && prevStill) drawTransition(ctx, prevStill, layer, w.type, w.p, bg);
-        else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
-        else ctx.drawImage(layer, 0, 0);
-        for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
-        await videoSource.add(frame * frameS, frameS);
-        frame++;
-        if (frame % 10 === 0) onProgress(frame / totalFrames, "video");
-      };
-
-      if (!asset) {
-        for (let f = first; f < last; f++) {
-          drawFrame(lctx, fbg, () => null);
-          await emit();
+    // photos and videos on top (S12): photos decoded once, each video read in
+    // order while it is on screen, then closed
+    type Reader = { samples: AsyncGenerator<VideoSample, void, unknown>; current: VideoSample | null; next: VideoSample | null; ended: boolean };
+    const overlayImages = new Map<Id, ImageBitmap>();
+    const readers = new Map<Id, Reader>();
+    const closeReader = async (r: Reader) => {
+      r.current?.close();
+      r.next?.close();
+      await r.samples.return(undefined);
+    };
+    const pullFrom = async (r: Reader) => {
+      const x = await r.samples.next();
+      if (x.done) {
+        r.ended = true;
+        return null;
+      }
+      return x.value;
+    };
+    const drawOverlays = async (tUs: number) => {
+      const live = overlaysAt(doc, tUs);
+      for (const [id, r] of readers)
+        if (!live.some((c) => c.id === id)) {
+          readers.delete(id);
+          await closeReader(r);
         }
-      } else if (asset.kind === "image") {
-        const file = await assetFile(asset);
-        if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
-        const bmp = await createImageBitmap(file);
-        try {
-          for (let f = first; f < last; f++) {
-            drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height));
-            await emit();
+      for (const c of live) {
+        const a = assets.get(c.assetId);
+        if (!a) continue;
+        let draw: ((x: OffscreenCanvasRenderingContext2D, b: TextBox) => void) | null = null;
+        if (a.kind === "image") {
+          let bmp = overlayImages.get(a.id);
+          if (!bmp) {
+            const file = await assetFile(a);
+            if (!file) throw new Error(`Mídia ausente: ${a.name}`);
+            bmp = await createImageBitmap(file);
+            overlayImages.set(a.id, bmp);
           }
-        } finally {
-          bmp.close();
-        }
-      } else {
-        const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
-        if (!track) throw new Error(`Sem vídeo em ${asset.name}`);
-        // Decode the clip's frames in order and, for each output frame, draw
-        // the latest decoded frame at or before its source time. Each frame is
-        // closed as soon as it is replaced: 4K frames are large.
-        const sink = new VideoSampleSink(track);
-        const inS = clip.inUs / 1e6;
-        const outS = clip.outUs / 1e6;
-        const samples = sink.samples(inS, outS);
-        let current: VideoSample | null = null;
-        let next: VideoSample | null = null;
-        let ended = false;
-        const pull = async () => {
-          const r = await samples.next();
-          if (r.done) {
-            ended = true;
-            return null;
-          }
-          return r.value;
-        };
-        try {
-          next = await pull();
-          for (let f = first; f < last; f++) {
-            const srcS = Math.min(outS - 1e-4, inS + (f - first) * frameS * clip.speed);
-            while (next && next.timestamp <= srcS + 1e-6) {
-              current?.close();
-              current = next;
-              next = ended ? null : await pull();
+          const img = bmp;
+          draw = (x, b) => x.drawImage(img, -b.w / 2, -b.h / 2, b.w, b.h);
+        } else {
+          try {
+            let r = readers.get(c.id);
+            if (!r) {
+              const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
+              if (!track) continue;
+              r = { samples: new VideoSampleSink(track).samples(c.inUs / 1e6, c.outUs / 1e6), current: null, next: null, ended: false };
+              readers.set(c.id, r);
+              r.next = await pullFrom(r);
             }
-            drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null);
+            const srcS = Math.min(c.outUs / 1e6 - 1e-4, sourceTimeUs(c, tUs - c.startUs) / 1e6);
+            while (r.next && r.next.timestamp <= srcS + 1e-6) {
+              r.current?.close();
+              r.current = r.next;
+              r.next = r.ended ? null : await pullFrom(r);
+            }
+            const cur = r.current;
+            if (cur) draw = (x, b) => cur.draw(x, -b.w / 2, -b.h / 2, b.w, b.h);
+          } catch (err) {
+            throw readError(a, err);
+          }
+        }
+        if (!draw) continue;
+        const b = overlayBox(a, width, height, c.transform);
+        ctx.save();
+        ctx.globalAlpha = overlayAlpha(c, tUs);
+        ctx.translate(b.cx, b.cy);
+        ctx.rotate((b.rotation * Math.PI) / 180);
+        draw(ctx, b);
+        ctx.restore();
+      }
+    };
+
+    try {
+      for (const clip of clips) {
+        const asset = assets.get(clip.assetId);
+        const first = Math.round((clip.startUs / 1e6) * opts.fps);
+        const last = Math.min(totalFrames, Math.round(((clip.startUs + clip.durationUs) / 1e6) * opts.fps));
+        if (last <= first) continue;
+
+        // stills for the transitions into and out of this clip, made before
+        // this clip's decoder starts so two decoders never run at once
+        const into = windows.find((w) => w.to.id === clip.id);
+        const outOf = windows.find((w) => w.from.id === clip.id);
+        const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000)) : null;
+        const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs) : null;
+
+        // text and other overlays go on top of whatever the clip drew
+        const emit = async () => {
+          if (signal.aborted) throw new ExportCancelled();
+          const tUs = Math.round(frame * frameS * 1e6);
+          const w = transitionAt(doc, tUs);
+          if (w && w.to.id === clip.id && prevStill) drawTransition(ctx, prevStill, layer, w.type, w.p, bg);
+          else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
+          else ctx.drawImage(layer, 0, 0);
+          await drawOverlays(tUs);
+          for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
+          await videoSource.add(frame * frameS, frameS);
+          frame++;
+          if (frame % 10 === 0) onProgress(frame / totalFrames, "video");
+        };
+
+        if (!asset) {
+          for (let f = first; f < last; f++) {
+            drawFrame(lctx, fbg, () => null);
             await emit();
           }
-        } catch (err) {
-          if (err instanceof ExportCancelled) throw err;
-          throw readError(asset, err);
-        } finally {
-          current?.close();
-          next?.close();
-          await samples.return(undefined);
+        } else if (asset.kind === "image") {
+          const file = await assetFile(asset);
+          if (!file) throw new Error(`Mídia ausente: ${asset.name}`);
+          const bmp = await createImageBitmap(file);
+          try {
+            for (let f = first; f < last; f++) {
+              drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height));
+              await emit();
+            }
+          } finally {
+            bmp.close();
+          }
+        } else {
+          const track = await (await openInput(asset, inputs)).getPrimaryVideoTrack();
+          if (!track) throw new Error(`Sem vídeo em ${asset.name}`);
+          // Decode the clip's frames in order and, for each output frame, draw
+          // the latest decoded frame at or before its source time. Each frame is
+          // closed as soon as it is replaced: 4K frames are large.
+          const sink = new VideoSampleSink(track);
+          const inS = clip.inUs / 1e6;
+          const outS = clip.outUs / 1e6;
+          const samples = sink.samples(inS, outS);
+          let current: VideoSample | null = null;
+          let next: VideoSample | null = null;
+          let ended = false;
+          const pull = async () => {
+            const r = await samples.next();
+            if (r.done) {
+              ended = true;
+              return null;
+            }
+            return r.value;
+          };
+          try {
+            next = await pull();
+            for (let f = first; f < last; f++) {
+              const srcS = Math.min(outS - 1e-4, inS + (f - first) * frameS * clip.speed);
+              while (next && next.timestamp <= srcS + 1e-6) {
+                current?.close();
+                current = next;
+                next = ended ? null : await pull();
+              }
+              drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null);
+              await emit();
+            }
+          } catch (err) {
+            if (err instanceof ExportCancelled) throw err;
+            throw readError(asset, err);
+          } finally {
+            current?.close();
+            next?.close();
+            await samples.return(undefined);
+          }
         }
       }
+
+    } finally {
+      for (const r of readers.values()) await closeReader(r).catch(() => {});
+      for (const b of overlayImages.values()) b.close();
     }
 
     videoSource.close();

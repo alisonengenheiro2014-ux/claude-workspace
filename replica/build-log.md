@@ -112,7 +112,7 @@ are rebuilt with open fonts.
 | shell | 2026-10-17 | done | — | — |
 | S01 Início | 2026-10-17 | done | — | — |
 | S02 Seletor de mídia | 2026-10-17 | partial | no grid of the camera roll: a PWA can't read the photo library, so "Novo projeto" opens the iOS photo picker and S02 becomes the import progress | the whole screen is replaced by an iOS limit |
-| S03 Editor | 2026-10-18 | partial | overlay (picture-in-picture) track | the preview needs a single `<video>` element so iOS keeps allowing play() |
+| S03 Editor | 2026-10-18 | done | — | the preview needs a single `<video>` element so iOS keeps allowing play() |
 | S04 Ferramentas do clipe | 2026-10-17 | partial | Dividir, Velocidade, Volume, Duplicar, Excluir and Substituir work; Recortar, Inverter, Congelar and Mistura are stubs | — |
 | S05 Velocidade | 2026-10-17 | partial | constant speed only, 0.1x–10x; no curves, no keep-pitch | — |
 | S06 Transição | 2026-10-18 | done | — | our model keeps the total length (A holds its last frame, B waits on its first) instead of overlapping clips; the preview animates the <video> and a still with CSS so HDR video never has to be drawn on a canvas; the export prepares stills before each clip so two decoders never run at once |
@@ -121,7 +121,7 @@ are rebuilt with open fonts.
 | S09 Texto | 2026-10-18 | done | loop animations | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |
 | S10 Legendas automáticas | 2026-10-18 | done | word timing is estimated, not measured | Whisper on the device: transformers.js in a worker, WebGPU when the device has it, else WASM; the 27 MB ONNX runtime comes from the jsDelivr CDN (over Pages' 25 MB file limit) and the model from Hugging Face, both cached after the first run. Tested here with whisper-tiny on CPU (no Hugging Face access in this environment): 9.5 s of speech in 11.6 s. Portuguese accuracy and the GPU path need the iPhone |
 | S11 Texto para fala | — | not started | — | — |
-| S12 Sobrepor | — | stub | everything | — |
+| S12 Sobrepor | 2026-10-18 | done | blend modes, mask, chroma key on overlays | the preview shows overlays as DOM elements (a `<video>` per overlay video, synced to the playhead; photos as `<img>`) so HDR video is never drawn on a canvas; the export draws them with the same geometry (`overlayBox`) and reads each overlay video with its own decoder while it is on screen |
 | S13 Efeitos / Stickers | — | stub | everything | — |
 | S14 Filtros e Ajustar | — | stub | everything | — |
 | S15 Formato | 2026-10-18 | done | image background | blur without canvas `filter` (not in every Safari): shrink twice and stretch back; the preview blurs a still with CSS so HDR video is never drawn on a canvas |

@@ -8,7 +8,7 @@ import { formatTime } from "../ui/Transport";
 import { useEditor, type Thumbs } from "./store";
 import type { Track } from "../data/db";
 import { PEAKS_PER_SEC } from "./audio";
-import { audioTracks, durationOf, mainClips, move, moveItem, textTracks, trim, trimItem } from "./timeline";
+import { audioTracks, durationOf, mainClips, move, moveItem, overlayTracks, textTracks, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -272,6 +272,7 @@ export function TimelineView({
         const media = c.type === "media" ? c : null;
         const asset = media ? assets.get(media.assetId) : undefined;
         const label = c.type === "text" || c.type === "caption" ? c.text.split("\n")[0] || "Texto" : (asset?.name ?? "Áudio");
+        const thumb = track.kind === "overlay" && media ? thumbs.get(media.assetId)?.urls[0] : undefined;
         return (
           <div
             key={c.id}
@@ -283,12 +284,19 @@ export function TimelineView({
             onPointerCancel={sel ? onHandleUp : undefined}
           >
             <TimelineClip
-              kind={track.kind === "audio" ? "audio" : track.kind === "caption" ? "caption" : "text"}
+              kind={track.kind === "audio" || track.kind === "caption" || track.kind === "overlay" ? track.kind : "text"}
               width={w}
               label={label}
               selected={sel}
               missing={!!media && (missing.has(media.assetId) || !asset)}
-              waveform={media ? waveSlice(waves.get(media.assetId), media, w) : undefined}
+              thumbs={
+                thumb
+                  ? Array.from({ length: Math.min(40, Math.ceil(w / 36)) }, (_, i) => (
+                      <img key={i} src={thumb} alt="" className="h-full w-9 shrink-0 object-cover" />
+                    ))
+                  : undefined
+              }
+              waveform={media && track.kind === "audio" ? waveSlice(waves.get(media.assetId), media, w) : undefined}
               onSelect={() => !drag.current?.moved && select(sel ? null : c.id)}
             />
             {sel &&
@@ -348,6 +356,7 @@ export function TimelineView({
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
           {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
           {[...textTracks(doc)].reverse().map(lane)}
+          {[...overlayTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));

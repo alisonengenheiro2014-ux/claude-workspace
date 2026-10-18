@@ -33,7 +33,7 @@ Modelos de estilo de texto,texto,should,yes,yes,"8 modelos: simples, contorno, s
 Animações de texto (entrada saída loop),texto,should,yes,partial,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
 Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo toca sem som; testado no iPhone (sessão de áudio ""tocar e gravar"" durante a gravação)"
 Extrair o áudio de um vídeo,áudio,should,yes,yes,o clipe fica sem som e o áudio vira um item próprio
-Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,no,S12
+Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,yes,"foto ou vídeo por cima: arrastar, pinça, girar, opacidade, volume, fade, dividir, duplicar; som do vídeo sobreposto entra na exportação"
 Modo de mistura e opacidade,sobrepor,should,yes,no,
 Filtros de cor com intensidade,cor,should,yes,no,S14; filtros próprios em shader
 Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,no,S14

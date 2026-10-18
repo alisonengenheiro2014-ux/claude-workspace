@@ -64,7 +64,9 @@ import {
   setTrackMuted,
   split,
   splitItem,
+  addOverlay,
 } from "../editor/timeline";
+import { OverlayMedia } from "../editor/OverlayMedia";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -90,7 +92,8 @@ type Panel =
   | { name: "fade" }
   | { name: "record" }
   | { name: "transition"; fromId: Id }
-  | { name: "captions"; tab: CaptionTab };
+  | { name: "captions"; tab: CaptionTab }
+  | { name: "opacity" };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -129,10 +132,13 @@ export function Editor({ projectId }: { projectId: Id }) {
   const addPicker = useRef<HTMLInputElement>(null);
   const replacePicker = useRef<HTMLInputElement>(null);
   const audioPicker = useRef<HTMLInputElement>(null);
+  const overlayPicker = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<"loading" | "ready" | "notfound">("loading");
   const [panel, setPanel] = useState<Panel>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [importing, setImporting] = useState<ImportProgress | null>(null);
+  // the overlay videos let go of their decoders while captions or export run
+  const [mediaReleased, setMediaReleased] = useState(false);
   const [missing, setMissing] = useState<Set<Id>>(new Set());
   const [mediaError, setMediaError] = useState<string | null>(null);
   const [exportOptions, setExportOptions] = useState<ExportOptions>(() => loadExportOptions(projectId));
@@ -274,7 +280,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selectedText = selectedItem?.clip.type === "text" ? selectedItem.clip : null;
   const selectedCaption = selectedItem?.clip.type === "caption" ? selectedItem.clip : null;
   const selectedAudio = selectedItem?.track.kind === "audio" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
-  const selectedMedia: MediaClip | null = selected ?? selectedAudio;
+  const selectedOverlay = selectedItem?.track.kind === "overlay" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
+  const selectedMedia: MediaClip | null = selected ?? selectedAudio ?? selectedOverlay;
   const videoMuted = doc ? mainTrack(doc).muted : false;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
   const targetAsset = target ? assets.get(target.assetId) : undefined;
@@ -364,11 +371,25 @@ export function Editor({ projectId }: { projectId: Id }) {
   function onSplitAudio() {
     stop();
     const s = useEditor.getState();
-    if (!s.doc || !selectedAudio) return;
-    const r = splitItem(s.doc, selectedAudio.id, s.playheadUs);
-    if (!r) return toast("Mova o cursor para dentro do áudio para dividir.");
-    s.commit(r.doc, "Dividir áudio");
+    const item = selectedAudio ?? selectedOverlay;
+    if (!s.doc || !item) return;
+    const r = splitItem(s.doc, item.id, s.playheadUs);
+    if (!r) return toast(`Mova o cursor para dentro ${selectedAudio ? "do áudio" : "da sobreposição"} para dividir.`);
+    s.commit(r.doc, selectedAudio ? "Dividir áudio" : "Dividir sobreposição");
     s.select(r.rightId);
+  }
+
+  // S12 Sobrepor: a photo or video over the main video, at the playhead
+  async function onAddOverlay(files: File[]) {
+    stop();
+    const [asset] = await runImport(projectId, files.slice(0, 1), setImporting, toast);
+    if (!asset) return;
+    await useEditor.getState().addAssets([asset]);
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addOverlay(s.doc, asset, s.playheadUs);
+    s.commit(r.doc, "Sobrepor");
+    s.select(r.id);
   }
 
   function setSpeed(v: number) {
@@ -496,6 +517,7 @@ export function Editor({ projectId }: { projectId: Id }) {
           {/* transitions: the clip that is not playing, as a still, and the dip colour */}
           <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
+          {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
           {state === "ready" && stage.w > 0 && (
             <TextOverlay
               width={stage.w}
@@ -580,6 +602,22 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Captions />} label="Gerar de novo" onClick={() => openCaptions("generate")} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
             </Toolbar>
+          ) : selectedOverlay ? (
+            <Toolbar
+              label="Ferramentas da sobreposição"
+              leading={
+                <button type="button" aria-label="Voltar às ferramentas" onClick={() => ed.select(null)} className="flex size-11 items-center justify-center">
+                  <ChevronLeft aria-hidden className="size-6" />
+                </button>
+              }
+            >
+              <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
+              <ToolbarItem icon={<Blend />} label="Opacidade" onClick={() => setPanel({ name: "opacity" })} />
+              {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
+              <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
+              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+            </Toolbar>
           ) : selectedAudio ? (
             <Toolbar
               label="Ferramentas do áudio"
@@ -658,7 +696,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
               <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
-              <ToolbarItem icon={<Layers />} label="Sobrepor" onClick={() => stub("Sobrepor", "S12")} />
+              <ToolbarItem icon={<Layers />} label="Sobrepor" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => stub("Efeitos", "S13")} />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => stub("Filtros", "S14")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => stub("Ajustar", "S14")} />
@@ -670,6 +708,7 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
+      <FilePicker ref={overlayPicker} onFiles={(f) => void onAddOverlay(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
 
       <CaptionSheet
@@ -677,8 +716,14 @@ export function Editor({ projectId }: { projectId: Id }) {
         tab={panel?.name === "captions" ? panel.tab : "generate"}
         onTab={(tab) => setPanel({ name: "captions", tab })}
         onClose={() => closeEditing("Editar legendas")}
-        onBeforeRun={() => player.current?.release()}
-        onAfterRun={() => void player.current?.showAt(useEditor.getState().playheadUs)}
+        onBeforeRun={() => {
+          player.current?.release();
+          setMediaReleased(true);
+        }}
+        onAfterRun={() => {
+          setMediaReleased(false);
+          void player.current?.showAt(useEditor.getState().playheadUs);
+        }}
       />
 
       <TransitionSheet
@@ -762,6 +807,20 @@ export function Editor({ projectId }: { projectId: Id }) {
           </div>
         )}
         <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
+      </Sheet>
+
+      <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Opacidade")} title="Opacidade">
+        {selectedOverlay && (
+          <Slider
+            label="Opacidade"
+            value={Math.round(selectedOverlay.opacity * 100)}
+            min={0}
+            max={100}
+            defaultValue={100}
+            format={(v) => `${v}%`}
+            onChange={(v) => ed.setDraft(setItem(useEditor.getState().doc!, selectedOverlay.id, { opacity: v / 100 }))}
+          />
+        )}
       </Sheet>
 
       <Sheet open={panel?.name === "volume"} onOpenChange={(o) => !o && closeEditing("Volume")} title="Volume">
@@ -877,8 +936,14 @@ export function Editor({ projectId }: { projectId: Id }) {
         onOpenChange={(o) => !o && setPanel(null)}
         options={exportOptions}
         onOptionsChange={setExportOptions}
-        onBeforeExport={() => player.current?.release()}
-        onAfterExport={() => void player.current?.showAt(useEditor.getState().playheadUs)}
+        onBeforeExport={() => {
+          player.current?.release();
+          setMediaReleased(true);
+        }}
+        onAfterExport={() => {
+          setMediaReleased(false);
+          void player.current?.showAt(useEditor.getState().playheadUs);
+        }}
       />
 
       {importing && <ImportOverlay progress={importing} />}

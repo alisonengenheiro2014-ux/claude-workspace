@@ -30,7 +30,10 @@ import {
   transitionAt,
   transitionWindows,
   trimItem,
+  addOverlay,
+  overlayTracks,
 } from "./timeline";
+import { overlayAlpha, overlayBox, overlaysAt } from "./overlay";
 import { CAPTION_STYLE } from "./text";
 import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET, captionPreset } from "./presets";
 
@@ -253,5 +256,32 @@ describe("caption templates", () => {
     expect(new Set(ids).size).toBe(ids.length);
     expect(ids.length).toBeGreaterThanOrEqual(20);
     expect(captionPreset("gone").id).toBe(DEFAULT_CAPTION_PRESET);
+  });
+});
+
+describe("overlays (picture in picture)", () => {
+  const PHOTO: AssetRow = { ...A, id: "ph", kind: "image", durationUs: 0, width: 2000, height: 1000, hasAudio: false };
+  const CLIP: AssetRow = { ...A, id: "v2", durationUs: 30_000_000, width: 1920, height: 1080 };
+
+  it("a photo at the playhead lasts 3 s at half size; a long video stops at the end", () => {
+    const r = addOverlay(base(), PHOTO, 2_000_000);
+    const c = findItem(r.doc, r.id)!.clip as MediaClip;
+    expect([c.startUs, c.durationUs, c.transform.scale]).toEqual([2_000_000, 3_000_000, 0.5]);
+    expect(overlayTracks(r.doc)).toHaveLength(1);
+    const v = addOverlay(r.doc, CLIP, 4_000_000);
+    const vc = findItem(v.doc, v.id)!.clip as MediaClip;
+    expect([vc.startUs, vc.outUs, vc.durationUs]).toEqual([4_000_000, 6_000_000, 6_000_000]);
+    expect(overlayTracks(v.doc)).toHaveLength(2); // overlapping: a second lane
+    expect(overlaysAt(v.doc, 4_500_000).map((x) => x.id)).toEqual([r.id, v.id]);
+    expect(validateDoc(v.doc, new Map([[A.id, A], [PHOTO.id, PHOTO], [CLIP.id, CLIP]]))).toEqual([]);
+  });
+
+  it("is fitted in the frame and scaled; fades change its opacity", () => {
+    const b = overlayBox(PHOTO, 1080, 1920, { x: 0.5, y: 0.25, scale: 0.5, rotation: 10 });
+    expect([b.cx, b.cy, b.w, b.h, b.rotation]).toEqual([540, 480, 540, 270, 10]);
+    const r = addOverlay(base(), PHOTO, 0);
+    const c = { ...(findItem(r.doc, r.id)!.clip as MediaClip), fadeInUs: 1_000_000, opacity: 0.8 };
+    expect(overlayAlpha(c, 500_000)).toBeCloseTo(0.4);
+    expect(overlayAlpha(c, 2_000_000)).toBeCloseTo(0.8);
   });
 });
