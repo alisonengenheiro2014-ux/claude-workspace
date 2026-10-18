@@ -53,10 +53,10 @@ is the only full fix. The test buttons were removed.
 | shell | 2026-10-17 | done | — | — |
 | S01 Início | 2026-10-17 | done | — | — |
 | S02 Seletor de mídia | 2026-10-17 | partial | no grid of the camera roll: a PWA can't read the photo library, so "Novo projeto" opens the iOS photo picker and S02 becomes the import progress | the whole screen is replaced by an iOS limit |
-| S03 Editor | 2026-10-17 | partial | only the main track (no overlay, audio, text tracks); drag to reorder; transitions | the preview needs a single `<video>` element so iOS keeps allowing play() |
+| S03 Editor | 2026-10-18 | partial | overlay (picture-in-picture) track | the preview needs a single `<video>` element so iOS keeps allowing play() |
 | S04 Ferramentas do clipe | 2026-10-17 | partial | Dividir, Velocidade, Volume, Duplicar, Excluir and Substituir work; Recortar, Inverter, Congelar and Mistura are stubs | — |
 | S05 Velocidade | 2026-10-17 | partial | constant speed only, 0.1x–10x; no curves, no keep-pitch | — |
-| S06 Transição | — | stub | everything | — |
+| S06 Transição | 2026-10-18 | done | — | our model keeps the total length (A holds its last frame, B waits on its first) instead of overlapping clips; the preview animates the <video> and a still with CSS so HDR video never has to be drawn on a canvas; the export prepares stills before each clip so two decoders never run at once |
 | S07 Áudio | 2026-10-18 | done | the original's music library (licensed, out of scope) | preview sound now goes through Web Audio (GainNode on the video element) so volume works on iOS; music lanes are decoded once and re-synced if they drift > 120 ms from the video |
 | S08 Ferramentas de áudio | 2026-10-18 | partial | beat marking, noise reduction, speed for audio | — |
 | S09 Texto | 2026-10-18 | done | loop animations; text presets/templates | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |

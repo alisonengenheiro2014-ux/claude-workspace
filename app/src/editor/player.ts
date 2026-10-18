@@ -10,7 +10,9 @@ import type { AssetRow, Id, MediaClip, TimelineDoc, Us } from "../data/db";
 import { assetFile } from "../media/import";
 import { useEditor } from "./store";
 import { audio } from "./audio";
-import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs } from "./timeline";
+import { ALL_FORMATS, BlobSource, CanvasSink, Input } from "mediabunny";
+import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs, transitionAt } from "./timeline";
+import { fxOf, layerCss, type LayerFx } from "./transitions";
 
 export function drawContain(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -46,9 +48,16 @@ export class Player {
   // not pick the soundtrack back up.
   monitorMuted = false;
 
+  // still frames for transitions: the last frame of A, the first of B
+  private stills = new Map<string, Promise<ImageBitmap | null>>();
+  private stillsReady = new Map<string, ImageBitmap>();
+  private fxShown = "";
+
   constructor(
     private video: HTMLVideoElement,
     private canvas: HTMLCanvasElement,
+    private fxCanvas: HTMLCanvasElement,
+    private dip: HTMLElement,
   ) {
     video.playsInline = true;
     video.preload = "auto";
@@ -67,6 +76,97 @@ export class Player {
     clearTimeout(this.seekTimer);
     for (const u of this.urls.values()) URL.revokeObjectURL(u);
     for (const b of this.images.values()) b.close();
+    for (const b of this.stillsReady.values()) b.close();
+  }
+
+  // A frame of a clip's media as an ImageBitmap, decoded once and cached.
+  private still(asset: AssetRow, us: Us): ImageBitmap | null {
+    const key = `${asset.id}@${Math.round(us / 1000)}`;
+    const ready = this.stillsReady.get(key);
+    if (ready) return ready;
+    if (!this.stills.has(key)) {
+      const p = (async () => {
+        if (asset.kind === "image") {
+          const bmp = await this.imageFor(asset);
+          return bmp ? createImageBitmap(bmp) : null;
+        }
+        const file = await assetFile(asset);
+        if (!file) return null;
+        const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+        try {
+          const track = await input.getPrimaryVideoTrack();
+          if (!track) return null;
+          const s = Math.min(1, 1080 / Math.max(track.displayWidth, track.displayHeight));
+          const sink = new CanvasSink(track, { width: Math.round(track.displayWidth * s), height: Math.round(track.displayHeight * s), fit: "fill" });
+          const wc = await sink.getCanvas(us / 1e6);
+          return wc ? createImageBitmap(wc.canvas) : null;
+        } finally {
+          input.dispose();
+        }
+      })().catch(() => null);
+      this.stills.set(key, p);
+      void p.then((b) => {
+        if (!b) return;
+        this.stillsReady.set(key, b);
+        const s = useEditor.getState();
+        if (!s.playing) this.applyTransition(s.playheadUs);
+      });
+    }
+    return null;
+  }
+
+  private style(el: HTMLElement, fx: LayerFx | null, z: number) {
+    const css = fx ? layerCss(fx) : { opacity: "", transform: "", clipPath: "" };
+    el.style.opacity = css.opacity ?? "";
+    el.style.transform = css.transform ?? "";
+    el.style.clipPath = css.clipPath ?? "";
+    el.style.zIndex = fx ? String(z) : "";
+  }
+
+  // Shows the transition under tUs, or clears it. The playing clip is the
+  // <video> (or the image canvas); the other clip is a still on fxCanvas.
+  applyTransition(tUs: Us) {
+    const { doc, draft, assets } = useEditor.getState();
+    const d = draft ?? doc;
+    const w = d ? transitionAt(d, tUs) : null;
+    if (!d || !w) {
+      if (this.fxShown) {
+        this.fxShown = "";
+        this.style(this.video, null, 0);
+        this.style(this.canvas, null, 0);
+        this.fxCanvas.style.visibility = "hidden";
+        this.dip.style.opacity = "0";
+      }
+      return;
+    }
+    const liveIsA = tUs < w.cutUs;
+    const liveClip = liveIsA ? w.from : w.to;
+    const stillClip = liveIsA ? w.to : w.from;
+    const liveAsset = assets.get(liveClip.assetId);
+    const stillAsset = assets.get(stillClip.assetId);
+    const liveEl = liveAsset?.kind === "image" ? this.canvas : this.video;
+    const fx = fxOf(w.type, w.p);
+    const liveFx = liveIsA ? fx.a : fx.b;
+    const stillFx = liveIsA ? fx.b : fx.a;
+    const liveOnTop = (fx.top === "a") === liveIsA;
+    this.style(liveEl, liveFx, liveOnTop ? 2 : 1);
+
+    const bmp = stillAsset ? this.still(stillAsset, liveIsA ? stillClip.inUs : Math.max(stillClip.inUs, stillClip.outUs - 34_000)) : null;
+    const { width, height } = frameSize(d, assets, 720);
+    if (this.fxCanvas.width !== width || this.fxCanvas.height !== height) {
+      this.fxCanvas.width = width;
+      this.fxCanvas.height = height;
+    }
+    const key = `${stillClip.id}:${liveIsA}`;
+    if (bmp && this.fxShown !== key) {
+      const bg = d.canvas.background.type === "color" ? d.canvas.background.color : "#000000";
+      drawContain(this.fxCanvas.getContext("2d")!, bmp, bmp.width, bmp.height, bg);
+      this.fxShown = key;
+    } else if (!bmp) this.fxShown = "pending";
+    this.fxCanvas.style.visibility = bmp ? "visible" : "hidden";
+    this.style(this.fxCanvas, stillFx, liveOnTop ? 1 : 2);
+    this.dip.style.background = fx.dip?.color ?? "transparent";
+    this.dip.style.opacity = String(fx.dip?.alpha ?? 0);
   }
 
   // Frees the hardware decoder (the export needs it). showAt() reloads.
@@ -172,6 +272,7 @@ export class Player {
     const { doc, draft, assets } = useEditor.getState();
     const d = draft ?? doc;
     if (!d) return;
+    this.applyTransition(atUs);
     const hit = this.current(d, atUs);
     const asset = hit && assets.get(hit.clip.assetId);
     if (!hit || !asset) return this.show("none");
@@ -207,7 +308,16 @@ export class Player {
     this.raf = requestAnimationFrame(this.tick);
   }
 
+  // Plays just a range (to show a transition), then stops at its end.
+  playRange(fromUs: Us, toUs: Us) {
+    useEditor.getState().setPlayhead(fromUs);
+    this.stopAt = toUs;
+    this.play();
+  }
+  private stopAt: Us | null = null;
+
   pause() {
+    this.stopAt = null;
     useEditor.getState().setPlaying(false);
     cancelAnimationFrame(this.raf);
     this.video.pause();
@@ -279,6 +389,13 @@ export class Player {
       this.lastSync = now;
       const pos = audio.position();
       if (pos !== null && Math.abs(pos - t) > 120_000) audio.play(s.doc, s.assets, t);
+    }
+
+    this.applyTransition(t);
+    if (this.stopAt !== null && t >= this.stopAt) {
+      s.setPlayhead(this.stopAt);
+      this.pause();
+      return;
     }
 
     if (done) {

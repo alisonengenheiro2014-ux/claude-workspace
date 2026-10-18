@@ -10,11 +10,17 @@ import {
   findItem,
   gainAt,
   insertMedia,
+  move,
   moveItem,
   remove,
   setText,
+  setTransition,
+  setTransitionAll,
+  split,
   splitItem,
   textTracks,
+  transitionAt,
+  transitionWindows,
   trimItem,
 } from "./timeline";
 
@@ -128,5 +134,45 @@ describe("audio items", () => {
     expect(gainAt(clip, 500_000)).toBeCloseTo(0.4);
     expect(gainAt(clip, 5_000_000)).toBeCloseTo(0.8);
     expect(gainAt(clip, 9_000_000)).toBeCloseTo(0.4);
+  });
+});
+
+describe("transitions", () => {
+  const two = () => insertMedia(emptyDoc(), [A, { ...A, id: "b" }], 0).doc; // 10 s + 10 s
+  const assets2 = new Map([[A.id, A], ["b", { ...A, id: "b" }]]);
+
+  it("sets, clamps and removes a transition at a cut", () => {
+    const d = two();
+    const first = d.tracks[0].items[0].id;
+    const t = setTransition(d, first, "dissolve", 1_000_000);
+    expect(t.transitions).toHaveLength(1);
+    expect(transitionWindows(t)[0]).toMatchObject({ cutUs: 10_000_000, startUs: 9_500_000, endUs: 10_500_000 });
+    expect(transitionAt(t, 10_000_000)?.p).toBeCloseTo(0.5);
+    expect(transitionAt(t, 8_000_000)).toBeNull();
+    expect(validateDoc(t, assets2)).toEqual([]);
+    expect(setTransition(t, first, "dissolve", 60_000_000).transitions[0].durationUs).toBe(5_000_000);
+    expect(setTransition(t, first, null, 0).transitions).toHaveLength(0);
+  });
+
+  it("the last clip has no cut after it", () => {
+    const d = two();
+    expect(setTransition(d, d.tracks[0].items[1].id, "dissolve", 500_000).transitions).toHaveLength(0);
+  });
+
+  it("apply to all, and a split keeps the transition on the right part", () => {
+    const d = insertMedia(emptyDoc(), [A, { ...A, id: "b" }, { ...A, id: "c" }], 0).doc;
+    const all = setTransitionAll(d, "zoom", 500_000);
+    expect(all.transitions).toHaveLength(2);
+    const firstId = all.tracks[0].items[0].id;
+    const r = split(all, firstId, 4_000_000)!;
+    expect(r.doc.transitions.find((t) => t.toClipId === all.tracks[0].items[1].id)?.fromClipId).toBe(r.rightId);
+  });
+
+  it("moving a clip drops transitions whose clips are no longer neighbours", () => {
+    const b = two();
+    const firstId = b.tracks[0].items[0].id;
+    const d = setTransition(b, firstId, "dissolve", 500_000);
+    expect(d.transitions).toHaveLength(1);
+    expect(move(d, firstId, 1).transitions).toHaveLength(0);
   });
 });

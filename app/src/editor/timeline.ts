@@ -149,6 +149,8 @@ export function split(doc: TimelineDoc, clipId: Id, atUs: Us): { doc: TimelineDo
     const right: MediaClip = { ...structuredClone(left), id: rightId, inUs: cut };
     left.outUs = cut;
     items.splice(i + 1, 0, right);
+    // a transition that followed the clip now follows its right part
+    for (const t of d.transitions) if (t.fromClipId === clipId) t.fromClipId = rightId;
   });
   return { doc: next, rightId };
 }
@@ -410,4 +412,66 @@ export function setText(doc: TimelineDoc, id: Id, patch: Partial<TextClip>): Tim
     const i = hit.track.items.indexOf(hit.clip);
     hit.track.items[i] = { ...hit.clip, ...patch } as TextClip;
   });
+}
+
+// ---------- transitions ----------
+
+// Longest transition allowed at the cut after clip fromId: half the shorter clip.
+export function maxTransitionUs(doc: TimelineDoc, fromId: Id): Us {
+  const items = mainClips(doc);
+  const i = items.findIndex((c) => c.id === fromId);
+  if (i < 0 || i === items.length - 1) return 0;
+  return Math.floor(Math.min(items[i].durationUs, items[i + 1].durationUs) / 2);
+}
+
+// Sets (or with type null removes) the transition at the cut after fromId.
+export function setTransition(doc: TimelineDoc, fromId: Id, type: string | null, durationUs: Us): TimelineDoc {
+  return edit(doc, (d) => {
+    d.transitions = d.transitions.filter((t) => t.fromClipId !== fromId);
+    const items = mainClips(d);
+    const i = items.findIndex((c) => c.id === fromId);
+    if (!type || i < 0 || i === items.length - 1) return;
+    const max = maxTransitionUs(d, fromId);
+    if (max < MIN_CLIP_US / 2) return;
+    d.transitions.push({ id: uid(), fromClipId: fromId, toClipId: items[i + 1].id, type, durationUs: Math.min(durationUs, max) });
+  });
+}
+
+// Same transition at every cut (each clamped to what its clips allow).
+export function setTransitionAll(doc: TimelineDoc, type: string | null, durationUs: Us): TimelineDoc {
+  let d = doc;
+  const clips = mainClips(doc);
+  for (let i = 0; i < clips.length - 1; i++) d = setTransition(d, clips[i].id, type, durationUs);
+  return d;
+}
+
+export interface TransitionWindow {
+  type: string;
+  from: MediaClip; // outgoing (A)
+  to: MediaClip; // incoming (B)
+  cutUs: Us;
+  startUs: Us;
+  endUs: Us;
+}
+
+export function transitionWindows(doc: TimelineDoc): TransitionWindow[] {
+  const clips = mainClips(doc);
+  const out: TransitionWindow[] = [];
+  for (const t of doc.transitions) {
+    const i = clips.findIndex((c) => c.id === t.fromClipId);
+    const from = clips[i];
+    const to = clips[i + 1];
+    if (!from || !to || to.id !== t.toClipId) continue;
+    const cutUs = to.startUs;
+    out.push({ type: t.type, from, to, cutUs, startUs: cutUs - t.durationUs / 2, endUs: cutUs + t.durationUs / 2 });
+  }
+  return out;
+}
+
+// The transition playing at tUs, with its progress 0..1.
+export function transitionAt(doc: TimelineDoc, tUs: Us): (TransitionWindow & { p: number }) | null {
+  for (const w of transitionWindows(doc)) {
+    if (tUs >= w.startUs && tUs < w.endUs) return { ...w, p: (tUs - w.startUs) / (w.endUs - w.startUs) };
+  }
+  return null;
 }

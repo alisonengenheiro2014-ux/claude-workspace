@@ -173,7 +173,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerCancel={onUp}
-      className="absolute inset-0 size-full touch-none"
+      className="absolute inset-0 z-[4] size-full touch-none"
     />
   );
 }

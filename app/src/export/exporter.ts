@@ -22,8 +22,9 @@ import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { drawContain } from "../editor/player";
 import { drawText, loadFonts, textsAt } from "../editor/text";
+import { drawTransition } from "../editor/transitions";
 import { scheduleEnvelope } from "../editor/audio";
-import { durationOf, frameSize, mainClips } from "../editor/timeline";
+import { durationOf, frameSize, mainClips, transitionAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
@@ -165,16 +166,56 @@ export async function exportTimeline(
     const frameS = 1 / opts.fps;
     const totalFrames = Math.max(1, Math.round((totalUs / 1e6) * opts.fps));
     let frame = 0;
+    // Each clip draws into `layer`; the output frame is the layer, or the
+    // layer mixed with a neighbour's still during a transition, then text.
+    const layer = new OffscreenCanvas(width, height);
+    const lctx = layer.getContext("2d")!;
+    const windows = transitionWindows(doc);
+
+    // A clip's frame at source time us, letterboxed to the output size.
+    const makeStill = async (clip: MediaClip, us: number) => {
+      const c = new OffscreenCanvas(width, height);
+      const cx = c.getContext("2d")!;
+      cx.fillStyle = bg;
+      cx.fillRect(0, 0, width, height);
+      const a = assets.get(clip.assetId);
+      if (a?.kind === "image") {
+        const file = await assetFile(a);
+        if (file) {
+          const bmp = await createImageBitmap(file);
+          drawContain(cx, bmp, bmp.width, bmp.height, bg);
+          bmp.close();
+        }
+      } else if (a) {
+        const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
+        const sample = track ? await new VideoSampleSink(track).getSample(us / 1e6) : null;
+        sample?.drawWithFit(cx, { fit: "contain" });
+        sample?.close();
+      }
+      return c;
+    };
+
     for (const clip of clips) {
       const asset = assets.get(clip.assetId);
       const first = Math.round((clip.startUs / 1e6) * opts.fps);
       const last = Math.min(totalFrames, Math.round(((clip.startUs + clip.durationUs) / 1e6) * opts.fps));
       if (last <= first) continue;
 
+      // stills for the transitions into and out of this clip, made before
+      // this clip's decoder starts so two decoders never run at once
+      const into = windows.find((w) => w.to.id === clip.id);
+      const outOf = windows.find((w) => w.from.id === clip.id);
+      const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000)) : null;
+      const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs) : null;
+
       // text and other overlays go on top of whatever the clip drew
       const emit = async () => {
         if (signal.aborted) throw new ExportCancelled();
         const tUs = Math.round(frame * frameS * 1e6);
+        const w = transitionAt(doc, tUs);
+        if (w && w.to.id === clip.id && prevStill) drawTransition(ctx, prevStill, layer, w.type, w.p, bg);
+        else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
+        else ctx.drawImage(layer, 0, 0);
         for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
         await videoSource.add(frame * frameS, frameS);
         frame++;
@@ -183,8 +224,8 @@ export async function exportTimeline(
 
       if (!asset) {
         for (let f = first; f < last; f++) {
-          ctx.fillStyle = bg;
-          ctx.fillRect(0, 0, width, height);
+          lctx.fillStyle = bg;
+          lctx.fillRect(0, 0, width, height);
           await emit();
         }
       } else if (asset.kind === "image") {
@@ -193,7 +234,7 @@ export async function exportTimeline(
         const bmp = await createImageBitmap(file);
         try {
           for (let f = first; f < last; f++) {
-            drawContain(ctx, bmp, bmp.width, bmp.height, bg);
+            drawContain(lctx, bmp, bmp.width, bmp.height, bg);
             await emit();
           }
         } finally {
@@ -229,9 +270,9 @@ export async function exportTimeline(
               current = next;
               next = ended ? null : await pull();
             }
-            ctx.fillStyle = bg;
-            ctx.fillRect(0, 0, width, height);
-            current?.drawWithFit(ctx, { fit: "contain" });
+            lctx.fillStyle = bg;
+            lctx.fillRect(0, 0, width, height);
+            current?.drawWithFit(lctx, { fit: "contain" });
             await emit();
           }
         } catch (err) {

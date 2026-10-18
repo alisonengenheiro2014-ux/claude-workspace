@@ -14,7 +14,7 @@ Desfazer e refazer,editor,must,yes,yes,histórico em memória; não sobrevive a 
 Dividir clipe no cursor,clipe,must,yes,yes,F03
 Aparar arrastando as bordas do clipe,clipe,must,yes,yes,"prévia ao vivo, um passo de desfazer ao soltar"
 Excluir e duplicar clipe,clipe,must,yes,yes,
-Reordenar clipes arrastando,clipe,must,yes,no,
+Reordenar clipes arrastando,clipe,must,yes,yes,"segurar ~0,4 s e arrastar; também botões Mover ← / →"
 Velocidade constante 0.1x a 100x,clipe,must,yes,partial,"0,1x a 10x; o original vai até 100x"
 Volume do clipe e silenciar a faixa,áudio,must,yes,yes,"som do vídeo passa pelo Web Audio, então o volume funciona na prévia do iPhone; botão de tirar o som do vídeo inteiro"
 Adicionar música a partir do app Arquivos,áudio,must,yes,yes,"mp3, m4a, wav; termina com o vídeo por padrão; forma de onda na linha do tempo"
@@ -23,7 +23,7 @@ Adicionar texto com fonte cor contorno sombra e fundo,texto,must,yes,yes,"7 font
 Mover girar e escalar texto na prévia,texto,must,yes,yes,"arrastar, alça do canto e pinça com dois dedos; encaixa em 0/90/180/270°"
 Proporção do quadro (9:16 16:9 1:1 4:5 4:3 original),formato,must,yes,yes,S15
 Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,yes,partial,só cor; desfocado chega com o motor WebGL
-Transições entre clipes com duração,transição,must,yes,no,S06; recriar os tipos com código próprio
+Transições entre clipes com duração,transição,must,yes,yes,"8 tipos próprios (dissolver, escurecer, clarear, deslizar, subir, cobrir, cortina, zoom), 0,1 s até metade do clipe; não muda a duração do vídeo"
 Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,yes,"escolhe H.264/HEVC no iPhone, VP9/AV1 onde não houver"
 Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,yes,folha de compartilhamento do iOS; testado no iPhone em 2026-10-17
 Legendas automáticas a partir da fala,legendas,should,yes,no,S10; Whisper no aparelho ou API própria
@@ -35,7 +35,7 @@ Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,no,S12
 Modo de mistura e opacidade,sobrepor,should,yes,no,
 Filtros de cor com intensidade,cor,should,yes,no,S14; filtros próprios em shader
 Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,no,S14
-Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,no,
+Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
 Keyframes de posição escala rotação e opacidade,keyframes,should,yes,no,S16
 Recortar (crop) e girar o clipe,clipe,should,yes,no,
 Inverter clipe (reverso),clipe,should,yes,no,

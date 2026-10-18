@@ -1,6 +1,8 @@
 // S03 Editor, with S04 (clip tools), S05 (speed), S15 (format) and S17
 // (export) as sheets. Tools that are not built yet open a stub that says so.
 import {
+  ArrowLeft,
+  ArrowRight,
   AudioLines,
   Blend,
   ChevronLeft,
@@ -37,6 +39,7 @@ import { TimelineView } from "../editor/TimelineView";
 import { TextOverlay } from "../editor/TextOverlay";
 import { TextSheet, type TextTab } from "./TextSheet";
 import { AudioMenu, FadeSheet, RecordSheet } from "./AudioSheets";
+import { TransitionSheet } from "./TransitionSheet";
 import { audio, peaksOf } from "../editor/audio";
 import {
   addAudio,
@@ -50,6 +53,7 @@ import {
   frameSize,
   insertMedia,
   mainTrack,
+  move,
   remove,
   setClip,
   setItem,
@@ -80,7 +84,8 @@ type Panel =
   | { name: "text"; id: Id; tab: TextTab }
   | { name: "audio" }
   | { name: "fade" }
-  | { name: "record" };
+  | { name: "record" }
+  | { name: "transition"; fromId: Id };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -106,6 +111,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   const toast = useToast();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fxCanvasRef = useRef<HTMLCanvasElement>(null);
+  const dipRef = useRef<HTMLDivElement>(null);
   const stageBox = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
   const player = useRef<Player | null>(null);
@@ -156,8 +163,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [projectId]);
 
   useEffect(() => {
-    if (state !== "ready" || !videoRef.current || !canvasRef.current) return;
-    const p = new Player(videoRef.current, canvasRef.current);
+    if (state !== "ready" || !videoRef.current || !canvasRef.current || !fxCanvasRef.current || !dipRef.current) return;
+    const p = new Player(videoRef.current, canvasRef.current, fxCanvasRef.current, dipRef.current);
     player.current = p;
     void p.showAt(useEditor.getState().playheadUs);
     // repaint the frame under the playhead whenever it or the doc changes
@@ -240,6 +247,9 @@ export function Editor({ projectId }: { projectId: Id }) {
   const videoMuted = doc ? mainTrack(doc).muted : false;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
   const targetAsset = target ? assets.get(target.assetId) : undefined;
+  const mainList = doc ? mainTrack(doc).items : [];
+  const mainCount = mainList.length;
+  const mainIndex = selected ? mainList.findIndex((c) => c.id === selected.id) : -1;
   const totalUs = doc ? durationOf(doc) : 0;
   const frame = doc ? frameSize(doc, assets, 1080) : { width: 9, height: 16 };
   const fit = Math.min(box.w / frame.width, box.h / frame.height) || 0;
@@ -327,6 +337,13 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (!r) return toast("Mova o cursor para dentro do áudio para dividir.");
     s.commit(r.doc, "Dividir áudio");
     s.select(r.rightId);
+  }
+
+  function moveSelected(step: -1 | 1) {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc || mainIndex < 0) return;
+    s.commit(move(s.doc, selected!.id, mainIndex + step), "Mover clipe");
   }
 
   function toggleVideoSound() {
@@ -426,6 +443,9 @@ export function Editor({ projectId }: { projectId: Id }) {
             className="pointer-events-none absolute inset-0 size-full object-contain"
           />
           <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+          {/* transitions: the clip that is not playing, as a still, and the dip colour */}
+          <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+          <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
           {state === "ready" && stage.w > 0 && <TextOverlay width={stage.w} height={stage.h} onEdit={(id) => editText(id)} />}
         </div>
         {state === "ready" && totalUs === 0 && (
@@ -472,7 +492,10 @@ export function Editor({ projectId }: { projectId: Id }) {
           <TimelineView
             missing={missing}
             onAddMedia={() => addPicker.current?.click()}
-            onTransition={() => stub("Transições", "S06")}
+            onTransition={(fromId) => {
+              stop();
+              setPanel({ name: "transition", fromId });
+            }}
           />
 
           {selectedAudio ? (
@@ -529,6 +552,8 @@ export function Editor({ projectId }: { projectId: Id }) {
                 onClick={() => setPanel({ name: "fade" })}
               />
               <ToolbarItem icon={<Split />} label="Extrair som" disabled={!targetAsset?.hasAudio} onClick={onExtract} />
+              <ToolbarItem icon={<ArrowLeft />} label="Mover ←" disabled={mainIndex <= 0} onClick={() => moveSelected(-1)} />
+              <ToolbarItem icon={<ArrowRight />} label="Mover →" disabled={mainIndex < 0 || mainIndex >= mainCount - 1} onClick={() => moveSelected(1)} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
@@ -563,6 +588,22 @@ export function Editor({ projectId }: { projectId: Id }) {
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
+
+      <TransitionSheet
+        fromId={panel?.name === "transition" ? panel.fromId : null}
+        onPreview={(fromId) => {
+          // play a little before to a little after the cut
+          const d = useEditor.getState().draft;
+          const t = d?.transitions.find((x) => x.fromClipId === fromId);
+          const cut = d?.tracks[0] && t ? findItem(d, t.toClipId)?.clip.startUs : undefined;
+          if (!t || cut === undefined) return;
+          player.current?.playRange(Math.max(0, cut - t.durationUs / 2 - 400_000), cut + t.durationUs / 2 + 400_000);
+        }}
+        onClose={() => {
+          stop();
+          closeEditing("Transição");
+        }}
+      />
 
       <AudioMenu
         open={panel?.name === "audio"}
