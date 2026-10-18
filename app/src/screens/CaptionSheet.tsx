@@ -31,9 +31,23 @@ const SOURCES: { value: CaptionSource; label: string }[] = [
   { value: "all", label: "Tudo" },
 ];
 const MODELS: { value: AsrModel; label: string; note: string }[] = [
-  { value: "base", label: "Mais precisa", note: "baixa ~140 MB na primeira vez" },
-  { value: "tiny", label: "Mais rápida", note: "baixa ~50 MB na primeira vez" },
+  { value: "base", label: "Mais precisa", note: "baixa ~75 MB na primeira vez" },
+  { value: "tiny", label: "Mais rápida", note: "baixa ~40 MB na primeira vez" },
 ];
+
+// Set while captions are being generated. If it is still there when the app
+// starts, iOS closed the app in the middle (usually memory).
+const RUNNING_KEY = "asr-running";
+export function takeCrashedCaptionRun(): { model: AsrModel } | null {
+  try {
+    const raw = localStorage.getItem(RUNNING_KEY);
+    if (!raw) return null;
+    localStorage.removeItem(RUNNING_KEY);
+    return JSON.parse(raw) as { model: AsrModel };
+  } catch {
+    return null;
+  }
+}
 
 interface Prefs {
   language: string;
@@ -82,7 +96,21 @@ function describe(e: TranscribeEvent): Run {
   return { label: `Transcrevendo${e.device === "webgpu" ? " (GPU)" : ""}`, fraction: e.fraction };
 }
 
-export function CaptionSheet({ open, tab, onTab, onClose }: { open: boolean; tab: CaptionTab; onTab: (t: CaptionTab) => void; onClose: () => void }) {
+export function CaptionSheet({
+  open,
+  tab,
+  onTab,
+  onClose,
+  onBeforeRun,
+  onAfterRun,
+}: {
+  open: boolean;
+  tab: CaptionTab;
+  onTab: (t: CaptionTab) => void;
+  onClose: () => void;
+  onBeforeRun?: () => void; // free memory (the preview's video) while the model runs
+  onAfterRun?: () => void;
+}) {
   const toast = useToast();
   const doc = useEditor((s) => s.draft ?? s.doc);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
@@ -108,6 +136,12 @@ export function CaptionSheet({ open, tab, onTab, onClose }: { open: boolean; tab
     setRun({ label: "Preparando o som", fraction: null });
     let lock: WakeLockSentinel | null = null;
     try {
+      localStorage.setItem(RUNNING_KEY, JSON.stringify({ model: prefs.model, at: Date.now() }));
+    } catch {
+      // private mode: no crash guard
+    }
+    onBeforeRun?.();
+    try {
       lock = await navigator.wakeLock?.request("screen").catch(() => null);
       const segments = await transcribe(
         s.doc,
@@ -130,8 +164,14 @@ export function CaptionSheet({ open, tab, onTab, onClose }: { open: boolean; tab
       }
     } finally {
       await lock?.release().catch(() => {});
+      try {
+        localStorage.removeItem(RUNNING_KEY);
+      } catch {
+        // nothing to clear
+      }
       abort.current = null;
       setRun(null);
+      onAfterRun?.();
     }
   }
 

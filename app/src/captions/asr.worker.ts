@@ -1,7 +1,8 @@
 // Speech recognition in a worker, with Whisper through transformers.js. The
 // model is downloaded once (Hugging Face) and kept in the browser's cache, so
-// later runs work offline. Uses the GPU (WebGPU) when there is one, else the
-// CPU (WASM).
+// later runs work offline. Runs on the CPU (WASM) with 8-bit models: on the
+// iPhone the GPU path (fp32 encoder) used enough memory for iOS to close the
+// app, so WebGPU is opt-in (gpu: true) until it is proven safe there.
 import { env, pipeline, type AutomaticSpeechRecognitionPipeline } from "@huggingface/transformers";
 
 export type AsrModel = "base" | "tiny";
@@ -11,6 +12,7 @@ export type AsrRequest = {
   audio: Float32Array; // 16 kHz mono, timeline-aligned
   language: string | null; // "portuguese", "english"... null = detect
   model: AsrModel;
+  gpu?: boolean;
   // tests only: load the model and runtime from this server instead of the internet
   local?: { modelPath: string; wasmPath: string };
 };
@@ -42,8 +44,8 @@ async function hasWebGpu() {
   }
 }
 
-async function load(model: AsrModel, local: AsrRequest["local"]) {
-  const key = `${model}:${local?.modelPath ?? ""}`;
+async function load(model: AsrModel, local: AsrRequest["local"], gpu: boolean) {
+  const key = `${model}:${gpu}:${local?.modelPath ?? ""}`;
   if (cached?.key === key) return cached;
   if (local) {
     env.allowRemoteModels = false;
@@ -78,7 +80,7 @@ async function load(model: AsrModel, local: AsrRequest["local"]) {
     return { key, asr, device };
   };
 
-  if (!local && (await hasWebGpu())) {
+  if (gpu && !local && (await hasWebGpu())) {
     try {
       cached = await tryDevice("webgpu");
       return cached;
@@ -117,9 +119,14 @@ function windows(audio: Float32Array): [number, number][] {
 }
 
 self.onmessage = async (e: MessageEvent<AsrRequest>) => {
-  const { audio, language, model, local } = e.data;
+  const { audio, language, model, local, gpu = false } = e.data;
   try {
-    const { asr, device } = await load(model, local);
+    // free a model loaded before, so two never sit in memory together
+    if (cached && cached.key !== `${model}:${gpu}:${local?.modelPath ?? ""}`) {
+      await cached.asr.dispose().catch(() => {});
+      cached = null;
+    }
+    const { asr, device } = await load(model, local, gpu);
     post({ type: "status", stage: "transcribing", device });
     const parts = windows(audio);
     for (let i = 0; i < parts.length; i++) {

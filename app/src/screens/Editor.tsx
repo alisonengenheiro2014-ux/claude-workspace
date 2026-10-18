@@ -41,7 +41,7 @@ import { TextOverlay } from "../editor/TextOverlay";
 import { TextSheet, type TextTab } from "./TextSheet";
 import { AudioMenu, FadeSheet, RecordSheet } from "./AudioSheets";
 import { TransitionSheet } from "./TransitionSheet";
-import { CaptionSheet, type CaptionTab } from "./CaptionSheet";
+import { CaptionSheet, takeCrashedCaptionRun, type CaptionTab } from "./CaptionSheet";
 import { audio, peaksOf } from "../editor/audio";
 import {
   addAudio,
@@ -158,6 +158,22 @@ export function Editor({ projectId }: { projectId: Id }) {
       const gone = new Set<Id>();
       for (const a of useEditor.getState().assets.values()) if (!(await assetFile(a))) gone.add(a.id);
       if (alive) setMissing(gone);
+      // the last caption run never finished: iOS closed the app (memory)
+      const crashed = takeCrashedCaptionRun();
+      if (crashed) {
+        try {
+          const prefs = JSON.parse(localStorage.getItem("caption-prefs") ?? "{}");
+          localStorage.setItem("caption-prefs", JSON.stringify({ ...prefs, model: "tiny" }));
+        } catch {
+          // keep the old choice
+        }
+        toast(
+          crashed.model === "base"
+            ? "O iPhone fechou o app ao gerar as legendas (falta de memória). Mudei para a qualidade Mais rápida; tente de novo."
+            : "O iPhone fechou o app ao gerar as legendas (falta de memória). Feche outros apps e tente de novo, ou use um trecho menor.",
+          "error",
+        );
+      }
       const took = takeImport(projectId);
       const first = [...useEditor.getState().assets.values()].find((a) => a.kind === "video");
       if (took && first)
@@ -657,6 +673,8 @@ export function Editor({ projectId }: { projectId: Id }) {
         tab={panel?.name === "captions" ? panel.tab : "generate"}
         onTab={(tab) => setPanel({ name: "captions", tab })}
         onClose={() => closeEditing("Editar legendas")}
+        onBeforeRun={() => player.current?.release()}
+        onAfterRun={() => void player.current?.showAt(useEditor.getState().playheadUs)}
       />
 
       <TransitionSheet

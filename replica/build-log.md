@@ -61,6 +61,15 @@ a message on the preview instead of staying black.
 video again (typed OPFS files), and voice-over recording works after switching
 the iOS audio session to play-and-record while recording.
 
+**Captions crashed the app on the iPhone (2026-10-18):** Safari showed "Um
+problema ocorreu repetidamente" (iOS killed the page, almost always memory).
+The GPU path loaded the base model's encoder in fp32 (~80 MB, several copies
+while the session is built). Changes: captions now run on the CPU with 8-bit
+models (~75 MB base, ~40 MB tiny), WebGPU is opt-in; a previously loaded model
+is disposed before another loads; the preview's video is released during the
+run; and a run that never finished is reported on the next open, switching
+the quality to "Mais rápida".
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |
