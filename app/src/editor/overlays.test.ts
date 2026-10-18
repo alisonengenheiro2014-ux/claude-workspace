@@ -1,7 +1,22 @@
 import { describe, expect, it } from "vitest";
-import type { AssetRow, TextClip } from "../data/db";
+import type { AssetRow, MediaClip, TextClip } from "../data/db";
 import { validateDoc } from "../data/db";
-import { addText, duplicate, emptyDoc, findItem, insertMedia, moveItem, remove, setText, textTracks, trimItem } from "./timeline";
+import {
+  addAudio,
+  addText,
+  audioTracks,
+  duplicate,
+  emptyDoc,
+  findItem,
+  gainAt,
+  insertMedia,
+  moveItem,
+  remove,
+  setText,
+  splitItem,
+  textTracks,
+  trimItem,
+} from "./timeline";
 
 const A: AssetRow = {
   id: "a", projectId: "p", kind: "video", opfsPath: "p/a", name: "a", mime: "video/mp4", sizeBytes: 1,
@@ -76,5 +91,42 @@ describe("text items", () => {
     const d = setText(r.doc, r.id, { text: "novo" });
     expect((findItem(d, r.id)!.clip as TextClip).text).toBe("novo");
     expect((findItem(r.doc, r.id)!.clip as TextClip).text).toBe("x");
+  });
+});
+
+const SONG: AssetRow = { ...A, id: "s", kind: "audio", durationUs: 30_000_000, width: 0, height: 0 };
+
+describe("audio items", () => {
+  it("a song added at 0 ends with the video", () => {
+    const r = addAudio(base(), SONG, 0);
+    const c = findItem(r.doc, r.id)!.clip as MediaClip;
+    expect([c.startUs, c.inUs, c.outUs, c.durationUs]).toEqual([0, 0, 10_000_000, 10_000_000]);
+    expect(audioTracks(r.doc)).toHaveLength(1);
+    expect(validateDoc(r.doc, new Map([[A.id, A], [SONG.id, SONG]]))).toEqual([]);
+  });
+
+  it("trimming the start moves the in point; the end stops at the media", () => {
+    const r = addAudio(base(), SONG, 2_000_000); // 2-10 s, song 0-8 s
+    const t1 = trimItem(r.doc, r.id, "start", 1_000_000, SONG.durationUs);
+    const c1 = findItem(t1, r.id)!.clip as MediaClip;
+    expect([c1.startUs, c1.inUs, c1.durationUs]).toEqual([3_000_000, 1_000_000, 7_000_000]);
+    const t2 = trimItem(r.doc, r.id, "start", -9_000_000, SONG.durationUs); // can't go before the song's start
+    expect((findItem(t2, r.id)!.clip as MediaClip).inUs).toBe(0);
+    expect(findItem(t2, r.id)!.clip.startUs).toBe(2_000_000);
+  });
+
+  it("splits into two parts in the same lane", () => {
+    const r = addAudio(base(), SONG, 0);
+    const s = splitItem(r.doc, r.id, 4_000_000)!;
+    const [l, rr] = audioTracks(s.doc)[0].items as MediaClip[];
+    expect([l.inUs, l.outUs, rr.startUs, rr.inUs, rr.outUs]).toEqual([0, 4_000_000, 4_000_000, 4_000_000, 10_000_000]);
+  });
+
+  it("fades shape the volume", () => {
+    const clip = { volume: 0.8, fadeInUs: 1_000_000, fadeOutUs: 2_000_000, durationUs: 10_000_000 } as MediaClip;
+    expect(gainAt(clip, 0)).toBe(0);
+    expect(gainAt(clip, 500_000)).toBeCloseTo(0.4);
+    expect(gainAt(clip, 5_000_000)).toBeCloseTo(0.8);
+    expect(gainAt(clip, 9_000_000)).toBeCloseTo(0.4);
   });
 });

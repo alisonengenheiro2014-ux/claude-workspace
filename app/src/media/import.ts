@@ -86,6 +86,28 @@ async function probeVideo(file: File) {
   }
 }
 
+async function probeAudio(file: File) {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  try {
+    const audio = await input.getPrimaryAudioTrack().catch(() => null);
+    if (!audio) throw new ImportError("Não encontrei áudio neste arquivo.");
+    if (!(await audio.canDecode())) throw new ImportError("Este aparelho não consegue ler o formato deste áudio.");
+    const duration = await input.computeDuration();
+    return {
+      durationUs: Math.round(duration * 1e6),
+      width: 0,
+      height: 0,
+      fps: null,
+      rotation: 0 as const,
+      hasAudio: true,
+      codec: await audio.getCodecParameterString(),
+      hdr: false,
+    };
+  } finally {
+    input.dispose();
+  }
+}
+
 async function probeImage(file: File) {
   const bmp = await createImageBitmap(file).catch(() => {
     throw new ImportError("Este aparelho não consegue abrir esta imagem.");
@@ -158,6 +180,7 @@ let running = false;
 async function work(asset: AssetRow, file: File) {
   const copy = writeFile(asset.opfsPath, file, (fraction) => emit({ type: "progress", assetId: asset.id, fraction }));
   copy.catch(() => {}); // awaited below; avoid an unhandled rejection meanwhile
+  if (asset.kind === "audio") return finishCopy(asset, file, copy);
   const thumbs =
     asset.kind === "video"
       ? await videoThumbs(file, (t) => emit({ type: "thumbs", assetId: asset.id, ...t }))
@@ -172,7 +195,10 @@ async function work(asset: AssetRow, file: File) {
     createdAt: Date.now(),
   });
   emit({ type: "thumbs", assetId: asset.id, ...thumbs });
+  return finishCopy(asset, file, copy);
+}
 
+async function finishCopy(asset: AssetRow, file: File, copy: Promise<void>) {
   await copy;
   const stored = await readFile(asset.opfsPath);
   if (!stored || stored.size !== file.size) throw new ImportError("Não foi possível guardar o arquivo.");
@@ -222,17 +248,21 @@ if (typeof window !== "undefined") {
 export async function startImport(
   projectId: Id,
   files: File[],
+  options: { only?: "audio" } = {},
 ): Promise<{ assets: AssetRow[]; failed: { name: string; reason: string }[] }> {
   const assets: AssetRow[] = [];
   const failed: { name: string; reason: string }[] = [];
   for (const file of files) {
     const kind = kindOf(file);
-    if (!kind || kind === "audio") {
-      failed.push({ name: file.name, reason: "Tipo de arquivo não suportado aqui." });
+    if (!kind || (kind === "audio") !== (options.only === "audio")) {
+      failed.push({
+        name: file.name,
+        reason: options.only === "audio" ? "Escolha um arquivo de áudio (mp3, m4a ou wav)." : "Tipo de arquivo não suportado aqui.",
+      });
       continue;
     }
     try {
-      const meta = kind === "video" ? await probeVideo(file) : await probeImage(file);
+      const meta = kind === "video" ? await probeVideo(file) : kind === "audio" ? await probeAudio(file) : await probeImage(file);
       const id = crypto.randomUUID();
       const now = Date.now();
       const row: AssetRow = {

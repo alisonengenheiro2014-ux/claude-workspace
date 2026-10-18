@@ -57,8 +57,8 @@ is the only full fix. The test buttons were removed.
 | S04 Ferramentas do clipe | 2026-10-17 | partial | Dividir, Velocidade, Volume, Duplicar, Excluir and Substituir work; Recortar, Inverter, Congelar and Mistura are stubs | — |
 | S05 Velocidade | 2026-10-17 | partial | constant speed only, 0.1x–10x; no curves, no keep-pitch | — |
 | S06 Transição | — | stub | everything | — |
-| S07 Áudio | — | stub | everything | — |
-| S08 Ferramentas de áudio | — | not started | needs audio tracks | — |
+| S07 Áudio | 2026-10-18 | done | the original's music library (licensed, out of scope) | preview sound now goes through Web Audio (GainNode on the video element) so volume works on iOS; music lanes are decoded once and re-synced if they drift > 120 ms from the video |
+| S08 Ferramentas de áudio | 2026-10-18 | partial | beat marking, noise reduction, speed for audio | — |
 | S09 Texto | 2026-10-18 | done | loop animations; text presets/templates | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |
 | S10 Legendas automáticas | — | not started | — | — |
 | S11 Texto para fala | — | not started | — | — |

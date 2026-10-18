@@ -9,7 +9,8 @@
 import type { AssetRow, Id, MediaClip, TimelineDoc, Us } from "../data/db";
 import { assetFile } from "../media/import";
 import { useEditor } from "./store";
-import { durationOf, frameSize, mainClips, sourceTimeUs } from "./timeline";
+import { audio } from "./audio";
+import { durationOf, frameSize, gainAt, mainClips, mainTrack, sourceTimeUs } from "./timeline";
 
 export function drawContain(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
@@ -40,6 +41,10 @@ export class Player {
   private seekTimer: ReturnType<typeof setTimeout> | undefined;
   private waitingMeta = false;
   private disposed = false;
+  private lastSync = 0;
+  // While recording a voice-over: play the picture silently so the mic does
+  // not pick the soundtrack back up.
+  monitorMuted = false;
 
   constructor(
     private video: HTMLVideoElement,
@@ -47,6 +52,8 @@ export class Player {
   ) {
     video.playsInline = true;
     video.preload = "auto";
+    // the video's sound goes through Web Audio so volume works on iOS
+    audio.attachVideo(video);
     video.addEventListener("seeked", this.onSeeked);
     video.addEventListener("loadedmetadata", this.onMeta);
   }
@@ -191,6 +198,9 @@ export class Player {
     if (at >= durationOf(s.doc) - 1000) at = 0; // at the end: start over
     s.setPlayhead(at);
     s.setPlaying(true);
+    audio.unlock();
+    if (!this.monitorMuted) audio.play(s.doc, s.assets, at);
+    this.lastSync = performance.now();
     const hit = this.current(s.doc, at);
     if (hit) this.startClip(hit.clip, hit.offsetUs);
     cancelAnimationFrame(this.raf);
@@ -202,6 +212,7 @@ export class Player {
     cancelAnimationFrame(this.raf);
     this.video.pause();
     this.imageClock = null;
+    audio.stop();
   }
 
   private startClip(clip: MediaClip, offsetUs: Us) {
@@ -219,7 +230,9 @@ export class Player {
     const go = () => {
       this.show("video");
       this.video.playbackRate = clip.speed;
-      this.video.muted = clip.volume === 0;
+      // volume and fades are a GainNode now; muted only while recording a
+      // voice-over, which also lets iOS start it without a tap
+      this.video.muted = this.monitorMuted;
       this.video.currentTime = sourceTimeUs(clip, offsetUs) / 1e6;
       void this.video.play().catch(() => this.pause());
     };
@@ -254,6 +267,18 @@ export class Player {
       const srcUs = this.video.currentTime * 1e6;
       t = clip.startUs + (srcUs - clip.inUs) / clip.speed;
       done = srcUs >= clip.outUs - 1000 || this.video.ended;
+    }
+
+    // clip volume, fades and the main track's mute, applied to the video sound
+    const muted = mainTrack(s.doc).muted;
+    audio.setVideoGain(muted || this.monitorMuted ? 0 : gainAt(clip, Math.max(0, t - clip.startUs)));
+
+    // keep the audio lanes in step with the video: restart them if they drift
+    const now = performance.now();
+    if (!this.monitorMuted && now - this.lastSync > 500) {
+      this.lastSync = now;
+      const pos = audio.position();
+      if (pos !== null && Math.abs(pos - t) > 120_000) audio.play(s.doc, s.assets, t);
     }
 
     if (done) {

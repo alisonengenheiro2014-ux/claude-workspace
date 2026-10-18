@@ -1,0 +1,188 @@
+// Preview audio with Web Audio. Two jobs:
+//  1. The <video> element's sound goes through a GainNode, because iOS
+//     ignores video.volume: this is what makes clip volume and fades work in
+//     the preview on the iPhone.
+//  2. Audio lanes (songs, recordings, a video's extracted sound) are decoded
+//     once into AudioBuffers and scheduled against the playhead.
+// The export mixes the same clips with the same envelope (scheduleEnvelope),
+// in an OfflineAudioContext.
+import { ALL_FORMATS, AudioBufferSink, BlobSource, Input } from "mediabunny";
+import type { AssetRow, Id, MediaClip, TimelineDoc, Us } from "../data/db";
+import { assetFile } from "../media/import";
+import { gainAt } from "./timeline";
+
+export const PEAKS_PER_SEC = 20;
+
+// Volume envelope (volume × fade in × fade out) of a clip that starts playing
+// at local time fromUs, at context time whenS.
+export function scheduleEnvelope(param: AudioParam, clip: MediaClip, fromUs: Us, whenS: number) {
+  param.cancelScheduledValues(0);
+  param.setValueAtTime(gainAt(clip, fromUs), whenS);
+  const at = (localUs: Us) => whenS + (localUs - fromUs) / 1e6;
+  if (clip.fadeInUs > fromUs) param.linearRampToValueAtTime(clip.volume, at(clip.fadeInUs));
+  const fadeOutStart = clip.durationUs - clip.fadeOutUs;
+  if (clip.fadeOutUs > 0) {
+    if (fadeOutStart > fromUs) param.setValueAtTime(gainAt(clip, fadeOutStart), at(fadeOutStart));
+    param.linearRampToValueAtTime(0, at(clip.durationUs));
+  }
+}
+
+// Decodes a file's whole audio track into one AudioBuffer.
+export async function decodeAudio(file: File): Promise<AudioBuffer | null> {
+  const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
+  try {
+    const track = await input.getPrimaryAudioTrack();
+    if (!track || !(await track.canDecode())) return null;
+    const chunks: { buffer: AudioBuffer; timestamp: number }[] = [];
+    for await (const { buffer, timestamp } of new AudioBufferSink(track).buffers()) chunks.push({ buffer, timestamp });
+    if (!chunks.length) return null;
+    const sr = chunks[0].buffer.sampleRate;
+    const channels = Math.max(...chunks.map((c) => c.buffer.numberOfChannels));
+    const t0 = chunks[0].timestamp;
+    const last = chunks[chunks.length - 1];
+    const length = Math.ceil((last.timestamp - t0) * sr) + last.buffer.length;
+    const out = new AudioBuffer({ length, numberOfChannels: channels, sampleRate: sr });
+    for (const { buffer, timestamp } of chunks) {
+      const offset = Math.max(0, Math.round((timestamp - t0) * sr));
+      for (let ch = 0; ch < channels; ch++) {
+        const src = buffer.getChannelData(Math.min(ch, buffer.numberOfChannels - 1));
+        out.copyToChannel(src.subarray(0, Math.min(src.length, length - offset)), ch, offset);
+      }
+    }
+    return out;
+  } finally {
+    input.dispose();
+  }
+}
+
+// Peak level per 1/PEAKS_PER_SEC s, 0..1, for the timeline waveform.
+export function peaksOf(buf: AudioBuffer): number[] {
+  const step = Math.max(1, Math.floor(buf.sampleRate / PEAKS_PER_SEC));
+  const n = Math.ceil(buf.length / step);
+  const out = new Array<number>(n).fill(0);
+  for (let ch = 0; ch < buf.numberOfChannels; ch++) {
+    const d = buf.getChannelData(ch);
+    for (let i = 0; i < n; i++) {
+      let m = 0;
+      const end = Math.min(d.length, (i + 1) * step);
+      for (let j = i * step; j < end; j += 4) m = Math.max(m, Math.abs(d[j]));
+      out[i] = Math.max(out[i], m);
+    }
+  }
+  const top = Math.max(0.05, ...out);
+  return out.map((v) => Math.round((v / top) * 100) / 100);
+}
+
+type AudioContextCtor = typeof AudioContext;
+
+class AudioEngine {
+  private ctx: AudioContext | null = null;
+  private videoGain: GainNode | null = null;
+  private attached = new WeakSet<HTMLMediaElement>();
+  private buffers = new Map<Id, Promise<AudioBuffer | null>>();
+  private nodes: AudioBufferSourceNode[] = [];
+  private session = 0; // bumps on every play/stop so late decodes don't start
+  private clock: { ctxS: number; us: Us } | null = null;
+
+  context() {
+    if (!this.ctx) {
+      const Ctor = (window.AudioContext ?? (window as unknown as { webkitAudioContext: AudioContextCtor }).webkitAudioContext) as AudioContextCtor;
+      this.ctx = new Ctor();
+      // play through the ring/silent switch, like a video app
+      const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+      if (session) session.type = "playback";
+    }
+    return this.ctx;
+  }
+
+  // Call from the play tap: iOS only starts audio from a user gesture.
+  unlock() {
+    const ctx = this.context();
+    if (ctx.state !== "running") void ctx.resume();
+  }
+
+  attachVideo(video: HTMLVideoElement) {
+    if (this.attached.has(video)) return;
+    const ctx = this.context();
+    this.videoGain = ctx.createGain();
+    ctx.createMediaElementSource(video).connect(this.videoGain).connect(ctx.destination);
+    this.attached.add(video);
+  }
+
+  setVideoGain(g: number) {
+    if (this.videoGain && this.ctx) this.videoGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.015);
+  }
+
+  buffer(asset: AssetRow): Promise<AudioBuffer | null> {
+    let p = this.buffers.get(asset.id);
+    if (!p) {
+      p = assetFile(asset).then((f) => (f ? decodeAudio(f) : null)).catch((err) => {
+        console.warn("audio decode failed", asset.name, err);
+        return null;
+      });
+      this.buffers.set(asset.id, p);
+    }
+    return p;
+  }
+
+  // Timeline position of the running audio clock, or null when stopped.
+  position(): Us | null {
+    if (!this.clock || !this.ctx) return null;
+    return this.clock.us + (this.ctx.currentTime - this.clock.ctxS) * 1e6;
+  }
+
+  stop() {
+    this.session++;
+    this.clock = null;
+    for (const n of this.nodes) {
+      try {
+        n.stop();
+      } catch {
+        // never started
+      }
+      n.disconnect();
+    }
+    this.nodes = [];
+  }
+
+  // Starts every audio-lane clip that is still ahead of atUs.
+  play(doc: TimelineDoc, assets: Map<Id, AssetRow>, atUs: Us) {
+    this.stop();
+    const ctx = this.context();
+    const session = this.session;
+    this.clock = { ctxS: ctx.currentTime, us: atUs };
+    for (const track of doc.tracks) {
+      if (track.kind !== "audio" || track.muted) continue;
+      for (const clip of track.items as MediaClip[]) {
+        if (clip.type !== "media" || clip.startUs + clip.durationUs <= atUs) continue;
+        const asset = assets.get(clip.assetId);
+        if (!asset) continue;
+        void this.buffer(asset).then((buf) => {
+          if (buf && session === this.session) this.schedule(clip, buf);
+        });
+      }
+    }
+  }
+
+  private schedule(clip: MediaClip, buf: AudioBuffer) {
+    const ctx = this.ctx!;
+    const now = this.position();
+    if (now === null) return;
+    const local = Math.max(0, now - clip.startUs);
+    if (local >= clip.durationUs) return;
+    const whenS = ctx.currentTime + Math.max(0, clip.startUs - now) / 1e6;
+    const offsetS = (clip.inUs + local * clip.speed) / 1e6;
+    const lengthS = (clip.outUs - clip.inUs - local * clip.speed) / 1e6;
+    if (offsetS >= buf.duration || lengthS <= 0) return;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.playbackRate.value = clip.speed;
+    const gain = ctx.createGain();
+    scheduleEnvelope(gain.gain, clip, local, whenS);
+    src.connect(gain).connect(ctx.destination);
+    src.start(whenS, offsetS, lengthS);
+    this.nodes.push(src);
+  }
+}
+
+export const audio = new AudioEngine();

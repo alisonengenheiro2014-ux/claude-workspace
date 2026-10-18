@@ -29,6 +29,7 @@ interface EditorState {
   draft: TimelineDoc | null; // live preview of a gesture (trim) before it commits
   saveState: SaveState;
   copying: Map<Id, number>; // assets still being copied into the app, 0..1
+  waves: Map<Id, number[]>; // audio peaks per asset (PEAKS_PER_SEC), for the timeline
 
   open(projectId: Id): Promise<boolean>;
   close(): void;
@@ -88,6 +89,7 @@ export const useEditor = create<EditorState>((set, get) => {
     draft: null,
     saveState: "saved",
     copying: new Map(),
+    waves: new Map(),
 
     async open(projectId) {
       const loaded = await loadProject(projectId);
@@ -114,7 +116,7 @@ export const useEditor = create<EditorState>((set, get) => {
 
     close() {
       for (const t of get().thumbs.values()) t.urls.forEach(URL.revokeObjectURL);
-      set({ projectId: null, doc: null, assets: new Map(), thumbs: new Map(), past: [], future: [], playing: false });
+      set({ projectId: null, doc: null, assets: new Map(), thumbs: new Map(), waves: new Map(), past: [], future: [], playing: false });
     },
 
     async addAssets(assets) {

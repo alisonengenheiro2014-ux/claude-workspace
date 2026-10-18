@@ -34,10 +34,11 @@ export async function runImport(
   files: File[],
   onProgress: (p: ImportProgress | null) => void,
   toast: (text: string, tone?: "info" | "error") => void,
+  options: { only?: "audio" } = {},
 ): Promise<AssetRow[]> {
   onProgress({ index: 0, total: files.length });
   try {
-    const { assets, failed } = await startImport(projectId, files);
+    const { assets, failed } = await startImport(projectId, files, options);
     if (failed.length === 1) toast(`${failed[0].name}: ${failed[0].reason}`, "error");
     else if (failed.length > 1) toast(`${failed.length} arquivos não foram importados. ${failed[0].reason}`, "error");
     return assets;

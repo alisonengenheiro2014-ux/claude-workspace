@@ -22,6 +22,7 @@ import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { drawContain } from "../editor/player";
 import { drawText, loadFonts, textsAt } from "../editor/text";
+import { scheduleEnvelope } from "../editor/audio";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
 
 export interface ExportOptions {
@@ -87,17 +88,22 @@ async function openInput(asset: AssetRow, cache: Map<Id, Input>) {
   return input;
 }
 
-async function mixAudio(clips: MediaClip[], assets: Map<Id, AssetRow>, inputs: Map<Id, Input>, totalUs: number, signal: AbortSignal) {
+// Mixes every sounding clip: the main track's video sound and the audio
+// lanes, each with its volume and fades (the same envelope as the preview).
+async function mixAudio(doc: TimelineDoc, assets: Map<Id, AssetRow>, inputs: Map<Id, Input>, totalUs: number, signal: AbortSignal) {
   const length = Math.max(1, Math.ceil((totalUs / 1e6) * SAMPLE_RATE));
   const ctx = new OfflineAudioContext(2, length, SAMPLE_RATE);
   let any = false;
-  for (const clip of clips) {
+  const sounding = doc.tracks
+    .filter((t) => (t.kind === "main" || t.kind === "audio") && !t.muted)
+    .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media"));
+  for (const clip of sounding) {
     const asset = assets.get(clip.assetId);
-    if (!asset || asset.kind !== "video" || !asset.hasAudio || clip.volume === 0) continue;
+    if (!asset || asset.kind === "image" || !asset.hasAudio || clip.volume === 0 || clip.startUs >= totalUs) continue;
     const track = await (await openInput(asset, inputs)).getPrimaryAudioTrack();
     if (!track) continue;
     const gain = ctx.createGain();
-    gain.gain.value = clip.volume;
+    scheduleEnvelope(gain.gain, clip, 0, clip.startUs / 1e6);
     gain.connect(ctx.destination);
     const sink = new AudioBufferSink(track);
     const inS = clip.inUs / 1e6;
@@ -111,7 +117,7 @@ async function mixAudio(clips: MediaClip[], assets: Map<Id, AssetRow>, inputs: M
       const skip = Math.max(0, inS - timestamp); // part of the buffer before the clip's in point
       const at = clip.startUs / 1e6 + (timestamp + skip - inS) / clip.speed;
       const play = Math.min(buffer.duration - skip, outS - (timestamp + skip));
-      if (play > 0) node.start(at, skip, play);
+      if (play > 0 && at < totalUs / 1e6) node.start(at, skip, play);
       any = true;
     }
   }
@@ -146,7 +152,7 @@ export async function exportTimeline(
 
   try {
     onProgress(0, "audio");
-    const mixed = codecs.audio ? await mixAudio(clips, assets, inputs, totalUs, signal) : null;
+    const mixed = codecs.audio ? await mixAudio(doc, assets, inputs, totalUs, signal) : null;
     const audioSource = mixed && codecs.audio ? new AudioBufferSource({ codec: codecs.audio, bitrate: 128_000 }) : null;
     if (audioSource) output.addAudioTrack(audioSource);
 

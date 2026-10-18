@@ -17,23 +17,29 @@ import {
   Smile,
   Snowflake,
   Sparkles,
+  Split,
   Trash2,
   Type,
   Volume2,
+  VolumeX,
+  Waves,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
 import { describeAsset, runImport, takeImport } from "../app/importFlow";
 import { navigate } from "../app/router";
-import type { AspectRatio, Id } from "../data/db";
+import type { AspectRatio, Id, MediaClip } from "../data/db";
 import { assetFile, onImportEvent } from "../media/import";
 import { Player } from "../editor/player";
 import { useEditor } from "../editor/store";
 import { TimelineView } from "../editor/TimelineView";
 import { TextOverlay } from "../editor/TextOverlay";
 import { TextSheet, type TextTab } from "./TextSheet";
+import { AudioMenu, FadeSheet, RecordSheet } from "./AudioSheets";
+import { audio, peaksOf } from "../editor/audio";
 import {
+  addAudio,
   addText,
   canSplit,
   clipAt,
@@ -43,9 +49,13 @@ import {
   findItem,
   frameSize,
   insertMedia,
+  mainTrack,
   remove,
   setClip,
+  setItem,
+  setTrackMuted,
   split,
+  splitItem,
 } from "../editor/timeline";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
@@ -67,7 +77,10 @@ type Panel =
   | { name: "export" }
   | { name: "missing"; assetId: Id }
   | { name: "stub"; title: string; screen: string }
-  | { name: "text"; id: Id; tab: TextTab };
+  | { name: "text"; id: Id; tab: TextTab }
+  | { name: "audio" }
+  | { name: "fade" }
+  | { name: "record" };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -98,6 +111,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const player = useRef<Player | null>(null);
   const addPicker = useRef<HTMLInputElement>(null);
   const replacePicker = useRef<HTMLInputElement>(null);
+  const audioPicker = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<"loading" | "ready" | "notfound">("loading");
   const [panel, setPanel] = useState<Panel>(null);
   const [fullscreen, setFullscreen] = useState(false);
@@ -174,6 +188,22 @@ export function Editor({ projectId }: { projectId: Id }) {
     [toast],
   );
 
+  // decode the sound of every audio-lane clip once: waveform now, playback later
+  const audioAssetKey = doc
+    ? [...new Set(doc.tracks.filter((t) => t.kind === "audio").flatMap((t) => t.items.map((c) => (c.type === "media" ? c.assetId : ""))))]
+        .filter(Boolean)
+        .join(",")
+    : "";
+  useEffect(() => {
+    for (const id of audioAssetKey.split(",").filter(Boolean)) {
+      const asset = useEditor.getState().assets.get(id);
+      if (!asset || useEditor.getState().waves.has(id)) continue;
+      void audio.buffer(asset).then((buf) => {
+        if (buf) useEditor.setState((s) => ({ waves: new Map(s.waves).set(id, peaksOf(buf)) }));
+      });
+    }
+  }, [audioAssetKey, assets]);
+
   useEffect(() => {
     const el = stageBox.current;
     if (!el) return;
@@ -205,7 +235,11 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selected = doc && selectedId ? findClip(doc, selectedId) : undefined;
   const selectedItem = doc && selectedId ? findItem(doc, selectedId) : null;
   const selectedText = selectedItem?.clip.type === "text" ? selectedItem.clip : null;
+  const selectedAudio = selectedItem?.track.kind === "audio" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
+  const selectedMedia: MediaClip | null = selected ?? selectedAudio;
+  const videoMuted = doc ? mainTrack(doc).muted : false;
   const target = selected ?? (doc ? clipAt(doc, playheadUs)?.clip : undefined);
+  const targetAsset = target ? assets.get(target.assetId) : undefined;
   const totalUs = doc ? durationOf(doc) : 0;
   const frame = doc ? frameSize(doc, assets, 1080) : { width: 9, height: 16 };
   const fit = Math.min(box.w / frame.width, box.h / frame.height) || 0;
@@ -245,6 +279,59 @@ export function Editor({ projectId }: { projectId: Id }) {
     const r = duplicate(s.doc, s.selectedId);
     s.commit(r.doc, "Duplicar");
     s.select(r.id);
+  }
+
+  async function onAddMusic(files: File[]) {
+    stop();
+    setPanel(null);
+    const [song] = await runImport(projectId, files.slice(0, 1), setImporting, toast, { only: "audio" });
+    if (!song) return;
+    await useEditor.getState().addAssets([song]);
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addAudio(s.doc, song, s.playheadUs);
+    s.commit(r.doc, "Adicionar música");
+    s.select(r.id);
+  }
+
+  // The clip's sound becomes its own audio item, and the clip goes silent.
+  function onExtract() {
+    stop();
+    setPanel(null);
+    const s = useEditor.getState();
+    if (!s.doc || !target || !targetAsset?.hasAudio) return;
+    const r = addAudio(s.doc, targetAsset, target.startUs, target.inUs);
+    let d = setItem(r.doc, r.id, { outUs: target.outUs, speed: target.speed, volume: target.volume, durationUs: target.durationUs });
+    d = setClip(d, target.id, { volume: 0 });
+    s.commit(d, "Extrair som");
+    s.select(r.id);
+  }
+
+  async function onRecorded(file: File, atUs: number) {
+    const [rec] = await runImport(projectId, [file], setImporting, toast, { only: "audio" });
+    if (!rec) return;
+    await useEditor.getState().addAssets([rec]);
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addAudio(s.doc, rec, atUs);
+    s.commit(setItem(r.doc, r.id, { outUs: rec.durationUs, durationUs: rec.durationUs }), "Gravar narração");
+    s.select(r.id);
+    setPanel(null);
+  }
+
+  function onSplitAudio() {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc || !selectedAudio) return;
+    const r = splitItem(s.doc, selectedAudio.id, s.playheadUs);
+    if (!r) return toast("Mova o cursor para dentro do áudio para dividir.");
+    s.commit(r.doc, "Dividir áudio");
+    s.select(r.rightId);
+  }
+
+  function toggleVideoSound() {
+    const s = useEditor.getState();
+    if (s.doc) s.commit(setTrackMuted(s.doc, "main", !mainTrack(s.doc).muted), videoMuted ? "Ligar som do vídeo" : "Tirar som do vídeo");
   }
 
   function onAddText() {
@@ -388,7 +475,22 @@ export function Editor({ projectId }: { projectId: Id }) {
             onTransition={() => stub("Transições", "S06")}
           />
 
-          {selectedText ? (
+          {selectedAudio ? (
+            <Toolbar
+              label="Ferramentas do áudio"
+              leading={
+                <button type="button" aria-label="Voltar às ferramentas" onClick={() => ed.select(null)} className="flex size-11 items-center justify-center">
+                  <ChevronLeft aria-hidden className="size-6" />
+                </button>
+              }
+            >
+              <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />
+              <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
+              <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
+              <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+            </Toolbar>
+          ) : selectedText ? (
             <Toolbar
               label="Ferramentas do texto"
               leading={
@@ -420,6 +522,13 @@ export function Editor({ projectId }: { projectId: Id }) {
                 disabled={assets.get(selected!.assetId)?.kind !== "video"}
                 onClick={() => setPanel({ name: "volume" })}
               />
+              <ToolbarItem
+                icon={<Waves />}
+                label="Fade"
+                disabled={!assets.get(selected!.assetId)?.hasAudio}
+                onClick={() => setPanel({ name: "fade" })}
+              />
+              <ToolbarItem icon={<Split />} label="Extrair som" disabled={!targetAsset?.hasAudio} onClick={onExtract} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
@@ -431,7 +540,14 @@ export function Editor({ projectId }: { projectId: Id }) {
           ) : (
             <Toolbar label="Ferramentas">
               <ToolbarItem icon={<Scissors />} label="Editar" disabled={!target} onClick={() => target && ed.select(target.id)} />
-              <ToolbarItem icon={<AudioLines />} label="Áudio" onClick={() => stub("Áudio", "S07")} />
+              <ToolbarItem icon={<AudioLines />} label="Áudio" disabled={totalUs === 0} onClick={() => setPanel({ name: "audio" })} />
+              <ToolbarItem
+                icon={videoMuted ? <VolumeX /> : <Volume2 />}
+                label={videoMuted ? "Sem som" : "Som do vídeo"}
+                active={videoMuted}
+                disabled={totalUs === 0}
+                onClick={toggleVideoSound}
+              />
               <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
               <ToolbarItem icon={<Layers />} label="Sobrepor" onClick={() => stub("Sobrepor", "S12")} />
@@ -446,6 +562,38 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
+      <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
+
+      <AudioMenu
+        open={panel?.name === "audio"}
+        onOpenChange={(o) => !o && setPanel(null)}
+        onMusic={() => audioPicker.current?.click()}
+        canExtract={!!targetAsset?.hasAudio}
+        onExtract={onExtract}
+        onRecord={() => setPanel({ name: "record" })}
+      />
+      <FadeSheet
+        clip={panel?.name === "fade" ? selectedMedia : null}
+        onChange={(p) => selectedMedia && ed.setDraft(setItem(useEditor.getState().doc!, selectedMedia.id, p))}
+        onClose={() => closeEditing("Fade")}
+      />
+      <RecordSheet
+        open={panel?.name === "record"}
+        onOpenChange={(o) => !o && setPanel(null)}
+        cursorUs={() => useEditor.getState().playheadUs}
+        onStartPlayback={() => {
+          if (!player.current) return;
+          player.current.monitorMuted = true;
+          player.current.play();
+        }}
+        onStopPlayback={() => {
+          if (!player.current) return;
+          player.current.pause();
+          player.current.monitorMuted = false;
+        }}
+        onDone={(file, at) => void onRecorded(file, at)}
+        onError={(m) => toast(m, "error")}
+      />
 
       <Sheet open={panel?.name === "speed"} onOpenChange={(o) => !o && closeEditing("Velocidade")} title="Velocidade">
         {selected && doc && (
@@ -464,18 +612,17 @@ export function Editor({ projectId }: { projectId: Id }) {
       </Sheet>
 
       <Sheet open={panel?.name === "volume"} onOpenChange={(o) => !o && closeEditing("Volume")} title="Volume">
-        {selected && (
+        {selectedMedia && (
           <Slider
             label="Volume"
-            value={Math.round(selected.volume * 100)}
+            value={Math.round(selectedMedia.volume * 100)}
             min={0}
             max={200}
             defaultValue={100}
             format={(v) => `${v}%`}
-            onChange={(v) => ed.setDraft(setClip(useEditor.getState().doc!, selected.id, { volume: v / 100 }))}
+            onChange={(v) => ed.setDraft(setItem(useEditor.getState().doc!, selectedMedia.id, { volume: v / 100 }))}
           />
         )}
-        <p className="mt-3 text-xs text-text-muted">O volume vale na exportação. Na prévia do iPhone, só o mudo (0%) é aplicado por enquanto.</p>
       </Sheet>
 
       <Sheet open={panel?.name === "format"} onOpenChange={(o) => !o && setPanel(null)} title="Formato">

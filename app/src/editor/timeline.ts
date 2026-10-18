@@ -301,8 +301,10 @@ export function moveItem(doc: TimelineDoc, id: Id, startUs: Us): TimelineDoc {
   });
 }
 
-// Trims an overlay item's start or end, stopping at its neighbours and the video's end.
-export function trimItem(doc: TimelineDoc, id: Id, edge: "start" | "end", deltaUs: Us): TimelineDoc {
+// Trims an overlay item's start or end, stopping at its neighbours and the
+// video's end. Media items (audio) also move their in/out points and stop at
+// the ends of their media (mediaUs).
+export function trimItem(doc: TimelineDoc, id: Id, edge: "start" | "end", deltaUs: Us, mediaUs: Us | null = null): TimelineDoc {
   return edit(doc, (d) => {
     const hit = findItem(d, id);
     if (!hit || hit.track.kind === "main") return;
@@ -311,6 +313,21 @@ export function trimItem(doc: TimelineDoc, id: Id, edge: "start" | "end", deltaU
     const others = hit.track.items.filter((x) => x.id !== id);
     const prevEnd = Math.max(0, ...others.filter((x) => x.startUs + x.durationUs <= c.startUs).map((x) => x.startUs + x.durationUs));
     const nextStart = Math.min(durationOf(d) || end, ...others.filter((x) => x.startUs >= end).map((x) => x.startUs));
+    if (c.type === "media") {
+      if (edge === "start") {
+        // how far the start may move left: neighbour, timeline start, media start
+        const minStart = Math.max(prevEnd, c.startUs - c.inUs / c.speed);
+        const s = Math.max(minStart, Math.min(end - MIN_CLIP_US, c.startUs + Math.round(deltaUs)));
+        c.inUs = Math.max(0, Math.round(c.inUs + (s - c.startUs) * c.speed));
+        c.startUs = s;
+      } else {
+        const maxDur = Math.min(nextStart - c.startUs, mediaUs === null ? Infinity : (mediaUs - c.inUs) / c.speed);
+        const dur = Math.max(MIN_CLIP_US, Math.min(maxDur, c.durationUs + Math.round(deltaUs)));
+        c.outUs = Math.round(c.inUs + dur * c.speed);
+      }
+      c.durationUs = clipDuration(c);
+      return;
+    }
     if (edge === "start") {
       const s = Math.max(prevEnd, Math.min(end - MIN_CLIP_US, c.startUs + Math.round(deltaUs)));
       c.durationUs = end - s;
@@ -319,6 +336,71 @@ export function trimItem(doc: TimelineDoc, id: Id, edge: "start" | "end", deltaU
       c.durationUs = Math.max(MIN_CLIP_US, Math.min(nextStart - c.startUs, c.durationUs + Math.round(deltaUs)));
     }
   });
+}
+
+// ---------- audio lanes ----------
+
+export function audioTracks(doc: TimelineDoc) {
+  return doc.tracks.filter((t) => t.kind === "audio");
+}
+
+// Audio (a song, a recording, or a video's sound) at atUs. By default it
+// ends with the video; trim it longer or shorter afterwards.
+export function addAudio(doc: TimelineDoc, asset: AssetRow, atUs: Us, inUs: Us = 0): { doc: TimelineDoc; id: Id } {
+  const total = durationOf(doc);
+  const start = Math.max(0, Math.min(atUs, Math.max(0, total - MIN_CLIP_US)));
+  const room = total > start ? total - start : asset.durationUs;
+  const clip: MediaClip = { ...newMediaClip(asset), inUs };
+  clip.outUs = Math.min(asset.durationUs, inUs + Math.max(MIN_CLIP_US, room));
+  clip.startUs = start;
+  clip.durationUs = clipDuration(clip);
+  return { doc: edit(doc, (d) => placeInLane(d, clip, "audio")), id: clip.id };
+}
+
+// Splits an audio item at atUs; the right part stays in the same lane.
+export function splitItem(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDoc; rightId: Id } | null {
+  const hit = findItem(doc, id);
+  if (!hit || hit.track.kind === "main" || hit.clip.type !== "media") return null;
+  const c = hit.clip;
+  if (atUs - c.startUs < MIN_CLIP_US || c.startUs + c.durationUs - atUs < MIN_CLIP_US) return null;
+  const rightId = uid();
+  const next = edit(doc, (d) => {
+    const h = findItem(d, id)!;
+    const left = h.clip as MediaClip;
+    const cut = sourceTimeUs(left, atUs - left.startUs);
+    const right: MediaClip = { ...structuredClone(left), id: rightId, inUs: cut, startUs: atUs, fadeInUs: 0 };
+    left.outUs = cut;
+    left.fadeOutUs = 0;
+    left.durationUs = clipDuration(left);
+    right.durationUs = clipDuration(right);
+    h.track.items.push(right);
+  });
+  return { doc: next, rightId };
+}
+
+// Patch for any item (audio volume, fades, mute).
+export function setItem(doc: TimelineDoc, id: Id, patch: Partial<MediaClip>): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (!hit) return;
+    const i = hit.track.items.indexOf(hit.clip);
+    hit.track.items[i] = { ...hit.clip, ...patch } as Clip;
+  });
+}
+
+export function setTrackMuted(doc: TimelineDoc, kind: Track["kind"], muted: boolean): TimelineDoc {
+  return edit(doc, (d) => {
+    for (const t of d.tracks) if (t.kind === kind) t.muted = muted;
+  });
+}
+
+// Volume envelope of a clip at local time (0..durationUs): volume times the fades.
+export function gainAt(c: MediaClip, localUs: Us): number {
+  let g = c.volume;
+  if (c.fadeInUs > 0 && localUs < c.fadeInUs) g *= Math.max(0, localUs / c.fadeInUs);
+  const left = c.durationUs - localUs;
+  if (c.fadeOutUs > 0 && left < c.fadeOutUs) g *= Math.max(0, left / c.fadeOutUs);
+  return g;
 }
 
 export function setText(doc: TimelineDoc, id: Id, patch: Partial<TextClip>): TimelineDoc {

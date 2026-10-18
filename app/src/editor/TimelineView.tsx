@@ -5,8 +5,9 @@ import type { Id, MediaClip } from "../data/db";
 import { AddClipButton, Playhead, TimelineClip, TransitionMarker } from "../ui/Timeline";
 import { formatTime } from "../ui/Transport";
 import { useEditor, type Thumbs } from "./store";
-import type { TextClip } from "../data/db";
-import { durationOf, mainClips, moveItem, textTracks, trim, trimItem } from "./timeline";
+import type { Track } from "../data/db";
+import { PEAKS_PER_SEC } from "./audio";
+import { audioTracks, durationOf, mainClips, moveItem, textTracks, trim, trimItem } from "./timeline";
 
 const TILE = 52; // thumbnail tile width, same as the main track height
 
@@ -29,6 +30,21 @@ function tilesFor(clip: MediaClip, width: number, pxPerSec: number, thumbs: Thum
         style={{ width: TILE }}
       />
     );
+  });
+}
+
+// The part of an asset's peaks a clip plays, resampled to ~one bar per 4px.
+function waveSlice(peaks: number[] | undefined, clip: MediaClip, width: number) {
+  if (!peaks?.length) return undefined;
+  const bars = Math.max(1, Math.min(200, Math.floor(width / 4)));
+  const from = (clip.inUs / 1e6) * PEAKS_PER_SEC;
+  const to = (clip.outUs / 1e6) * PEAKS_PER_SEC;
+  return Array.from({ length: bars }, (_, i) => {
+    const a = Math.floor(from + ((to - from) * i) / bars);
+    const b = Math.max(a + 1, Math.floor(from + ((to - from) * (i + 1)) / bars));
+    let m = 0;
+    for (let j = a; j < b && j < peaks.length; j++) m = Math.max(m, peaks[j]);
+    return m;
   });
 }
 
@@ -66,6 +82,7 @@ export function TimelineView({
   const doc = useEditor((s) => s.draft ?? s.doc);
   const assets = useEditor((s) => s.assets);
   const thumbs = useEditor((s) => s.thumbs);
+  const waves = useEditor((s) => s.waves);
   const selectedId = useEditor((s) => s.selectedId);
   const playheadUs = useEditor((s) => s.playheadUs);
   const pxPerSec = useEditor((s) => s.pxPerSec);
@@ -160,7 +177,9 @@ export function TimelineView({
     if (d.overlay) {
       const item = base.tracks.flatMap((t) => t.items).find((c) => c.id === d.clipId);
       if (!item) return;
-      setDraft(d.mode === "move" ? moveItem(base, d.clipId, item.startUs + deltaUs) : trimItem(base, d.clipId, d.mode, deltaUs));
+      const a = item.type === "media" ? assets.get(item.assetId) : undefined;
+      const mediaUs = a && a.kind !== "image" ? a.durationUs : null;
+      setDraft(d.mode === "move" ? moveItem(base, d.clipId, item.startUs + deltaUs) : trimItem(base, d.clipId, d.mode, deltaUs, mediaUs));
       return;
     }
     const clip = mainClips(base).find((c) => c.id === d.clipId);
@@ -179,6 +198,53 @@ export function TimelineView({
 
   const selected = clips.find((c) => c.id === selectedId);
 
+  // One row of overlay items (text or audio): tap selects; a selected item
+  // can be dragged in time and trimmed by its edges.
+  const lane = (track: Track) => (
+    <div key={track.id} className="relative h-[var(--layout-track-sub)] shrink-0">
+      {track.items.map((c) => {
+        const sel = c.id === selectedId;
+        const w = Math.max(2, px(c.durationUs));
+        const media = c.type === "media" ? c : null;
+        const asset = media ? assets.get(media.assetId) : undefined;
+        const label = c.type === "text" ? c.text.split("\n")[0] || "Texto" : (asset?.name ?? "Áudio");
+        return (
+          <div
+            key={c.id}
+            className="absolute inset-y-0"
+            style={{ left: px(c.startUs), width: w }}
+            onPointerDown={sel ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
+            onPointerMove={sel ? onHandleMove : undefined}
+            onPointerUp={sel ? onHandleUp : undefined}
+            onPointerCancel={sel ? onHandleUp : undefined}
+          >
+            <TimelineClip
+              kind={track.kind === "audio" ? "audio" : "text"}
+              width={w}
+              label={label}
+              selected={sel}
+              missing={!!media && (missing.has(media.assetId) || !asset)}
+              waveform={media ? waveSlice(waves.get(media.assetId), media, w) : undefined}
+              onSelect={() => !drag.current?.moved && select(sel ? null : c.id)}
+            />
+            {sel &&
+              (["start", "end"] as const).map((edge) => (
+                <div
+                  key={edge}
+                  role="presentation"
+                  onPointerDown={(e) => onHandleDown(e, edge, c.id, true)}
+                  onPointerMove={onHandleMove}
+                  onPointerUp={onHandleUp}
+                  onPointerCancel={onHandleUp}
+                  className={`absolute inset-y-0 z-20 w-6 cursor-ew-resize touch-none ${edge === "start" ? "-left-3" : "-right-3"}`}
+                />
+              ))}
+          </div>
+        );
+      })}
+    </div>
+  );
+
   return (
     <div className="relative h-[var(--layout-timeline)] bg-bg">
       <Playhead />
@@ -194,57 +260,12 @@ export function TimelineView({
         onScroll={onScroll}
         onKeyDown={onKeyDown}
         onClick={(e) => !(e.target as HTMLElement).closest("button") && select(null)}
-        className="no-scrollbar h-full overflow-x-auto overflow-y-hidden"
-        style={{ touchAction: playing ? "none" : "pan-x" }}
+        className="no-scrollbar h-full overflow-auto"
+        style={{ touchAction: playing ? "none" : "pan-x pan-y" }}
       >
-        <div className="relative flex h-full flex-col justify-center gap-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
+        <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
-          {[...textTracks(doc)].reverse().map((track) => (
-            <div key={track.id} className="relative h-[var(--layout-track-sub)]">
-              {(track.items as TextClip[]).map((c) => {
-                const sel = c.id === selectedId;
-                return (
-                  <div
-                    key={c.id}
-                    className="absolute inset-y-0"
-                    style={{ left: px(c.startUs), width: Math.max(2, px(c.durationUs)) }}
-                    onPointerDown={sel ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
-                    onPointerMove={sel ? onHandleMove : undefined}
-                    onPointerUp={sel ? onHandleUp : undefined}
-                    onPointerCancel={sel ? onHandleUp : undefined}
-                  >
-                    <TimelineClip
-                      kind="text"
-                      width={Math.max(2, px(c.durationUs))}
-                      label={c.text.split("\n")[0] || "Texto"}
-                      selected={sel}
-                      onSelect={() => !drag.current?.moved && select(sel ? null : c.id)}
-                    />
-                    {sel && (
-                      <>
-                        <div
-                          role="presentation"
-                          onPointerDown={(e) => onHandleDown(e, "start", c.id, true)}
-                          onPointerMove={onHandleMove}
-                          onPointerUp={onHandleUp}
-                          onPointerCancel={onHandleUp}
-                          className="absolute inset-y-0 -left-3 z-20 w-6 cursor-ew-resize touch-none"
-                        />
-                        <div
-                          role="presentation"
-                          onPointerDown={(e) => onHandleDown(e, "end", c.id, true)}
-                          onPointerMove={onHandleMove}
-                          onPointerUp={onHandleUp}
-                          onPointerCancel={onHandleUp}
-                          className="absolute inset-y-0 -right-3 z-20 w-6 cursor-ew-resize touch-none"
-                        />
-                      </>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
+          {[...textTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));
@@ -295,6 +316,7 @@ export function TimelineView({
               </>
             )}
           </div>
+          {audioTracks(doc).map(lane)}
         </div>
       </div>
     </div>
