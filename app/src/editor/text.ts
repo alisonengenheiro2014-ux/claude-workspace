@@ -8,7 +8,7 @@ import "@fontsource/anton/latin-400.css";
 import "@fontsource/oswald/latin-700.css";
 import "@fontsource/pacifico/latin-400.css";
 import "@fontsource/permanent-marker/latin-400.css";
-import type { AnimRef, TextClip, TextStyle, Us } from "../data/db";
+import type { AnimRef, CaptionClip, TextClip, TextStyle, Track, Us } from "../data/db";
 
 // Open fonts shipped with the app (OFL / Apache), latin subset only.
 export const FONTS: { id: string; label: string; family: string; weight: number }[] = [
@@ -31,6 +31,20 @@ export function loadFonts() {
   fontsReady ??= Promise.all(FONTS.map((f) => document.fonts.load(`${f.weight} 48px "${f.family}"`)));
   return fontsReady;
 }
+
+// Captions: bold, white with a dark outline, readable over any video.
+export const CAPTION_STYLE: TextStyle = {
+  font: "montserrat",
+  size: 56,
+  color: "#ffffff",
+  stroke: { color: "#000000", width: 10 },
+  shadow: null,
+  background: null,
+  align: "center",
+  bold: true,
+  italic: false,
+};
+export const CAPTION_Y = 0.78; // a little above the bottom, clear of app UI on Reels/TikTok
 
 export const TEXT_COLORS = ["#ffffff", "#000000", "#ffd400", "#ff3b30", "#ff9500", "#34c759", "#0a84ff", "#bf5af2", "#ff2d92"];
 
@@ -183,13 +197,32 @@ export function drawText(
   return box;
 }
 
-// Every text item visible at timeline time tUs, bottom track first.
-export function textsAt(tracks: { kind: string; hidden: boolean; items: unknown[] }[], tUs: Us): TextClip[] {
+// A caption drawn like a text item, in its track's style.
+export function captionAsText(c: CaptionClip, style: TextStyle | undefined): TextClip {
+  return {
+    id: c.id,
+    type: "text",
+    text: c.text,
+    style: style ?? CAPTION_STYLE,
+    startUs: c.startUs,
+    durationUs: c.durationUs,
+    transform: c.transform,
+    opacity: c.opacity,
+    blendMode: c.blendMode,
+    animation: c.animation,
+    keyframes: c.keyframes,
+  };
+}
+
+// Every text item and caption visible at timeline time tUs, bottom track first.
+export function textsAt(tracks: Track[], tUs: Us): TextClip[] {
   const out: TextClip[] = [];
   for (const t of tracks) {
-    if (t.kind !== "text" || t.hidden) continue;
-    for (const c of t.items as TextClip[]) {
-      if (c.type === "text" && tUs >= c.startUs && tUs < c.startUs + c.durationUs) out.push(c);
+    if ((t.kind !== "text" && t.kind !== "caption") || t.hidden) continue;
+    for (const c of t.items) {
+      if (tUs < c.startUs || tUs >= c.startUs + c.durationUs) continue;
+      if (c.type === "text") out.push(c);
+      else if (c.type === "caption") out.push(captionAsText(c, t.style));
     }
   }
   return out;

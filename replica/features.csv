@@ -26,8 +26,8 @@ Fundo de cor ou desfocado quando o vídeo não preenche o quadro,formato,must,ye
 Transições entre clipes com duração,transição,must,yes,yes,"8 tipos próprios (dissolver, escurecer, clarear, deslizar, subir, cobrir, cortina, zoom), 0,1 s até metade do clipe; não muda a duração do vídeo"
 Exportar MP4 com resolução fps e taxa de bits,exportar,must,yes,yes,"escolhe H.264/HEVC no iPhone, VP9/AV1 onde não houver"
 Salvar no Rolo da Câmera ou compartilhar pela folha do iOS,exportar,must,yes,yes,folha de compartilhamento do iOS; testado no iPhone em 2026-10-17
-Legendas automáticas a partir da fala,legendas,should,yes,no,S10; Whisper no aparelho ou API própria
-Editar legendas em lote (texto e estilo),legendas,should,yes,no,
+Legendas automáticas a partir da fala,legendas,should,yes,yes,"Whisper no próprio iPhone (transformers.js; GPU se houver, senão CPU); modelo baixado uma vez e guardado; testado com whisper-tiny em CPU"
+Editar legendas em lote (texto e estilo),legendas,should,yes,yes,"lista para corrigir cada legenda, apagar uma ou todas; estilo e posição valem para todas"
 Animações de texto (entrada saída loop),texto,should,yes,partial,"entrada (surgir, subir, pular, digitar) e saída (sumir, descer, encolher); sem loop ainda"
 Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo toca sem som durante a gravação"
 Extrair o áudio de um vídeo,áudio,should,yes,yes,o clipe fica sem som e o áudio vira um item próprio

@@ -1,6 +1,6 @@
 // Pure operations on the timeline document. Every function takes a doc and
 // returns a new one; the store keeps the old one for undo.
-import type { AspectRatio, AssetRow, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Us } from "../data/db";
+import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Transform, Us } from "../data/db";
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
@@ -295,7 +295,16 @@ export function moveItem(doc: TimelineDoc, id: Id, startUs: Us): TimelineDoc {
     if (!hit || hit.track.kind === "main") return;
     const c = hit.clip;
     const total = durationOf(d);
+    const from = c.startUs;
     c.startUs = Math.max(0, Math.min(Math.round(startUs), Math.max(0, total - c.durationUs)));
+    if (hit.track.kind === "caption") {
+      // captions keep one lane and their order: stop at the neighbours
+      const others = hit.track.items.filter((x) => x.id !== id);
+      const before = others.filter((x) => x.startUs < from).reduce((m, x) => Math.max(m, x.startUs + x.durationUs), 0);
+      const after = others.filter((x) => x.startUs >= from).reduce((m, x) => Math.min(m, x.startUs), total);
+      c.startUs = Math.max(before, Math.min(c.startUs, after - c.durationUs));
+      return;
+    }
     if (overlaps(hit.track, c.startUs, c.startUs + c.durationUs, c.id)) {
       hit.track.items = hit.track.items.filter((x) => x.id !== id);
       placeInLane(d, c, hit.track.kind, hit.track);
@@ -474,4 +483,99 @@ export function transitionAt(doc: TimelineDoc, tUs: Us): (TransitionWindow & { p
     if (tUs >= w.startUs && tUs < w.endUs) return { ...w, p: (tUs - w.startUs) / (w.endUs - w.startUs) };
   }
   return null;
+}
+
+// ---------- captions ----------
+
+export interface SpeechSegment {
+  start: number; // seconds on the timeline
+  end: number;
+  text: string;
+}
+
+// Breaks a sentence into captions of up to maxLines lines of up to maxChars
+// characters each, breaking between words.
+export function splitCaption(text: string, maxChars = 32, maxLines = 2): string[] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const lines: string[] = [];
+  let line = "";
+  for (const w of words) {
+    if (line && (line + " " + w).length > maxChars) {
+      lines.push(line);
+      line = w;
+    } else line = line ? `${line} ${w}` : w;
+  }
+  if (line) lines.push(line);
+  const out: string[] = [];
+  for (let i = 0; i < lines.length; i += maxLines) out.push(lines.slice(i, i + maxLines).join("\n"));
+  return out;
+}
+
+export function captionTrack(doc: TimelineDoc) {
+  return doc.tracks.find((t) => t.kind === "caption");
+}
+
+// Replaces the captions with these segments. A long segment becomes several
+// captions, with its time shared out by length of text.
+export function setCaptions(doc: TimelineDoc, segments: SpeechSegment[], style: TextStyle, y = 0.78): TimelineDoc {
+  return edit(doc, (d) => {
+    const old = captionTrack(d);
+    const transform = (old?.items[0]?.transform as Transform | undefined) ?? { x: 0.5, y, scale: 1, rotation: 0 };
+    d.tracks = d.tracks.filter((t) => t.kind !== "caption");
+    const items: CaptionClip[] = [];
+    let lastEnd = 0;
+    for (const seg of segments) {
+      const parts = splitCaption(seg.text);
+      const totalChars = parts.reduce((n, p) => n + p.length, 0) || 1;
+      let t = Math.max(Math.round(seg.start * 1e6), lastEnd);
+      const segEnd = Math.max(t + MIN_CLIP_US, Math.round(seg.end * 1e6));
+      for (const p of parts) {
+        const dur = Math.max(MIN_CLIP_US, Math.round(((segEnd - t) * p.length) / totalChars) || MIN_CLIP_US);
+        items.push({
+          id: uid(),
+          type: "caption",
+          text: p,
+          words: [],
+          startUs: t,
+          durationUs: dur,
+          transform: { ...transform },
+          opacity: 1,
+          blendMode: "normal",
+          animation: { in: null, out: null, loop: null },
+          keyframes: [],
+        });
+        t += dur;
+      }
+      lastEnd = t;
+    }
+    if (items.length) d.tracks.push({ id: uid(), kind: "caption", muted: false, hidden: false, locked: false, items, style: structuredClone(style) });
+  });
+}
+
+export function setCaptionStyle(doc: TimelineDoc, style: TextStyle): TimelineDoc {
+  return edit(doc, (d) => {
+    const t = captionTrack(d);
+    if (t) t.style = structuredClone(style);
+  });
+}
+
+// Captions move together: one position for all of them.
+export function setCaptionTransform(doc: TimelineDoc, transform: Transform): TimelineDoc {
+  return edit(doc, (d) => {
+    const t = captionTrack(d);
+    if (t) for (const c of t.items) c.transform = { ...transform };
+  });
+}
+
+export function setCaptionText(doc: TimelineDoc, id: Id, text: string): TimelineDoc {
+  return edit(doc, (d) => {
+    const hit = findItem(d, id);
+    if (hit?.clip.type === "caption") hit.clip.text = text;
+  });
+}
+
+export function removeCaptions(doc: TimelineDoc): TimelineDoc {
+  return edit(doc, (d) => {
+    d.tracks = d.tracks.filter((t) => t.kind !== "caption");
+  });
 }

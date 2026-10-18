@@ -13,16 +13,21 @@ import {
   move,
   moveItem,
   remove,
+  setCaptions,
+  setCaptionStyle,
+  setCaptionTransform,
   setText,
   setTransition,
   setTransitionAll,
   split,
+  splitCaption,
   splitItem,
   textTracks,
   transitionAt,
   transitionWindows,
   trimItem,
 } from "./timeline";
+import { CAPTION_STYLE } from "./text";
 
 const A: AssetRow = {
   id: "a", projectId: "p", kind: "video", opfsPath: "p/a", name: "a", mime: "video/mp4", sizeBytes: 1,
@@ -174,5 +179,43 @@ describe("transitions", () => {
     const d = setTransition(b, firstId, "dissolve", 500_000);
     expect(d.transitions).toHaveLength(1);
     expect(move(d, firstId, 1).transitions).toHaveLength(0);
+  });
+});
+
+describe("captions", () => {
+  it("splits text into captions of two short lines", () => {
+    expect(splitCaption("um dois três")).toEqual(["um dois três"]);
+    const parts = splitCaption("Olá pessoal, hoje vamos testar as legendas automáticas no celular e ver se funciona bem");
+    expect(parts.every((p) => p.split("\n").length <= 2 && p.split("\n").every((l) => l.length <= 32))).toBe(true);
+    expect(parts.join(" ").replace(/\n/g, " ")).toBe("Olá pessoal, hoje vamos testar as legendas automáticas no celular e ver se funciona bem");
+  });
+
+  it("turns segments into one caption lane, time shared by text length", () => {
+    const d = setCaptions(base(), [
+      { start: 0.5, end: 2.5, text: "Oi gente" },
+      { start: 3, end: 9, text: "Hoje vamos falar de um carro preto muito rápido que apareceu na garagem esta semana" },
+    ], CAPTION_STYLE);
+    const t = d.tracks.filter((x) => x.kind === "caption");
+    expect(t).toHaveLength(1);
+    const items = t[0].items;
+    expect(items[0].startUs).toBe(500_000);
+    expect(items.length).toBeGreaterThan(2);
+    const last = items[items.length - 1];
+    expect(last.startUs + last.durationUs).toBeLessThanOrEqual(9_000_001);
+    expect(validateDoc(d, assets)).toEqual([]);
+    expect(setCaptions(d, [], CAPTION_STYLE).tracks.some((x) => x.kind === "caption")).toBe(false);
+  });
+
+  it("style and position apply to every caption; a caption moves within its lane", () => {
+    let d = setCaptions(base(), [{ start: 0, end: 2, text: "a" }, { start: 4, end: 6, text: "b" }], CAPTION_STYLE);
+    d = setCaptionStyle(d, { ...CAPTION_STYLE, color: "#ffd400" });
+    d = setCaptionTransform(d, { x: 0.5, y: 0.3, scale: 1, rotation: 0 });
+    const lane = d.tracks.find((x) => x.kind === "caption")!;
+    expect(lane.style?.color).toBe("#ffd400");
+    expect(lane.items.every((c) => c.transform.y === 0.3)).toBe(true);
+    const moved = moveItem(d, lane.items[1].id, 0); // would overlap "a"
+    const l2 = moved.tracks.filter((x) => x.kind === "caption");
+    expect(l2).toHaveLength(1);
+    expect(l2[0].items.find((c) => c.id === lane.items[1].id)!.startUs).toBe(2_000_000);
   });
 });

@@ -188,6 +188,7 @@ export interface Track {
   hidden: boolean;
   locked: boolean;
   items: Clip[]; // sorted by startUs
+  style?: TextStyle; // caption tracks: one style for every caption
 }
 
 export interface Transform {

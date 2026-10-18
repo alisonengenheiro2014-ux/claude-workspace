@@ -262,7 +262,7 @@ export function TimelineView({
         const w = Math.max(2, px(c.durationUs));
         const media = c.type === "media" ? c : null;
         const asset = media ? assets.get(media.assetId) : undefined;
-        const label = c.type === "text" ? c.text.split("\n")[0] || "Texto" : (asset?.name ?? "Áudio");
+        const label = c.type === "text" || c.type === "caption" ? c.text.split("\n")[0] || "Texto" : (asset?.name ?? "Áudio");
         return (
           <div
             key={c.id}
@@ -274,7 +274,7 @@ export function TimelineView({
             onPointerCancel={sel ? onHandleUp : undefined}
           >
             <TimelineClip
-              kind={track.kind === "audio" ? "audio" : "text"}
+              kind={track.kind === "audio" ? "audio" : track.kind === "caption" ? "caption" : "text"}
               width={w}
               label={label}
               selected={sel}
@@ -336,6 +336,7 @@ export function TimelineView({
       >
         <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
+          {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
           {[...textTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
             {clips.map((clip, i) => {

@@ -5,7 +5,7 @@ import { useEffect, useRef, type PointerEvent } from "react";
 import type { Id, Transform } from "../data/db";
 import { useEditor } from "./store";
 import { drawText, hitBox, loadFonts, textsAt, type TextBox } from "./text";
-import { findItem, setText } from "./timeline";
+import { findItem, setCaptionTransform, setText } from "./timeline";
 
 const HANDLE = 14; // css px radius of the corner handle
 
@@ -66,15 +66,18 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     return { x: (e.clientX - r.left) * dpr, y: (e.clientY - r.top) * dpr };
   };
 
+  // text items and captions can be placed; captions all move together
   function textOf(id: Id) {
     const s = useEditor.getState();
     const hit = s.doc && findItem(s.doc, id);
-    return hit && hit.clip.type === "text" ? hit.clip : null;
+    return hit && (hit.clip.type === "text" || hit.clip.type === "caption") ? hit.clip : null;
   }
 
   function apply(id: Id, transform: Transform) {
     const s = useEditor.getState();
-    if (s.doc) s.setDraft(setText(s.doc, id, { transform }));
+    if (!s.doc) return;
+    const c = textOf(id);
+    s.setDraft(c?.type === "caption" ? setCaptionTransform(s.doc, transform) : setText(s.doc, id, { transform }));
   }
 
   function onDown(e: PointerEvent) {
@@ -162,7 +165,7 @@ export function TextOverlay({ width, height, onEdit }: { width: number; height: 
     const g = gesture.current;
     gesture.current = null;
     const s = useEditor.getState();
-    if (g && s.draft) s.commit(s.draft, g.kind === "move" ? "Mover texto" : "Ajustar texto");
+    if (g && s.draft) s.commit(s.draft, g.kind === "move" ? "Mover" : "Ajustar tamanho");
   }
 
   return (

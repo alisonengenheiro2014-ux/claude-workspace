@@ -89,22 +89,41 @@ async function openInput(asset: AssetRow, cache: Map<Id, Input>) {
   return input;
 }
 
+export interface MixOptions {
+  sampleRate: number;
+  channels: number;
+  // which clips to mix; default: what you hear (main and audio lanes, not muted)
+  include?: (trackKind: string, asset: AssetRow) => boolean;
+  // speech recognition wants the words, not the mix: no volume, no fades
+  flat?: boolean;
+}
+
 // Mixes every sounding clip: the main track's video sound and the audio
 // lanes, each with its volume and fades (the same envelope as the preview).
-async function mixAudio(doc: TimelineDoc, assets: Map<Id, AssetRow>, inputs: Map<Id, Input>, totalUs: number, signal: AbortSignal) {
-  const length = Math.max(1, Math.ceil((totalUs / 1e6) * SAMPLE_RATE));
-  const ctx = new OfflineAudioContext(2, length, SAMPLE_RATE);
+export async function mixAudio(
+  doc: TimelineDoc,
+  assets: Map<Id, AssetRow>,
+  inputs: Map<Id, Input>,
+  totalUs: number,
+  signal: AbortSignal,
+  opts: MixOptions = { sampleRate: SAMPLE_RATE, channels: 2 },
+) {
+  const length = Math.max(1, Math.ceil((totalUs / 1e6) * opts.sampleRate));
+  const ctx = new OfflineAudioContext(opts.channels, length, opts.sampleRate);
   let any = false;
+  const include = opts.include ?? ((kind: string) => kind === "main" || kind === "audio");
   const sounding = doc.tracks
-    .filter((t) => (t.kind === "main" || t.kind === "audio") && !t.muted)
-    .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media"));
-  for (const clip of sounding) {
+    .filter((t) => (t.kind === "main" || t.kind === "audio") && (opts.include ? true : !t.muted))
+    .flatMap((t) => t.items.filter((c): c is MediaClip => c.type === "media").map((c) => ({ clip: c, kind: t.kind })));
+  for (const { clip, kind } of sounding) {
     const asset = assets.get(clip.assetId);
-    if (!asset || asset.kind === "image" || !asset.hasAudio || clip.volume === 0 || clip.startUs >= totalUs) continue;
+    if (!asset || asset.kind === "image" || !asset.hasAudio || clip.startUs >= totalUs || !include(kind, asset)) continue;
+    if (!opts.flat && clip.volume === 0) continue;
     const track = await (await openInput(asset, inputs)).getPrimaryAudioTrack();
     if (!track) continue;
     const gain = ctx.createGain();
-    scheduleEnvelope(gain.gain, clip, 0, clip.startUs / 1e6);
+    if (opts.flat) gain.gain.value = 1;
+    else scheduleEnvelope(gain.gain, clip, 0, clip.startUs / 1e6);
     gain.connect(ctx.destination);
     const sink = new AudioBufferSink(track);
     const inS = clip.inUs / 1e6;

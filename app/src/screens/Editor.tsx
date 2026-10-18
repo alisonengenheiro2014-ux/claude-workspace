@@ -5,6 +5,7 @@ import {
   ArrowRight,
   AudioLines,
   Blend,
+  Captions,
   ChevronLeft,
   Copy,
   Crop,
@@ -40,10 +41,12 @@ import { TextOverlay } from "../editor/TextOverlay";
 import { TextSheet, type TextTab } from "./TextSheet";
 import { AudioMenu, FadeSheet, RecordSheet } from "./AudioSheets";
 import { TransitionSheet } from "./TransitionSheet";
+import { CaptionSheet, type CaptionTab } from "./CaptionSheet";
 import { audio, peaksOf } from "../editor/audio";
 import {
   addAudio,
   addText,
+  captionTrack,
   canSplit,
   clipAt,
   durationOf,
@@ -85,7 +88,8 @@ type Panel =
   | { name: "audio" }
   | { name: "fade" }
   | { name: "record" }
-  | { name: "transition"; fromId: Id };
+  | { name: "transition"; fromId: Id }
+  | { name: "captions"; tab: CaptionTab };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -247,6 +251,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const selected = doc && selectedId ? findClip(doc, selectedId) : undefined;
   const selectedItem = doc && selectedId ? findItem(doc, selectedId) : null;
   const selectedText = selectedItem?.clip.type === "text" ? selectedItem.clip : null;
+  const selectedCaption = selectedItem?.clip.type === "caption" ? selectedItem.clip : null;
   const selectedAudio = selectedItem?.track.kind === "audio" && selectedItem.clip.type === "media" ? selectedItem.clip : null;
   const selectedMedia: MediaClip | null = selected ?? selectedAudio;
   const videoMuted = doc ? mainTrack(doc).muted : false;
@@ -373,6 +378,11 @@ export function Editor({ projectId }: { projectId: Id }) {
     setPanel({ name: "text", id: r.id, tab: "text" });
   }
 
+  function openCaptions(tab: CaptionTab) {
+    stop();
+    setPanel({ name: "captions", tab });
+  }
+
   function editText(id: Id, tab: TextTab = "text") {
     stop();
     useEditor.getState().select(id);
@@ -465,7 +475,19 @@ export function Editor({ projectId }: { projectId: Id }) {
           {/* transitions: the clip that is not playing, as a still, and the dip colour */}
           <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
-          {state === "ready" && stage.w > 0 && <TextOverlay width={stage.w} height={stage.h} onEdit={(id) => editText(id)} />}
+          {state === "ready" && stage.w > 0 && (
+            <TextOverlay
+              width={stage.w}
+              height={stage.h}
+              onEdit={(id) => {
+                const d = useEditor.getState().doc;
+                if (d && findItem(d, id)?.clip.type === "caption") {
+                  useEditor.getState().select(id);
+                  openCaptions("edit");
+                } else editText(id);
+              }}
+            />
+          )}
         </div>
         {state === "ready" && totalUs === 0 && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 px-8 text-center">
@@ -517,7 +539,21 @@ export function Editor({ projectId }: { projectId: Id }) {
             }}
           />
 
-          {selectedAudio ? (
+          {selectedCaption ? (
+            <Toolbar
+              label="Ferramentas das legendas"
+              leading={
+                <button type="button" aria-label="Voltar às ferramentas" onClick={() => ed.select(null)} className="flex size-11 items-center justify-center">
+                  <ChevronLeft aria-hidden className="size-6" />
+                </button>
+              }
+            >
+              <ToolbarItem icon={<Type />} label="Editar" onClick={() => openCaptions("edit")} />
+              <ToolbarItem icon={<Palette />} label="Estilo" onClick={() => openCaptions("style")} />
+              <ToolbarItem icon={<Captions />} label="Gerar de novo" onClick={() => openCaptions("generate")} />
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
+            </Toolbar>
+          ) : selectedAudio ? (
             <Toolbar
               label="Ferramentas do áudio"
               leading={
@@ -593,6 +629,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 onClick={toggleVideoSound}
               />
               <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
+              <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
               <ToolbarItem icon={<Layers />} label="Sobrepor" onClick={() => stub("Sobrepor", "S12")} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => stub("Efeitos", "S13")} />
@@ -607,6 +644,13 @@ export function Editor({ projectId }: { projectId: Id }) {
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
+
+      <CaptionSheet
+        open={panel?.name === "captions"}
+        tab={panel?.name === "captions" ? panel.tab : "generate"}
+        onTab={(tab) => setPanel({ name: "captions", tab })}
+        onClose={() => closeEditing("Editar legendas")}
+      />
 
       <TransitionSheet
         fromId={panel?.name === "transition" ? panel.fromId : null}
