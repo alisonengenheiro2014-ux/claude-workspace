@@ -71,6 +71,27 @@ function Ruler({ totalUs, pxPerSec }: { totalUs: number; pxPerSec: number }) {
 
 // Touching the timeline while it plays stops playback at once (as in CapCut),
 // so the drag that follows scrubs from there.
+// Reorder: the clips shown as squares in a row (CapCut's long-press view).
+type Reorder = { id: Id; x: number; y: number; left: number; top: number; index: number };
+const SQ = 52; // --layout-track-main
+const STEP = SQ + 6;
+
+// where the held clip would go, from the finger and the row's left edge
+function slotAt(x: number, left: number, others: number) {
+  return Math.max(0, Math.min(others, Math.round((x - SQ / 2 - left) / STEP)));
+}
+
+function Square({ url, x, held = false }: { url: string | undefined; x: number; held?: boolean }) {
+  return (
+    <span
+      className={`absolute top-0 block overflow-hidden rounded-sm ${held ? "z-10 scale-110 shadow-pop outline-2 outline-selection" : "transition-[left] duration-150"}`}
+      style={{ left: x, width: SQ, height: SQ }}
+    >
+      {url ? <img src={url} alt="" className="size-full object-cover" /> : <span className="block size-full bg-track-video" />}
+    </span>
+  );
+}
+
 function pauseIfPlaying() {
   if (useEditor.getState().playing) useEditor.getState().setPlaying(false);
 }
@@ -88,10 +109,15 @@ export function TimelineView({
   // Trim handles: drag shows a live draft, release commits one undo step.
   const drag = useRef<{ mode: "start" | "end" | "move"; x: number; clipId: Id; overlay: boolean; moved: boolean } | null>(null);
   const programmatic = useRef(false);
-  // Long-press reorder of main clips: hold ~0.4 s, drag, drop.
-  const [reorder, setReorder] = useState<{ id: Id; x: number; y: number; index: number } | null>(null);
-  const press = useRef<{ id: Id; x: number; y: number; pointerId: number; el: HTMLElement; timer: ReturnType<typeof setTimeout> } | null>(null);
-  const clipEls = useRef(new Map<Id, HTMLElement>());
+  // Long-press reorder of main clips, like CapCut: hold ~0.4 s and the clips
+  // become squares; drag the held one sideways, release to drop it there.
+  const [reorder, setReorderState] = useState<Reorder | null>(null);
+  const reorderRef = useRef<Reorder | null>(null);
+  const setReorder = (r: Reorder | null) => {
+    reorderRef.current = r;
+    setReorderState(r);
+  };
+  const press = useRef<{ id: Id; x: number; y: number; timer: ReturnType<typeof setTimeout> } | null>(null);
   const [viewW, setViewW] = useState(0);
   const doc = useEditor((s) => s.draft ?? s.doc);
   const assets = useEditor((s) => s.assets);
@@ -154,6 +180,61 @@ export function TimelineView({
       el.removeEventListener("wheel", onWheel);
     };
   }, [setZoom, hasDoc]);
+
+  // While reordering, the page must not scroll: Safari picks scrolling on the
+  // first finger move and ignores touch-action changed mid-touch, so the
+  // touch moves are cancelled here instead (needs a non-passive listener).
+  useEffect(() => {
+    const block = (e: TouchEvent) => {
+      if (reorderRef.current) e.preventDefault();
+    };
+    window.addEventListener("touchmove", block, { passive: false });
+    return () => window.removeEventListener("touchmove", block);
+  }, []);
+
+  // the drag itself follows the window, so nothing under the finger can lose it
+  const reordering = !!reorder;
+  useEffect(() => {
+    if (!reordering) return;
+    let raf = 0;
+    const count = mainClips(useEditor.getState().doc!).length - 1;
+    const at = (r: Reorder, x: number, left = r.left) => ({ ...r, x, left, index: slotAt(x, left, count) });
+    const onMove = (e: globalThis.PointerEvent) => {
+      const r = reorderRef.current;
+      if (r) setReorder({ ...at(r, e.clientX), y: e.clientY });
+    };
+    const onUp = (e: globalThis.PointerEvent) => {
+      const r = reorderRef.current;
+      setReorder(null);
+      if (!r || e.type === "pointercancel") return;
+      const d = useEditor.getState().doc;
+      const from = d ? mainClips(d).findIndex((c) => c.id === r.id) : -1;
+      if (d && from >= 0 && from !== r.index) commit(move(d, r.id, r.index), "Mover clipe");
+    };
+    // near a screen edge the row slides, to reach clips off screen
+    const tick = () => {
+      raf = requestAnimationFrame(tick);
+      const r = reorderRef.current;
+      if (!r) return;
+      const edge = 48;
+      const v = r.x < edge ? 6 : r.x > window.innerWidth - edge ? -6 : 0;
+      if (!v) return;
+      const min = Math.min(r.x - SQ / 2 - count * STEP, r.left);
+      const max = Math.max(r.x - SQ / 2, r.left);
+      const left = Math.max(min, Math.min(max, r.left + v));
+      if (left !== r.left) setReorder(at(r, r.x, left));
+    };
+    raf = requestAnimationFrame(tick);
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [reordering, commit]);
 
   if (!doc) return null;
   const clips = mainClips(doc);
@@ -223,54 +304,37 @@ export function TimelineView({
 
   const selected = clips.find((c) => c.id === selectedId);
 
-  function dropIndex(id: Id, clientX: number) {
-    const others = clips.filter((c) => c.id !== id);
-    let i = 0;
-    for (const c of others) {
-      const r = clipEls.current.get(c.id)?.getBoundingClientRect();
-      if (r && r.left + r.width / 2 < clientX) i++;
-    }
-    return i;
-  }
   function onPressDown(e: PointerEvent, id: Id) {
-    if (playing || (e.target as HTMLElement).closest("[data-handle]")) return;
-    const el = e.currentTarget as HTMLElement;
-    const pointerId = e.pointerId;
+    // only the clip itself: not its trim handles or the transition button
+    const btn = (e.target as HTMLElement).closest("button, [data-handle]");
+    if (playing || e.button > 0 || !btn?.hasAttribute("aria-pressed")) return;
     const start = { x: e.clientX, y: e.clientY };
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
     press.current = {
       id,
       ...start,
-      pointerId,
-      el,
       timer: setTimeout(() => {
-        el.setPointerCapture?.(pointerId);
+        press.current = null;
+        const from = clips.findIndex((c) => c.id === id);
         navigator.vibrate?.(10);
-        setReorder({ id, ...start, index: dropIndex(id, start.x) });
+        // the held square starts under the finger, the others around it
+        const left = start.x - SQ / 2 - from * STEP;
+        setReorder({ id, ...start, left, top: rect.top + rect.height / 2, index: from });
       }, 400),
     };
   }
   function onPressMove(e: PointerEvent) {
     const p = press.current;
-    if (!p) return;
-    if (!reorder) {
-      // moved before the hold finished: it's a scroll, not a reorder
-      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) > 8) {
-        clearTimeout(p.timer);
-        press.current = null;
-      }
-      return;
+    // moved before the hold finished: it's a scroll, not a reorder
+    if (p && Math.hypot(e.clientX - p.x, e.clientY - p.y) > 10) {
+      clearTimeout(p.timer);
+      press.current = null;
     }
-    setReorder({ ...reorder, x: e.clientX, y: e.clientY, index: dropIndex(reorder.id, e.clientX) });
   }
   function onPressUp() {
     const p = press.current;
     if (p) clearTimeout(p.timer);
     press.current = null;
-    if (!reorder) return;
-    const from = clips.findIndex((c) => c.id === reorder.id);
-    setReorder(null);
-    const d = useEditor.getState().doc;
-    if (d && from !== reorder.index) commit(move(d, reorder.id, reorder.index), "Mover clipe");
   }
 
   // One row of overlay items (text or audio): tap selects; a selected item
@@ -342,15 +406,15 @@ export function TimelineView({
     <div className="relative h-[var(--layout-timeline)] bg-bg">
       {reorder &&
         createPortal(
-          <div
-            aria-hidden
-            className="pointer-events-none fixed z-50 h-[var(--layout-track-main)] w-[var(--layout-track-main)] -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-sm shadow-pop outline-2 outline-selection"
-            style={{ left: reorder.x, top: reorder.y - 30 }}
-          >
+          <div aria-hidden className="pointer-events-none fixed inset-x-0 z-50" style={{ top: reorder.top - SQ / 2, height: SQ }}>
+            {clips
+              .filter((c) => c.id !== reorder.id)
+              .map((c, j) => (
+                <Square key={c.id} url={thumbs.get(c.assetId)?.urls[0]} x={reorder.left + (j < reorder.index ? j : j + 1) * STEP} />
+              ))}
             {(() => {
               const c = clips.find((x) => x.id === reorder.id);
-              const t = c && thumbs.get(c.assetId);
-              return t?.urls[0] ? <img src={t.urls[0]} alt="" className="size-full object-cover" /> : <span className="block size-full bg-track-video" />;
+              return c && <Square url={thumbs.get(c.assetId)?.urls[0]} x={reorder.x - SQ / 2} held />;
             })()}
           </div>,
           document.body,
@@ -370,7 +434,8 @@ export function TimelineView({
         onKeyDown={onKeyDown}
         onClick={(e) => !(e.target as HTMLElement).closest("button") && select(null)}
         className="no-scrollbar h-full overflow-auto"
-        style={{ touchAction: reorder ? "none" : "pan-x pan-y" }}
+        style={{ touchAction: reorder ? "none" : "pan-x pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
+        onContextMenu={(e) => e.preventDefault()}
       >
         <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
@@ -382,23 +447,15 @@ export function TimelineView({
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));
               const asset = assets.get(clip.assetId);
-              const dragging = reorder?.id === clip.id;
               return (
                 <div
                   key={clip.id}
-                  ref={(el) => {
-                    if (el) clipEls.current.set(clip.id, el);
-                    else clipEls.current.delete(clip.id);
-                  }}
-                  className={`relative flex items-center ${dragging ? "opacity-40" : ""}`}
+                  className={`relative flex items-center ${reorder ? "invisible" : ""}`}
                   onPointerDown={(e) => onPressDown(e, clip.id)}
                   onPointerMove={onPressMove}
                   onPointerUp={onPressUp}
                   onPointerCancel={onPressUp}
                 >
-                  {reorder && !dragging && reorder.index === clips.filter((c) => c.id !== reorder.id).indexOf(clip) && (
-                    <span aria-hidden className="absolute -left-1 inset-y-[-6px] z-30 w-1 rounded-pill bg-accent" />
-                  )}
                   <TimelineClip
                     kind="main"
                     width={w}
@@ -420,7 +477,6 @@ export function TimelineView({
                 </div>
               );
             })}
-            {reorder && reorder.index >= clips.length - 1 && <span aria-hidden className="z-30 -ml-1 h-[calc(var(--layout-track-main)+12px)] w-1 rounded-pill bg-accent" />}
             <AddClipButton onClick={onAddMedia} />
             {selected && (
               <>
