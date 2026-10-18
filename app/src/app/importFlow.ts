@@ -4,15 +4,15 @@ import { startImport } from "../media/import";
 // Timing of the last "Novo projeto", shown once when the editor opens, so a
 // slow import on the iPhone can be pinned down. Starts when iOS hands over
 // the files, so the wait inside the photo picker is not included.
-export let lastImport: { projectId: Id; startedAt: number } | null = null;
-export function markImport(projectId: Id, startedAt: number) {
-  lastImport = { projectId, startedAt };
+export let lastImport: { projectId: Id; startedAt: number; label: string | null } | null = null;
+export function markImport(projectId: Id, startedAt: number, label: string | null = null) {
+  lastImport = { projectId, startedAt, label };
 }
 export function takeImport(projectId: Id) {
   const l = lastImport;
   if (!l || l.projectId !== projectId) return null;
   lastImport = null;
-  return (performance.now() - l.startedAt) / 1000;
+  return { secs: (performance.now() - l.startedAt) / 1000, label: l.label };
 }
 
 // "HEVC 3840×2160 60 fps HDR, 612 MB"

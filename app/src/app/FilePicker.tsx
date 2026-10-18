@@ -2,15 +2,15 @@ import { forwardRef } from "react";
 
 // Hidden file input. On iPhone it opens the system photo picker with
 // multi-select. Call .click() straight from a tap handler.
-export const FilePicker = forwardRef<HTMLInputElement, { onFiles: (files: File[]) => void }>(function FilePicker(
-  { onFiles },
+export const FilePicker = forwardRef<HTMLInputElement, { onFiles: (files: File[]) => void; accept?: string | null }>(function FilePicker(
+  { onFiles, accept = "video/*,image/*" },
   ref,
 ) {
   return (
     <input
       ref={ref}
       type="file"
-      accept="video/*,image/*"
+      accept={accept ?? undefined}
       multiple
       hidden
       aria-hidden
