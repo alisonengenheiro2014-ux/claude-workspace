@@ -4,12 +4,16 @@
 import type { AssetRow, MediaClip, TimelineDoc, Transform, Us } from "../data/db";
 import type { TextBox } from "./text";
 
+// Width and height as shown (phone videos are often stored turned).
+export function displaySize(asset: AssetRow | undefined) {
+  const turned = asset?.rotation === 90 || asset?.rotation === 270;
+  return { w: (turned ? asset?.height : asset?.width) || 16, h: (turned ? asset?.width : asset?.height) || 9 };
+}
+
 // Size the media shows at when not rotated: fitted inside the frame, times
 // the clip's scale.
 export function overlayBox(asset: AssetRow | undefined, W: number, H: number, t: Transform): TextBox {
-  const turned = asset?.rotation === 90 || asset?.rotation === 270;
-  const aw = (turned ? asset?.height : asset?.width) || 16;
-  const ah = (turned ? asset?.width : asset?.height) || 9;
+  const { w: aw, h: ah } = displaySize(asset);
   const fit = Math.min(W / aw, H / ah);
   return { cx: t.x * W, cy: t.y * H, w: aw * fit * t.scale, h: ah * fit * t.scale, rotation: t.rotation };
 }

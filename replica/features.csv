@@ -35,8 +35,8 @@ Narração gravada pelo microfone,áudio,should,yes,yes,"contagem de 3 s, vídeo
 Extrair o áudio de um vídeo,áudio,should,yes,yes,o clipe fica sem som e o áudio vira um item próprio
 Sobreposição de vídeo ou foto (picture-in-picture),sobrepor,should,yes,yes,"foto ou vídeo por cima: arrastar, pinça, girar, opacidade, volume, fade, dividir, duplicar; som do vídeo sobreposto entra na exportação"
 Modo de mistura e opacidade,sobrepor,should,yes,no,
-Filtros de cor com intensidade,cor,should,yes,no,S14; filtros próprios em shader
-Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,no,S14
+Filtros de cor com intensidade,cor,should,yes,yes,"17 filtros próprios (vívido, quente, frio, cinema, P&B, noir, retrô, vintage...), intensidade, aplicar a todos; também em sobreposições"
+Ajustes de brilho contraste saturação exposição temperatura etc,cor,should,yes,partial,"brilho, contraste, saturação, exposição, temperatura, matiz, vinheta; faltam nitidez, realces e sombras"
 Aplicar filtro ajuste ou transição a todos os clipes,cor,should,yes,partial,transição: aplicar em todos os cortes; filtros e ajustes ainda não existem
 Keyframes de posição escala rotação e opacidade,keyframes,should,yes,no,S16
 Recortar (crop) e girar o clipe,clipe,should,yes,no,

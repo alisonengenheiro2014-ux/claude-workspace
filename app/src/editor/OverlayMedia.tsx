@@ -5,6 +5,8 @@
 import { useEffect, useReducer, useRef, useState } from "react";
 import type { AssetRow, Id } from "../data/db";
 import { assetFile } from "../media/import";
+import { cssFilter, lookOf } from "./look";
+import { LookWashes } from "./LookLayer";
 import { overlayAlpha, overlayBox, overlaysAt } from "./overlay";
 import { useEditor } from "./store";
 import { findItem, sourceTimeUs } from "./timeline";
@@ -31,10 +33,24 @@ function useUrl(asset: AssetRow | undefined) {
   return url;
 }
 
-function Item({ id, asset, register }: { id: Id; asset: AssetRow | undefined; register: (id: Id, el: HTMLElement | null, loaded?: boolean) => void }) {
+function Item({
+  id,
+  asset,
+  filter,
+  register,
+}: {
+  id: Id;
+  asset: AssetRow | undefined;
+  filter: string;
+  register: (id: Id, el: HTMLElement | null, loaded?: boolean) => void;
+}) {
   const url = useUrl(asset);
   if (!url || !asset) return null;
-  const common = { ref: (el: HTMLElement | null) => register(id, el), className: "absolute left-0 top-0 size-full object-fill" };
+  const common = {
+    ref: (el: HTMLElement | null) => register(id, el),
+    className: "absolute left-0 top-0 size-full object-fill",
+    style: filter === "none" ? undefined : { filter },
+  };
   return asset.kind === "image" ? (
     <img {...common} src={url} alt="" draggable={false} />
   ) : (
@@ -57,7 +73,7 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
       const hit = findItem(doc, id);
       if (!hit || hit.clip.type !== "media") continue;
       const c = hit.clip;
-      el.style.opacity = String(overlayAlpha(c, t));
+      (el.parentElement ?? el).style.opacity = String(overlayAlpha(c, t)); // the wrapper: picture and washes together
       if (!(el instanceof HTMLVideoElement) || el.readyState < 1) continue;
       const target = sourceTimeUs(c, Math.max(0, t - c.startUs)) / 1e6;
       if (s.playing) {
@@ -122,13 +138,15 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
       {overlaysAt(doc, s.playheadUs).map((c) => {
         const asset = s.assets.get(c.assetId);
         const b = overlayBox(asset, width, height, c.transform);
+        const look = lookOf(c);
         return (
           <div
             key={c.id}
             className="absolute overflow-hidden"
             style={{ left: b.cx - b.w / 2, top: b.cy - b.h / 2, width: b.w, height: b.h, transform: `rotate(${b.rotation}deg)` }}
           >
-            <Item id={c.id} asset={asset} register={register} />
+            <Item id={c.id} asset={asset} filter={cssFilter(look)} register={register} />
+            <LookWashes look={look} />
           </div>
         );
       })}

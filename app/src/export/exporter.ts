@@ -21,6 +21,7 @@ import {
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { containDraw, containRect, drawFrame, frameBgOf } from "../editor/frame";
+import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { overlayAlpha, overlayBox, overlaysAt } from "../editor/overlay";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
@@ -205,12 +206,14 @@ export async function exportTimeline(
       if (a?.kind === "image") {
         const file = await assetFile(a);
         const bmp = file ? await createImageBitmap(file) : null;
-        drawFrame(cx, fbg, bmp ? containDraw(bmp, bmp.width, bmp.height) : () => null);
+        const r = drawFrame(cx, fbg, bmp ? containDraw(bmp, bmp.width, bmp.height) : () => null);
+        if (r) applyLook(cx, r, lookOf(clip));
         bmp?.close();
       } else if (a) {
         const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
         const sample = track ? await new VideoSampleSink(track).getSample(us / 1e6) : null;
-        drawFrame(cx, fbg, sample ? sampleDraw(sample) : () => null);
+        const r = drawFrame(cx, fbg, sample ? sampleDraw(sample) : () => null);
+        if (r) applyLook(cx, r, lookOf(clip));
         sample?.close();
       } else drawFrame(cx, fbg, () => null);
       return c;
@@ -221,6 +224,7 @@ export async function exportTimeline(
     type Reader = { samples: AsyncGenerator<VideoSample, void, unknown>; current: VideoSample | null; next: VideoSample | null; ended: boolean };
     const overlayImages = new Map<Id, ImageBitmap>();
     const readers = new Map<Id, Reader>();
+    let overlayScratch: OffscreenCanvas | null = null;
     const closeReader = async (r: Reader) => {
       r.current?.close();
       r.next?.close();
@@ -279,11 +283,26 @@ export async function exportTimeline(
         }
         if (!draw) continue;
         const b = overlayBox(a, width, height, c.transform);
+        const look = lookOf(c);
         ctx.save();
         ctx.globalAlpha = overlayAlpha(c, tUs);
         ctx.translate(b.cx, b.cy);
         ctx.rotate((b.rotation * Math.PI) / 180);
-        draw(ctx, b);
+        if (isNeutral(look)) draw(ctx, b);
+        else {
+          // filtered on its own canvas first, so the look stays inside it
+          const w = Math.max(1, Math.round(b.w));
+          const h = Math.max(1, Math.round(b.h));
+          if (!overlayScratch || overlayScratch.width !== w || overlayScratch.height !== h) overlayScratch = new OffscreenCanvas(w, h);
+          const o = overlayScratch.getContext("2d")!;
+          o.clearRect(0, 0, w, h);
+          o.save();
+          o.translate(w / 2, h / 2);
+          draw(o, { ...b, w, h });
+          o.restore();
+          applyLook(o, { x: 0, y: 0, w, h }, look);
+          ctx.drawImage(overlayScratch, -b.w / 2, -b.h / 2, b.w, b.h);
+        }
         ctx.restore();
       }
     };
@@ -302,7 +321,11 @@ export async function exportTimeline(
         const prevStill = into ? await makeStill(into.from, Math.max(into.from.inUs, into.from.outUs - 34_000)) : null;
         const nextStill = outOf ? await makeStill(outOf.to, outOf.to.inUs) : null;
 
-        // text and other overlays go on top of whatever the clip drew
+        // the clip's filter and adjustments, on its picture only
+      const look = lookOf(clip);
+      const paint = (r: { x: number; y: number; w: number; h: number } | null) => r && applyLook(lctx, r, look);
+
+      // text and other overlays go on top of whatever the clip drew
         const emit = async () => {
           if (signal.aborted) throw new ExportCancelled();
           const tUs = Math.round(frame * frameS * 1e6);
@@ -328,7 +351,7 @@ export async function exportTimeline(
           const bmp = await createImageBitmap(file);
           try {
             for (let f = first; f < last; f++) {
-              drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height));
+              paint(drawFrame(lctx, fbg, containDraw(bmp, bmp.width, bmp.height)));
               await emit();
             }
           } finally {
@@ -364,7 +387,7 @@ export async function exportTimeline(
                 current = next;
                 next = ended ? null : await pull();
               }
-              drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null);
+              paint(drawFrame(lctx, fbg, current ? sampleDraw(current) : () => null));
               await emit();
             }
           } catch (err) {

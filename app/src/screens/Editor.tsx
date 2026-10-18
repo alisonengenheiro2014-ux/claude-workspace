@@ -67,6 +67,8 @@ import {
   addOverlay,
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
+import { LookLayer } from "../editor/LookLayer";
+import { AdjustSheet, FilterSheet } from "./LookSheets";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
 import { Button } from "../ui/Button";
@@ -93,7 +95,9 @@ type Panel =
   | { name: "record" }
   | { name: "transition"; fromId: Id }
   | { name: "captions"; tab: CaptionTab }
-  | { name: "opacity" };
+  | { name: "opacity" }
+  | { name: "filters"; id: Id }
+  | { name: "adjust"; id: Id };
 
 const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "original", label: "Original" },
@@ -379,6 +383,32 @@ export function Editor({ projectId }: { projectId: Id }) {
     s.select(r.rightId);
   }
 
+  // S14: filter and adjustments for the selected clip or overlay, else the clip under the playhead
+  function openLook(name: "filters" | "adjust") {
+    stop();
+    const id = selectedOverlay?.id ?? selected?.id ?? target?.id;
+    if (id) setPanel(name === "filters" ? { name, id } : { name, id });
+  }
+  const lookId = panel?.name === "filters" || panel?.name === "adjust" ? panel.id : null;
+  const lookHit = doc && lookId ? findItem(doc, lookId) : null;
+  const lookClip = lookHit?.clip.type === "media" ? lookHit.clip : null;
+  const lookIsMain = lookHit?.track.kind === "main";
+  function changeLook(patch: Partial<MediaClip>) {
+    const s = useEditor.getState();
+    const cur = s.draft ?? s.doc;
+    if (cur && lookId) s.setDraft(setItem(cur, lookId, patch));
+  }
+  function lookToAll(pick: (c: MediaClip) => Partial<MediaClip>) {
+    const s = useEditor.getState();
+    const cur = s.draft ?? s.doc;
+    const src = cur && lookId ? findItem(cur, lookId)?.clip : null;
+    if (!cur || src?.type !== "media") return;
+    let next = cur;
+    for (const c of mainTrack(cur).items) next = setItem(next, c.id, pick(src));
+    s.setDraft(next);
+    toast("Aplicado a todos os clipes");
+  }
+
   // S12 Sobrepor: a photo or video over the main video, at the playhead
   async function onAddOverlay(files: File[]) {
     stop();
@@ -514,6 +544,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             className="pointer-events-none absolute inset-0 size-full object-contain"
           />
           <canvas ref={canvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
+          {state === "ready" && stage.w > 0 && <LookLayer video={videoRef} image={canvasRef} width={stage.w} height={stage.h} />}
           {/* transitions: the clip that is not playing, as a still, and the dip colour */}
           <canvas ref={fxCanvasRef} aria-hidden className="pointer-events-none absolute inset-0 size-full" style={{ visibility: "hidden" }} />
           <div ref={dipRef} aria-hidden className="pointer-events-none absolute inset-0 z-[3]" style={{ opacity: 0 }} />
@@ -613,6 +644,8 @@ export function Editor({ projectId }: { projectId: Id }) {
             >
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
               <ToolbarItem icon={<Blend />} label="Opacidade" onClick={() => setPanel({ name: "opacity" })} />
+              <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
+              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               {assets.get(selectedOverlay.assetId)?.hasAudio && <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />}
               <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
@@ -671,6 +704,8 @@ export function Editor({ projectId }: { projectId: Id }) {
                 disabled={!assets.get(selected!.assetId)?.hasAudio}
                 onClick={() => setPanel({ name: "fade" })}
               />
+              <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
+              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               <ToolbarItem icon={<Split />} label="Extrair som" disabled={!targetAsset?.hasAudio} onClick={onExtract} />
               <ToolbarItem icon={<ArrowLeft />} label="Mover ←" disabled={mainIndex <= 0} onClick={() => moveSelected(-1)} />
               <ToolbarItem icon={<ArrowRight />} label="Mover →" disabled={mainIndex < 0 || mainIndex >= mainCount - 1} onClick={() => moveSelected(1)} />
@@ -698,8 +733,8 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => stub("Stickers", "S13")} />
               <ToolbarItem icon={<Layers />} label="Sobrepor" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => stub("Efeitos", "S13")} />
-              <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => stub("Filtros", "S14")} />
-              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => stub("Ajustar", "S14")} />
+              <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
+              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
               <ToolbarItem icon={<RectangleHorizontal />} label="Formato" onClick={() => setPanel({ name: "format" })} />
             </Toolbar>
           )}
@@ -808,6 +843,20 @@ export function Editor({ projectId }: { projectId: Id }) {
         )}
         <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida.</p>
       </Sheet>
+
+      <FilterSheet
+        clip={panel?.name === "filters" ? lookClip : null}
+        thumb={lookClip ? useEditor.getState().thumbs.get(lookClip.assetId)?.urls[0] : undefined}
+        onChange={changeLook}
+        onApplyAll={lookIsMain ? () => lookToAll((c) => ({ filter: c.filter })) : undefined}
+        onClose={() => closeEditing("Filtro")}
+      />
+      <AdjustSheet
+        clip={panel?.name === "adjust" ? lookClip : null}
+        onChange={changeLook}
+        onApplyAll={lookIsMain ? () => lookToAll((c) => ({ adjust: c.adjust })) : undefined}
+        onClose={() => closeEditing("Ajustar")}
+      />
 
       <Sheet open={panel?.name === "opacity"} onOpenChange={(o) => !o && closeEditing("Opacidade")} title="Opacidade">
         {selectedOverlay && (

@@ -123,7 +123,7 @@ are rebuilt with open fonts.
 | S11 Texto para fala | — | not started | — | — |
 | S12 Sobrepor | 2026-10-18 | done | blend modes, mask, chroma key on overlays | the preview shows overlays as DOM elements (a `<video>` per overlay video, synced to the playhead; photos as `<img>`) so HDR video is never drawn on a canvas; the export draws them with the same geometry (`overlayBox`) and reads each overlay video with its own decoder while it is on screen |
 | S13 Efeitos / Stickers | — | stub | everything | — |
-| S14 Filtros e Ajustar | — | stub | everything | — |
+| S14 Filtros e Ajustar | 2026-10-18 | partial | sharpen, highlights, shadows; filters as their own timeline layer (here they belong to a clip) | the preview needs the GPU and HDR-safe path, so a look is a CSS filter on the <video> plus soft-light colour washes and a vignette; the export uses the same CSS string on the canvas, or the Filter Effects matrices one step at a time (CSS clamps between steps) where canvas filters are missing: both paths differ by 0.26/255 on average |
 | S15 Formato | 2026-10-18 | done | image background | blur without canvas `filter` (not in every Safari): shrink twice and stretch back; the preview blurs a still with CSS so HDR video is never drawn on a canvas |
 | S16 Keyframes | — | not started | — | — |
 | S17 Exportar | 2026-10-17 | done | the file is kept in memory, not in OPFS (fine up to a few minutes of 1080p; long 4K needs a streaming target) | choosing the codec at runtime: this test browser had no H.264, so it exported VP9/Opus in MP4; the iPhone should pick H.264 |

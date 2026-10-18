@@ -60,15 +60,15 @@ function drawBlurred(ctx: Ctx, src: CanvasImageSource, r: Rect) {
 }
 
 // draw() paints the picture letterboxed onto the context it is given and
-// returns where it went; this function puts the background under it.
-export function drawFrame(ctx: Ctx, bg: FrameBg, draw: (c: Ctx) => Rect | null) {
+// returns where it went; this function puts the background under it and
+// returns the picture's rectangle too (filters apply there).
+export function drawFrame(ctx: Ctx, bg: FrameBg, draw: (c: Ctx) => Rect | null): Rect | null {
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
   if (bg.kind === "color") {
     ctx.fillStyle = bg.color;
     ctx.fillRect(0, 0, W, H);
-    draw(ctx);
-    return;
+    return draw(ctx);
   }
   fg = scratch(fg, W, H);
   const f = fg.getContext("2d")!;
@@ -78,6 +78,7 @@ export function drawFrame(ctx: Ctx, bg: FrameBg, draw: (c: Ctx) => Rect | null) 
   ctx.fillRect(0, 0, W, H);
   if (r && r.w > 1 && r.h > 1) drawBlurred(ctx, fg, r);
   ctx.drawImage(fg, 0, 0);
+  return r;
 }
 
 // Letterboxed image (bitmap, canvas...) — the common case of draw().
