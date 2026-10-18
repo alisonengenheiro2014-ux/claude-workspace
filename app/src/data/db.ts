@@ -174,6 +174,7 @@ export interface TimelineDoc {
     background:
       | { type: "color"; color: string }
       | { type: "blur"; amount: number }
+      | { type: "gradient"; colors: [string, string]; angle: number }
       | { type: "image"; assetId: Id };
   };
   tracks: Track[]; // drawn bottom to top in array order
@@ -265,7 +266,8 @@ export interface MediaClip extends ClipBase {
   freeze: boolean; // a freeze frame is a media clip of one source frame (inUs); outUs - inUs is its length
   flip?: boolean; // mirrored left-right (after the crop)
   reverseOf?: { assetId: Id; inUs: Us; outUs: Us } | null;
-  beats?: Us[]; // music: beat marks, in source time // reverse: the media it was made from (to undo it)
+  beats?: Us[]; // music: beat marks, in source time
+  voiceFx?: string | null; // S08 efeito de voz: robot, echo, radio, phone, megaphone, cave // reverse: the media it was made from (to undo it)
   stabilize: 0 | 1 | 2 | 3; // off, low, medium, high
   denoise: boolean;
 }

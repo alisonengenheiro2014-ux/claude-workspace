@@ -3,11 +3,57 @@
 // (for a vertical video in a 16:9 project, say).
 import type { TimelineDoc } from "../data/db";
 
-export type FrameBg = { kind: "color"; color: string } | { kind: "blur" };
+export type FrameBg =
+  | { kind: "color"; color: string }
+  | { kind: "blur" }
+  | { kind: "gradient"; colors: [string, string]; angle: number }
+  | { kind: "image"; src: CanvasImageSource | null; w: number; h: number };
 
-export function frameBgOf(doc: TimelineDoc): FrameBg {
+// images: the background photo, decoded by the caller (preview or export)
+export function frameBgOf(doc: TimelineDoc, image?: { src: CanvasImageSource; w: number; h: number } | null): FrameBg {
   const b = doc.canvas.background;
-  return b.type === "blur" ? { kind: "blur" } : { kind: "color", color: b.type === "color" ? b.color : "#000000" };
+  if (b.type === "blur") return { kind: "blur" };
+  if (b.type === "gradient") return { kind: "gradient", colors: b.colors, angle: b.angle };
+  if (b.type === "image") return { kind: "image", src: image?.src ?? null, w: image?.w ?? 1, h: image?.h ?? 1 };
+  return { kind: "color", color: b.color };
+}
+
+// The CSS for the same background, behind the preview.
+export function frameBgCss(doc: TimelineDoc | null, imageUrl: string | null): string {
+  const b = doc?.canvas.background;
+  if (!b) return "#000000";
+  if (b.type === "color") return b.color;
+  if (b.type === "gradient") return `linear-gradient(${b.angle}deg, ${b.colors[0]}, ${b.colors[1]})`;
+  if (b.type === "image" && imageUrl) return `#000000 url("${imageUrl}") center / cover no-repeat`;
+  return "#000000";
+}
+
+// Fills the frame with a colour, a gradient or a photo (cover).
+function fillBg(ctx: Ctx, bg: FrameBg) {
+  const W = ctx.canvas.width;
+  const H = ctx.canvas.height;
+  if (bg.kind === "gradient") {
+    // the same line as CSS linear-gradient(angle): through the centre, long enough to reach the corners
+    const a = (bg.angle * Math.PI) / 180;
+    const dx = Math.sin(a);
+    const dy = -Math.cos(a);
+    const half = (Math.abs(W * dx) + Math.abs(H * dy)) / 2;
+    const g = ctx.createLinearGradient(W / 2 - dx * half, H / 2 - dy * half, W / 2 + dx * half, H / 2 + dy * half);
+    g.addColorStop(0, bg.colors[0]);
+    g.addColorStop(1, bg.colors[1]);
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+  } else if (bg.kind === "image") {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, W, H);
+    if (bg.src) {
+      const s = Math.max(W / bg.w, H / bg.h);
+      ctx.drawImage(bg.src, (W - bg.w * s) / 2, (H - bg.h * s) / 2, bg.w * s, bg.h * s);
+    }
+  } else {
+    ctx.fillStyle = bg.kind === "color" ? bg.color : "#000000";
+    ctx.fillRect(0, 0, W, H);
+  }
 }
 
 type Ctx = CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D;
@@ -65,9 +111,8 @@ function drawBlurred(ctx: Ctx, src: CanvasImageSource, r: Rect) {
 export function drawFrame(ctx: Ctx, bg: FrameBg, draw: (c: Ctx) => Rect | null): Rect | null {
   const W = ctx.canvas.width;
   const H = ctx.canvas.height;
-  if (bg.kind === "color") {
-    ctx.fillStyle = bg.color;
-    ctx.fillRect(0, 0, W, H);
+  if (bg.kind !== "blur") {
+    fillBg(ctx, bg);
     return draw(ctx);
   }
   fg = scratch(fg, W, H);

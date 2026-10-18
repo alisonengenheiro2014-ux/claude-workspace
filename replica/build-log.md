@@ -107,6 +107,15 @@ in some Safari versions. Fonts added: Bangers, Chewy, Playfair Display,
 Montserrat 900. CapCut's own fonts and textures can't be copied; the looks
 are rebuilt with open fonts.
 
+**More (2026-10-18):** the export now streams into an OPFS file through a
+worker (chunks written at their positions, index at the end), so long and 4K
+exports do not have to fit in memory; 16 sound effects synthesised by the app
+(oscillators, noise, filters, envelopes rendered offline); six voice effects
+as Web Audio graphs shared by preview and export (the video's sound graph is
+rebuilt only when the playing clip's settings change); gradient and photo
+backgrounds (the canvas gradient follows CSS linear-gradient's line); and a
+speed curve editor (drag points, log scale).
+
 **The rest of the list (2026-10-18):** project backup to one .garagem file
 (the media referenced, never read into memory; restore goes through the
 normal import) and templates (a project kept as a starting point); clip
@@ -137,9 +146,9 @@ MODNet (not tested with the real model: the model host is blocked here).
 | S12 Sobrepor | 2026-10-18 | done | — | the preview shows overlays as DOM elements (a `<video>` per overlay video, synced to the playhead; photos as `<img>`) so HDR video is never drawn on a canvas; masks are drawn once on a small canvas and used as a CSS mask image in the preview and a destination-in layer in the export (same shape, same soft edge); chroma key keys out the colour per pixel with one function in both (the preview draws the hidden overlay video onto a canvas, at most 540 px); blend modes (Mistura) are mix-blend-mode on each overlay (no z-index on their container, which would isolate them) and the same canvas composite operation in the export; the export draws them with the same geometry (`overlayBox`) and reads each overlay video with its own decoder while it is on screen |
 | S13 Efeitos / Stickers | 2026-10-18 | done | animated (GIF) stickers | stickers are emoji text items (48), with loop animations (pulsar, quicar, balançar, girar, piscar) also open to any text; 14 effects on effect lanes, computed per frame as a few numbers (move, zoom, colour, blur, flash, black, vignette, light, bars): CSS on a box around the picture in the preview, canvas drawing in the export; blur by shrink-and-stretch in the export |
 | S14 Filtros e Ajustar | 2026-10-18 | partial | sharpen, highlights, shadows; filters as their own timeline layer (here they belong to a clip) | the preview needs the GPU and HDR-safe path, so a look is a CSS filter on the <video> plus soft-light colour washes and a vignette; the export uses the same CSS string on the canvas, or the Filter Effects matrices one step at a time (CSS clamps between steps) where canvas filters are missing: both paths differ by 0.26/255 on average |
-| S15 Formato | 2026-10-18 | done | image background | blur without canvas `filter` (not in every Safari): shrink twice and stretch back; the preview blurs a still with CSS so HDR video is never drawn on a canvas |
+| S15 Formato | 2026-10-18 | done | — | blur without canvas `filter` (not in every Safari): shrink twice and stretch back; the preview blurs a still with CSS so HDR video is never drawn on a canvas |
 | S16 Keyframes | 2026-10-18 | done | keyframes for colour | the main video zooms and pans in a box around the <video> and photo canvas (CSS transform, HDR-safe), so the crop (inside) and transitions (z-order on the box) still work; the export applies the same transform around the picture. A keyframe stores every property at its moment; moving an item that has keyframes sets the keyframe at the playhead, otherwise it moves the item for its whole length. Volume keyframes ride along on video and audio clips; with them the audio envelope is a value curve sampled every 20 ms from the same gainAt the preview uses. Each keyframe can ease or move at constant speed |
-| S17 Exportar | 2026-10-17 | done | the file is kept in memory, not in OPFS (fine up to a few minutes of 1080p; long 4K needs a streaming target) | choosing the codec at runtime: this test browser had no H.264, so it exported VP9/Opus in MP4; the iPhone should pick H.264 |
+| S17 Exportar | 2026-10-18 | done | — | choosing the codec at runtime: this test browser had no H.264, so it exported VP9/Opus in MP4; the iPhone should pick H.264 |
 
 ## Notes
 

@@ -32,7 +32,7 @@ import { applyEffects, effectsAt } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
-import { denoiseChain, scheduleEnvelope } from "../editor/audio";
+import { scheduleEnvelope, soundChain } from "../editor/audio";
 import { durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
@@ -136,8 +136,8 @@ export async function mixAudio(
     gain.connect(ctx.destination);
     // noise reduction: the same filters as the preview, in front of the gain
     let into: AudioNode = gain;
-    if (clip.denoise && !opts.flat) {
-      const chain = denoiseChain(ctx);
+    const chain = opts.flat ? null : soundChain(ctx, clip);
+    if (chain) {
       chain.output.connect(gain);
       into = chain.input;
     }
@@ -182,7 +182,14 @@ export async function exportTimeline(
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
   const bg = doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
-  const fbg = frameBgOf(doc);
+  // a photo background: decoded once for the whole export
+  let bgImage: ImageBitmap | null = null;
+  if (doc.canvas.background.type === "image") {
+    const a = assets.get(doc.canvas.background.assetId);
+    const f = a ? await assetFile(a) : null;
+    bgImage = f ? await createImageBitmap(f) : null;
+  }
+  const fbg = frameBgOf(doc, bgImage && { src: bgImage, w: bgImage.width, h: bgImage.height });
   // A decoded frame, letterboxed; with a crop/turn/mirror it goes through a
   // canvas the size of the picture first (the sample applies its own rotation).
   let shapeScratch: OffscreenCanvas | null = null;

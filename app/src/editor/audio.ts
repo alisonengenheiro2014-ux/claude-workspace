@@ -59,6 +59,100 @@ export function denoiseChain(ctx: BaseAudioContext): { input: AudioNode; output:
   return { input: hp, output: lp };
 }
 
+// Voice effects (S08 Efeitos de voz), as Web Audio graphs: the preview and
+// the export build the same one.
+export const VOICE_FX = [
+  { id: "robot", label: "Robô", emoji: "🤖" },
+  { id: "echo", label: "Eco", emoji: "🗣️" },
+  { id: "radio", label: "Rádio", emoji: "📻" },
+  { id: "phone", label: "Telefone", emoji: "☎️" },
+  { id: "megaphone", label: "Megafone", emoji: "📢" },
+  { id: "cave", label: "Caverna", emoji: "🕳️" },
+];
+
+function shaper(ctx: BaseAudioContext, amount: number) {
+  const ws = ctx.createWaveShaper();
+  const n = 1024;
+  const curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    curve[i] = ((1 + amount) * x) / (1 + amount * Math.abs(x));
+  }
+  ws.curve = curve;
+  return ws;
+}
+
+function band(ctx: BaseAudioContext, type: BiquadFilterType, f: number, q = 0.7) {
+  const b = ctx.createBiquadFilter();
+  b.type = type;
+  b.frequency.value = f;
+  b.Q.value = q;
+  return b;
+}
+
+export function voiceChain(ctx: BaseAudioContext, id: string): { input: AudioNode; output: AudioNode } | null {
+  const input = ctx.createGain();
+  const output = ctx.createGain();
+  if (id === "robot") {
+    // ring modulation: the voice times a 60 Hz wave
+    const ring = ctx.createGain();
+    ring.gain.value = 0;
+    const osc = ctx.createOscillator();
+    osc.frequency.value = 60;
+    osc.connect(ring.gain);
+    osc.start();
+    input.connect(ring).connect(output);
+    output.gain.value = 1.6;
+  } else if (id === "echo") {
+    const delay = ctx.createDelay(2);
+    delay.delayTime.value = 0.28;
+    const fb = ctx.createGain();
+    fb.gain.value = 0.42;
+    input.connect(output);
+    input.connect(delay);
+    delay.connect(fb).connect(delay);
+    delay.connect(output);
+  } else if (id === "radio") {
+    input.connect(band(ctx, "highpass", 500)).connect(band(ctx, "lowpass", 3500)).connect(shaper(ctx, 8)).connect(output);
+    output.gain.value = 0.7;
+  } else if (id === "phone") {
+    input.connect(band(ctx, "highpass", 400)).connect(band(ctx, "lowpass", 3200)).connect(output);
+    output.gain.value = 1.4;
+  } else if (id === "megaphone") {
+    input.connect(band(ctx, "bandpass", 1600, 1.2)).connect(shaper(ctx, 30)).connect(output);
+    output.gain.value = 0.6;
+  } else if (id === "cave") {
+    // a long, dark reverb from a generated impulse
+    const conv = ctx.createConvolver();
+    const len = Math.round(ctx.sampleRate * 2.5);
+    const ir = ctx.createBuffer(2, len, ctx.sampleRate);
+    for (let c = 0; c < 2; c++) {
+      const d = ir.getChannelData(c);
+      let seed = 11 + c;
+      for (let i = 0; i < len; i++) {
+        seed = (seed * 16807) % 2147483647;
+        d[i] = ((seed / 2147483647) * 2 - 1) * Math.pow(1 - i / len, 3);
+      }
+    }
+    conv.buffer = ir;
+    const wet = ctx.createGain();
+    wet.gain.value = 0.5;
+    input.connect(output);
+    input.connect(band(ctx, "lowpass", 2500)).connect(conv).connect(wet).connect(output);
+  } else return null;
+  return { input, output };
+}
+
+// Noise reduction and/or a voice effect, in that order (null: nothing to do).
+export function soundChain(ctx: BaseAudioContext, clip: { denoise?: boolean; voiceFx?: string | null }) {
+  const parts = [clip.denoise ? denoiseChain(ctx) : null, clip.voiceFx ? voiceChain(ctx, clip.voiceFx) : null].filter(
+    (x): x is { input: AudioNode; output: AudioNode } => !!x,
+  );
+  if (!parts.length) return null;
+  for (let i = 1; i < parts.length; i++) parts[i - 1].output.connect(parts[i].input);
+  return { input: parts[0].input, output: parts[parts.length - 1].output };
+}
+
 // Decodes a file's whole audio track into one AudioBuffer.
 export async function decodeAudio(file: File): Promise<AudioBuffer | null> {
   const input = new Input({ source: new BlobSource(file), formats: ALL_FORMATS });
@@ -110,8 +204,7 @@ type AudioContextCtor = typeof AudioContext;
 class AudioEngine {
   private ctx: AudioContext | null = null;
   private videoGain: GainNode | null = null;
-  private videoDry: GainNode | null = null;
-  private videoWet: GainNode | null = null;
+  private videoSrc: MediaElementAudioSourceNode | null = null;
   private attached = new WeakSet<HTMLMediaElement>();
   private buffers = new Map<Id, Promise<AudioBuffer | null>>();
   private nodes: AudioBufferSourceNode[] = [];
@@ -150,27 +243,31 @@ class AudioEngine {
     if (this.attached.has(video)) return;
     const ctx = this.context();
     this.videoGain = ctx.createGain();
-    // two paths into the gain: as recorded, and through the noise reduction
-    const src = ctx.createMediaElementSource(video);
-    this.videoDry = ctx.createGain();
-    this.videoWet = ctx.createGain();
-    this.videoWet.gain.value = 0;
-    const chain = denoiseChain(ctx);
-    src.connect(this.videoDry).connect(this.videoGain);
-    src.connect(chain.input);
-    chain.output.connect(this.videoWet).connect(this.videoGain);
+    this.videoSrc = ctx.createMediaElementSource(video);
+    this.videoSrc.connect(this.videoGain);
     this.videoGain.connect(ctx.destination);
     this.attached.add(video);
   }
 
-  setVideoDenoise(on: boolean) {
-    if (!this.videoDry || !this.videoWet || !this.ctx) return;
-    this.videoDry.gain.setTargetAtTime(on ? 0 : 1, this.ctx.currentTime, 0.01);
-    this.videoWet.gain.setTargetAtTime(on ? 1 : 0, this.ctx.currentTime, 0.01);
-  }
-
   setVideoGain(g: number) {
     if (this.videoGain && this.ctx) this.videoGain.gain.setTargetAtTime(g, this.ctx.currentTime, 0.015);
+  }
+
+  // The playing clip's noise reduction and voice effect on the video's sound;
+  // the graph is rebuilt only when they change.
+  private videoChainKey = "";
+  private videoChain: { input: AudioNode; output: AudioNode } | null = null;
+  setVideoSound(clip: { denoise?: boolean; voiceFx?: string | null }) {
+    const key = `${!!clip.denoise}|${clip.voiceFx ?? ""}`;
+    if (key === this.videoChainKey || !this.videoSrc || !this.videoGain || !this.ctx) return;
+    this.videoChainKey = key;
+    this.videoSrc.disconnect();
+    this.videoChain?.output.disconnect();
+    this.videoChain = soundChain(this.ctx, clip);
+    if (this.videoChain) {
+      this.videoSrc.connect(this.videoChain.input);
+      this.videoChain.output.connect(this.videoGain);
+    } else this.videoSrc.connect(this.videoGain);
   }
 
   buffer(asset: AssetRow): Promise<AudioBuffer | null> {
@@ -239,8 +336,8 @@ class AudioEngine {
     src.playbackRate.value = clip.speed;
     const gain = ctx.createGain();
     scheduleEnvelope(gain.gain, clip, local, whenS);
-    if (clip.denoise) {
-      const chain = denoiseChain(ctx);
+    const chain = soundChain(ctx, clip);
+    if (chain) {
       src.connect(chain.input);
       chain.output.connect(gain);
     } else src.connect(gain);

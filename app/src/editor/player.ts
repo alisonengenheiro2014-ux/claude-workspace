@@ -185,7 +185,7 @@ export class Player {
     }
     const key = `${stillClip.id}:${liveIsA}`;
     if (bmp && this.fxShown !== key) {
-      drawFrame(this.fxCanvas.getContext("2d")!, frameBgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(stillClip)));
+      drawFrame(this.fxCanvas.getContext("2d")!, this.bgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(stillClip)));
       this.fxShown = key;
     } else if (!bmp) this.fxShown = "pending";
     this.fxCanvas.style.visibility = bmp ? "visible" : "hidden";
@@ -240,6 +240,21 @@ export class Player {
     return last ? { clip: last, offsetUs: last.durationUs - 1 } : null;
   }
 
+  // The frame's background for canvases (a photo background loads once, then
+  // the frame is painted again).
+  private bgOf(d: TimelineDoc) {
+    const b = d.canvas.background;
+    if (b.type !== "image") return frameBgOf(d);
+    const bmp = this.images.get(b.assetId);
+    const asset = useEditor.getState().assets.get(b.assetId);
+    if (!bmp && asset)
+      void this.imageFor(asset).then(() => {
+        const s = useEditor.getState();
+        if (!s.playing) void this.showAt(s.playheadUs);
+      });
+    return frameBgOf(d, bmp ? { src: bmp, w: bmp.width, h: bmp.height } : null);
+  }
+
   // Photos and freeze frames are drawn on the canvas, with the clip's crop.
   private async paintPicture(clip: MediaClip, asset: AssetRow) {
     const bmp = clip.freeze ? this.still(asset, clip.inUs) : await this.imageFor(asset);
@@ -252,7 +267,7 @@ export class Player {
       this.canvas.width = width;
       this.canvas.height = height;
     }
-    drawFrame(this.canvas.getContext("2d")!, frameBgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(clip)));
+    drawFrame(this.canvas.getContext("2d")!, this.bgOf(d), shapedDraw(bmp, bmp.width, bmp.height, shapeOf(clip)));
     this.show("image");
   }
 
@@ -443,7 +458,7 @@ export class Player {
     // clip volume, fades and the main track's mute, applied to the video sound
     const muted = mainTrack(s.doc).muted;
     audio.setVideoGain(muted || this.monitorMuted ? 0 : gainAt(clip, Math.max(0, t - clip.startUs)));
-    audio.setVideoDenoise(clip.denoise);
+    audio.setVideoSound(clip);
 
     // keep the audio lanes in step with the video: restart them if they drift
     const now = performance.now();

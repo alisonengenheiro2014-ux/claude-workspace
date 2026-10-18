@@ -50,7 +50,7 @@ import { useEditor } from "../editor/store";
 import { TimelineView } from "../editor/TimelineView";
 import { TextOverlay } from "../editor/TextOverlay";
 import { TextSheet, type TextTab } from "./TextSheet";
-import { AudioMenu, FadeSheet, RecordSheet } from "./AudioSheets";
+import { AudioMenu, FadeSheet, RecordSheet, SfxSheet } from "./AudioSheets";
 import { TransitionSheet } from "./TransitionSheet";
 import { CaptionSheet, takeCrashedCaptionRun, type CaptionTab } from "./CaptionSheet";
 import { audio, peaksOf } from "../editor/audio";
@@ -89,18 +89,21 @@ import {
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
 import { LookLayer } from "../editor/LookLayer";
+import { frameBgCss } from "../editor/frame";
 import { BLENDS } from "../editor/blend";
 import { EffectsBox } from "../editor/EffectsBox";
 import { EFFECTS } from "../editor/effects";
 import { OptionGrid } from "../ui/OptionGrid";
+import { CurveEditor } from "../ui/CurveEditor";
 import { ProgressBar } from "../ui/Progress";
 import { reverseRange } from "../media/reverse";
 import { speak } from "../captions/tts";
 import { ChromaSheet, MaskSheet } from "./OverlaySheets";
 import { ClipAnimSheet } from "./ClipAnimSheet";
 import { detectBeats } from "../media/beats";
-import { decodeAudio } from "../editor/audio";
+import { decodeAudio, VOICE_FX } from "../editor/audio";
 import { removeBackground } from "../media/cutout";
+import { sfxFile } from "../media/sfx";
 import { STICKERS, STICKER_STYLE } from "../editor/text";
 import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
@@ -138,6 +141,8 @@ type Panel =
   | { name: "mask" }
   | { name: "clipAnim" }
   | { name: "beats" }
+  | { name: "sfx" }
+  | { name: "voice" }
   | { name: "chroma" }
   | { name: "effects" };
 
@@ -160,6 +165,14 @@ const ASPECT_OPTIONS: { value: AspectRatio; label: string }[] = [
   { value: "4:3", label: "4:3" },
 ];
 const BACKGROUNDS = ["#000000", "#ffffff", "#1f1f24", "#24324a", "#3b2a2a", "#2b3b2b"];
+const GRADIENTS: [string, string][] = [
+  ["#ff512f", "#dd2476"],
+  ["#4facfe", "#00f2fe"],
+  ["#f7971e", "#ffd200"],
+  ["#11998e", "#38ef7d"],
+  ["#8e2de2", "#4a00e0"],
+  ["#232526", "#414345"],
+];
 
 function formatSpeed(v: number) {
   return `${v < 1 ? v.toFixed(2).replace(/0$/, "") : v < 10 ? v.toFixed(1) : Math.round(v)}x`.replace(".", ",");
@@ -211,6 +224,32 @@ export function Editor({ projectId }: { projectId: Id }) {
   const saveState = useEditor((s) => s.saveState);
   const copying = useEditor((s) => s.copying);
   const ed = useEditor.getState();
+  // a photo as the frame's background: its object URL for the preview
+  const bgAssetId = doc?.canvas.background.type === "image" ? doc.canvas.background.assetId : null;
+  const [bgImageUrl, setBgImageUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const a = bgAssetId ? useEditor.getState().assets.get(bgAssetId) : undefined;
+    if (!a) return setBgImageUrl(null);
+    let url: string | null = null;
+    void assetFile(a).then((f) => {
+      if (!f) return;
+      url = URL.createObjectURL(f);
+      setBgImageUrl(url);
+    });
+    return () => {
+      if (url) URL.revokeObjectURL(url);
+    };
+  }, [bgAssetId]);
+  const bgPicker = useRef<HTMLInputElement>(null);
+  async function onBgImage(files: File[]) {
+    const [img] = await runImport(projectId, files.slice(0, 1), setImporting, toast);
+    if (!img) return;
+    if (img.kind !== "image") return toast("Escolha uma foto para o fundo.");
+    await useEditor.getState().addAssets([img]);
+    const d = useEditor.getState().doc!;
+    ed.commit({ ...d, canvas: { ...d.canvas, background: { type: "image", assetId: img.id } } }, "Fundo");
+  }
+
 
   useEffect(() => {
     let alive = true;
@@ -370,7 +409,6 @@ export function Editor({ projectId }: { projectId: Id }) {
   const frame = doc ? frameSize(doc, assets, 1080) : { width: 9, height: 16 };
   const fit = Math.min(box.w / frame.width, box.h / frame.height) || 0;
   const stage = { w: Math.floor(frame.width * fit), h: Math.floor(frame.height * fit) };
-  const bg = doc?.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
   const blurBg = doc?.canvas.background.type === "blur";
 
   function togglePlay() {
@@ -696,6 +734,20 @@ export function Editor({ projectId }: { projectId: Id }) {
     }
   }
 
+  // S07 Efeitos sonoros: rendered by the app, imported like a recording
+  async function onAddSfx(id: string) {
+    setPanel(null);
+    const file = await sfxFile(id);
+    const [sfx] = await runImport(projectId, [file], setImporting, toast, { only: "audio" });
+    if (!sfx) return;
+    await useEditor.getState().addAssets([sfx]);
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    const r = addAudio(s.doc, sfx, s.playheadUs);
+    s.commit(setItem(r.doc, r.id, { outUs: sfx.durationUs, durationUs: sfx.durationUs }), "Efeito sonoro");
+    s.select(r.id);
+  }
+
   function toggleDenoise(clip: MediaClip) {
     const s = useEditor.getState();
     if (!s.doc) return;
@@ -854,7 +906,7 @@ export function Editor({ projectId }: { projectId: Id }) {
         {/* the project frame: its shape follows the aspect ratio */}
         <div
           className={cn("relative overflow-hidden", state !== "ready" && "hidden")}
-          style={{ width: stage.w, height: stage.h, background: bg }}
+          style={{ width: stage.w, height: stage.h, background: frameBgCss(doc, bgImageUrl) }}
         >
           {/* effects (S13) move and filter everything below the text */}
           <EffectsBox width={stage.w}>
@@ -1054,6 +1106,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
               <ToolbarItem icon={<Music2 />} label="Batidas" onClick={() => (stop(), setPanel({ name: "beats" }))} />
               <ToolbarItem icon={<AudioWaveform />} label={selectedAudio.denoise ? "Ruído: reduzido" : "Reduzir ruído"} onClick={() => toggleDenoise(selectedAudio)} />
+              <ToolbarItem icon={<Speech />} label="Efeito de voz" onClick={() => (stop(), setPanel({ name: "voice" }))} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               {laneTools}
               <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
@@ -1106,6 +1159,12 @@ export function Editor({ projectId }: { projectId: Id }) {
                 disabled={!assets.get(selected!.assetId)?.hasAudio}
                 onClick={() => toggleDenoise(selected!)}
               />
+              <ToolbarItem
+                icon={<Speech />}
+                label="Efeito de voz"
+                disabled={!assets.get(selected!.assetId)?.hasAudio}
+                onClick={() => (stop(), setPanel({ name: "voice" }))}
+              />
               <ToolbarItem icon={<Split />} label="Extrair som" disabled={!targetAsset?.hasAudio} onClick={onExtract} />
               <ToolbarItem icon={<ArrowLeft />} label="Mover ←" disabled={mainIndex <= 0} onClick={() => moveSelected(-1)} />
               <ToolbarItem icon={<ArrowRight />} label="Mover →" disabled={mainIndex < 0 || mainIndex >= mainCount - 1} onClick={() => moveSelected(1)} />
@@ -1150,6 +1209,7 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       <FilePicker ref={addPicker} onFiles={(f) => void onAddFiles(f)} />
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
+      <FilePicker ref={bgPicker} accept="image/*" onFiles={(f) => void onBgImage(f)} />
       <FilePicker ref={overlayPicker} onFiles={(f) => void onAddOverlay(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
 
@@ -1191,7 +1251,23 @@ export function Editor({ projectId }: { projectId: Id }) {
         canExtract={!!targetAsset?.hasAudio}
         onExtract={onExtract}
         onRecord={() => setPanel({ name: "record" })}
+        onSfx={() => setPanel({ name: "sfx" })}
       />
+      <Sheet open={panel?.name === "voice"} onOpenChange={(o) => !o && closeEditing("Efeito de voz")} title="Efeito de voz">
+        {(selectedAudio ?? selected) && (
+          <OptionGrid
+            label="Efeito de voz"
+            value={(selectedAudio ?? selected)!.voiceFx ?? null}
+            onChange={(id) => {
+              const s = useEditor.getState();
+              ed.setDraft(setItem(s.draft ?? s.doc!, (selectedAudio ?? selected)!.id, { voiceFx: id }));
+            }}
+            options={VOICE_FX.map((v) => ({ id: v.id, label: v.label, preview: <span className="text-2xl">{v.emoji}</span> }))}
+          />
+        )}
+        <p className="mt-3 text-xs text-text-muted">Toque em ▶ depois de fechar para ouvir. Vale para a prévia e para o vídeo exportado.</p>
+      </Sheet>
+      <SfxSheet open={panel?.name === "sfx"} onOpenChange={(o) => !o && setPanel(null)} onAdd={(id) => void onAddSfx(id)} />
       <FadeSheet
         clip={panel?.name === "fade" ? selectedMedia : null}
         onChange={(p) => selectedMedia && ed.setDraft(setItem(useEditor.getState().doc!, selectedMedia.id, p))}
@@ -1261,6 +1337,16 @@ export function Editor({ projectId }: { projectId: Id }) {
               }}
               options={SPEED_CURVES.map((c) => ({ id: c.id, label: c.label, preview: <CurveIcon points={c.points} /> }))}
             />
+            {selected.speedCurve?.length ? (
+              <CurveEditor
+                points={selected.speedCurve}
+                onChange={(points) => {
+                  const s = useEditor.getState();
+                  ed.setDraft(setClip(s.draft ?? s.doc!, selected.id, { speedCurve: points }));
+                }}
+                onDone={() => {}}
+              />
+            ) : null}
           </div>
         )}
         <p className="mt-3 text-xs text-text-muted">Acima de 16x a prévia toca a 16x; o vídeo exportado sai na velocidade escolhida. Com uma curva, a velocidade fixa fica sem efeito.</p>
@@ -1446,6 +1532,39 @@ export function Editor({ projectId }: { projectId: Id }) {
                   />
                 );
               })}
+            </div>
+            <div role="radiogroup" aria-label="Degradê de fundo" className="flex flex-wrap gap-3">
+              {GRADIENTS.map((g) => {
+                const b = doc.canvas.background;
+                const on = b.type === "gradient" && b.colors[0] === g[0] && b.colors[1] === g[1];
+                return (
+                  <button
+                    key={g.join()}
+                    type="button"
+                    role="radio"
+                    aria-checked={on}
+                    aria-label={`Degradê ${g.join(" ")}`}
+                    onClick={() => {
+                      const d = useEditor.getState().doc!;
+                      ed.commit({ ...d, canvas: { ...d.canvas, background: { type: "gradient", colors: g, angle: 160 } } }, "Fundo");
+                    }}
+                    className={cn("size-11 rounded-pill border border-border-input", on && "ring-2 ring-accent ring-offset-2 ring-offset-surface")}
+                    style={{ background: `linear-gradient(160deg, ${g[0]}, ${g[1]})` }}
+                  />
+                );
+              })}
+              <button
+                type="button"
+                role="radio"
+                aria-checked={doc.canvas.background.type === "image"}
+                onClick={() => bgPicker.current?.click()}
+                className={cn(
+                  "flex h-11 items-center rounded-pill border border-border-input px-4 text-sm",
+                  doc.canvas.background.type === "image" && "ring-2 ring-accent ring-offset-2 ring-offset-surface",
+                )}
+              >
+                Foto
+              </button>
             </div>
             <p className="text-xs text-text-muted">
               O fundo aparece quando o vídeo não preenche o quadro (um vídeo vertical num formato 16:9, por exemplo). Na prévia, o

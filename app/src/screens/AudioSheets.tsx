@@ -1,6 +1,7 @@
 // S07 Áudio (add music, extract a video's sound, record a voice-over) and
 // the S08 fade sheet.
-import { Mic, Music, Square, Split } from "lucide-react";
+import { Mic, Music, Plus, Sparkles, Square, Split } from "lucide-react";
+import { renderSfx, SFX } from "../media/sfx";
 import { useEffect, useRef, useState } from "react";
 import type { MediaClip } from "../data/db";
 import { audio } from "../editor/audio";
@@ -16,9 +17,11 @@ export function AudioMenu({
   onExtract,
   canExtract,
   onRecord,
+  onSfx,
 }: {
   open: boolean;
   onOpenChange: (o: boolean) => void;
+  onSfx: () => void;
   onMusic: () => void;
   onExtract: () => void;
   canExtract: boolean;
@@ -29,6 +32,9 @@ export function AudioMenu({
       <div className="flex flex-col gap-2">
         <Button className="justify-start" icon={<Music aria-hidden className="size-5" />} onClick={onMusic}>
           Música ou som do iPhone
+        </Button>
+        <Button className="justify-start" icon={<Sparkles aria-hidden className="size-5" />} onClick={onSfx}>
+          Efeitos sonoros
         </Button>
         <Button className="justify-start" icon={<Mic aria-hidden className="size-5" />} onClick={onRecord}>
           Gravar narração
@@ -227,6 +233,39 @@ export function RecordSheet({
           </>
         )}
       </div>
+    </Sheet>
+  );
+}
+
+// S07 Efeitos sonoros: tap to hear, + to put it at the playhead.
+export function SfxSheet({ open, onOpenChange, onAdd }: { open: boolean; onOpenChange: (o: boolean) => void; onAdd: (id: string) => void }) {
+  async function hear(id: string) {
+    const ctx = audio.context();
+    audio.unlock();
+    const buf = await renderSfx(id);
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+    src.connect(ctx.destination);
+    src.start();
+  }
+  return (
+    <Sheet open={open} onOpenChange={onOpenChange} title="Efeitos sonoros">
+      <ul className="grid grid-cols-2 gap-2">
+        {SFX.map((x) => (
+          <li key={x.id} className="flex items-center gap-1 rounded-md bg-surface-2 pl-3">
+            <button type="button" aria-label={`Ouvir ${x.label}`} onClick={() => void hear(x.id)} className="flex h-12 flex-1 items-center gap-2 text-left text-sm">
+              <span aria-hidden className="text-xl">
+                {x.emoji}
+              </span>
+              {x.label}
+            </button>
+            <button type="button" aria-label={`Adicionar ${x.label}`} onClick={() => onAdd(x.id)} className="flex size-12 items-center justify-center text-accent">
+              <Plus aria-hidden className="size-5" />
+            </button>
+          </li>
+        ))}
+      </ul>
+      <p className="mt-3 text-xs text-text-muted">Toque no nome para ouvir; no + para pôr no cursor. Os sons são feitos pelo próprio app.</p>
     </Sheet>
   );
 }

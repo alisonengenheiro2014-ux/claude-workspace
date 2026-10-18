@@ -48,7 +48,7 @@ Ocultar a faixa e trancar,linha do tempo,should,yes,yes,"Ocultar faixa (some da 
 Tela cheia na prévia,editor,should,yes,yes,esconde linha do tempo e ferramentas
 Encaixe magnético dos itens no cursor e nas bordas,linha do tempo,should,yes,yes,"gruda no cursor, nas pontas dos outros itens e nas batidas"
 Mostrar tamanho estimado do arquivo e não oferecer 4K sem mídia 4K,exportar,should,yes,yes,fonte 3
-Curvas de velocidade (presets e pontos),clipe,could,yes,partial,"6 curvas prontas (montagem, herói, bala, salto, entrada e saída rápidas); sem editar pontos à mão"
+Curvas de velocidade (presets e pontos),clipe,could,yes,yes,"6 curvas prontas e editor: arrastar os pontos"
 Câmera lenta suave com fluxo óptico,clipe,could,yes,no,pesado em PWA; avaliar depois
 Máscaras (linear espelho círculo retângulo coração estrela),clipe,could,yes,yes,"no vídeo principal e nas sobreposições: 6 formatos, tamanho, borda suave, girar, posição, inverter"
 Chroma key,clipe,could,yes,yes,"nas sobreposições: verde, verde vivo, azul, branco, preto; intensidade e limpeza das bordas"
@@ -71,3 +71,7 @@ Assinatura Pro e marca d'água,cobrança,skip,yes,skip,não há cobrança num ap
 Feed de inspiração e tutoriais dentro do app,início,skip,yes,skip,conteúdo deles
 Modelos de IA da CapCut,IA,skip,yes,skip,recursos de IA usam modelos abertos ou APIs próprias
 Mistura (modos de mesclagem) nas sobreposições,sobrepor,could,yes,yes,"normal, multiplicar, tela, sobrepor, escurecer, clarear, adicionar, com opacidade"
+Efeitos sonoros,áudio,could,yes,yes,"16 sons feitos pelo próprio app (whoosh, pop, ding, sucesso, dinheiro, impacto...), ouvir antes de pôr"
+Efeitos de voz,áudio,could,yes,yes,"robô, eco, rádio, telefone, megafone, caverna; no vídeo e nos áudios"
+Fundo com imagem ou degradê,formato,could,yes,yes,"6 degradês ou uma foto"
+Exportação longa sem estourar a memória,exportar,must,no,yes,"grava direto num arquivo do app enquanto exporta"
