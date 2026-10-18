@@ -800,7 +800,7 @@ export function Editor({ projectId }: { projectId: Id }) {
     const s = useEditor.getState();
     if (!s.doc) return;
     const r = addOverlay(s.doc, asset, s.playheadUs);
-    s.commit(r.doc, "Sobrepor");
+    s.commit(r.doc, "Adicionar camada");
     s.select(r.id);
   }
 
@@ -1199,7 +1199,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
               <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
               <ToolbarItem icon={<Smile />} label="Stickers" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "stickers" }))} />
-              <ToolbarItem icon={<Layers />} label="Sobrepor" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
+              <ToolbarItem icon={<Layers />} label="Camada" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "effects" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />

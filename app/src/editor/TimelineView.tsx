@@ -376,7 +376,8 @@ export function TimelineView({
         return (
           <div
             key={c.id}
-            className="absolute inset-y-0"
+            // selected: the finger moves the item, the timeline must not scroll
+            className={`absolute inset-y-0 ${sel && !track.locked ? "touch-none" : ""}`}
             style={{ left: px(c.startUs), width: w }}
             onPointerDown={sel && !track.locked ? (e) => onHandleDown(e, "move", c.id, true) : undefined}
             onPointerMove={sel && !track.locked ? onHandleMove : undefined}
@@ -461,7 +462,6 @@ export function TimelineView({
           {[...effectTracks(doc)].reverse().map(lane)}
           {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
           {[...textTracks(doc)].reverse().map(lane)}
-          {[...overlayTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
             {clips.map((clip, i) => {
               const w = Math.max(2, px(clip.durationUs));
@@ -522,6 +522,8 @@ export function TimelineView({
               </>
             )}
           </div>
+          {/* layers under the video, like CapCut's Camada: the bottom layer nearest it */}
+          {overlayTracks(doc).map(lane)}
           {audioTracks(doc).map(lane)}
           {/* empty rows under the video, like CapCut: a tap adds the first one */}
           {audioTracks(doc).every((t) => !t.items.length) && <AddLane label="Adicionar áudio" width={px(totalUs)} onClick={onAddAudio} />}

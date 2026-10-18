@@ -53,7 +53,7 @@ export function TimelineClip({
         selected && "outline-2 outline-selection",
       )}
     >
-      {thumbs && <span className="absolute inset-0 flex">{thumbs}</span>}
+      {thumbs && <span className="pointer-events-none absolute inset-0 flex">{thumbs}</span>}
       {waveform && (
         <span aria-hidden className="absolute inset-x-0 bottom-0 flex h-1/2 items-end gap-px px-1 opacity-50">
           {waveform.map((p, i) => (
