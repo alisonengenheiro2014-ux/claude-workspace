@@ -1031,6 +1031,8 @@ export function Editor({ projectId }: { projectId: Id }) {
           <TimelineView
             missing={missing}
             onAddMedia={() => addPicker.current?.click()}
+            onAddAudio={() => setPanel({ name: "audio" })}
+            onAddText={onAddText}
             onTransition={(fromId) => {
               stop();
               setPanel({ name: "transition", fromId });

@@ -2,6 +2,7 @@
 // tracks scroll under it: scrollLeft / pxPerSec is the playhead time.
 import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent, type PointerEvent } from "react";
 import { createPortal } from "react-dom";
+import { Plus } from "lucide-react";
 import type { Id, MediaClip } from "../data/db";
 import { AddClipButton, Playhead, TimelineClip, TransitionMarker } from "../ui/Timeline";
 import { formatTime } from "../ui/Transport";
@@ -92,16 +93,34 @@ function Square({ url, x, held = false }: { url: string | undefined; x: number; 
   );
 }
 
+function AddLane({ label, width, onClick }: { label: string; width: number; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-[var(--layout-track-sub)] shrink-0 items-center gap-1.5 rounded-xs bg-surface-2 px-3 text-xs text-text-muted"
+      style={{ width: Math.max(width, 140) }}
+    >
+      <Plus aria-hidden className="size-3.5" />
+      {label}
+    </button>
+  );
+}
+
 function pauseIfPlaying() {
   if (useEditor.getState().playing) useEditor.getState().setPlaying(false);
 }
 
 export function TimelineView({
   onAddMedia,
+  onAddAudio,
+  onAddText,
   onTransition,
   missing,
 }: {
   onAddMedia: () => void;
+  onAddAudio: () => void;
+  onAddText: () => void;
   onTransition: (fromId: Id) => void;
   missing: Set<Id>;
 }) {
@@ -504,6 +523,9 @@ export function TimelineView({
             )}
           </div>
           {audioTracks(doc).map(lane)}
+          {/* empty rows under the video, like CapCut: a tap adds the first one */}
+          {audioTracks(doc).every((t) => !t.items.length) && <AddLane label="Adicionar áudio" width={px(totalUs)} onClick={onAddAudio} />}
+          {textTracks(doc).every((t) => !t.items.length) && <AddLane label="Adicionar texto" width={px(totalUs)} onClick={onAddText} />}
         </div>
       </div>
     </div>
