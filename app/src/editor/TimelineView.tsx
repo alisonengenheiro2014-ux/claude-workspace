@@ -476,11 +476,8 @@ export function TimelineView({
         style={{ touchAction: reorder ? "none" : "pan-x pan-y", WebkitTouchCallout: "none", WebkitUserSelect: "none", userSelect: "none" }}
         onContextMenu={(e) => e.preventDefault()}
       >
-        <div className="relative flex min-h-full flex-col justify-center gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
+        <div className="relative flex min-h-full flex-col justify-start gap-2 py-2" style={{ width: pad * 2 + px(totalUs) + 80, paddingLeft: pad }}>
           <Ruler totalUs={totalUs} pxPerSec={pxPerSec} />
-          {[...effectTracks(doc)].reverse().map(lane)}
-          {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
-          {[...textTracks(doc)].reverse().map(lane)}
           <div className="relative flex items-center">
             {/* before the start, like CapCut: the video's sound and the cover */}
             <div className="absolute right-full mr-4 flex items-center gap-3">
@@ -560,12 +557,16 @@ export function TimelineView({
               </>
             )}
           </div>
-          {/* layers under the video, like CapCut's Camada: the bottom layer nearest it */}
+          {/* everything else under the video, like CapCut: layers (the bottom
+              one nearest), audio, texts, captions, effects; an empty row
+              stands in for audio and text until there is some */}
           {overlayTracks(doc).map(lane)}
           {audioTracks(doc).map(lane)}
-          {/* empty rows under the video, like CapCut: a tap adds the first one */}
           {audioTracks(doc).every((t) => !t.items.length) && <AddLane label="Adicionar áudio" width={px(totalUs)} onClick={onAddAudio} />}
+          {textTracks(doc).map(lane)}
           {textTracks(doc).every((t) => !t.items.length) && <AddLane label="Adicionar texto" width={px(totalUs)} onClick={onAddText} />}
+          {doc.tracks.filter((t) => t.kind === "caption").map(lane)}
+          {effectTracks(doc).map(lane)}
         </div>
       </div>
     </div>
