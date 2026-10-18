@@ -189,6 +189,7 @@ export interface Track {
   locked: boolean;
   items: Clip[]; // sorted by startUs
   style?: TextStyle; // caption tracks: one style for every caption
+  preset?: string; // caption tracks: the caption template (grouping, highlight, animation)
 }
 
 export interface Transform {
@@ -275,6 +276,8 @@ export interface TextStyle {
   align: "left" | "center" | "right";
   bold: boolean;
   italic: boolean;
+  uppercase?: boolean; // drawn in capitals; the stored text keeps its case
+  glow?: { color: string; blur: number } | null; // neon
 }
 
 export interface TextClip extends ClipBase {
@@ -286,6 +289,8 @@ export interface TextClip extends ClipBase {
 export interface CaptionClip extends ClipBase {
   type: "caption";
   text: string;
+  // when each word is spoken, relative to the caption's start (so moving a
+  // caption keeps its words with it)
   words: { startUs: Us; endUs: Us; word: string }[];
   // style comes from the caption track so batch edits touch one place
 }

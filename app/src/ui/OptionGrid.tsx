@@ -16,16 +16,18 @@ export function OptionGrid({
   value,
   onChange,
   loading,
+  allowNone = true,
 }: {
   label: string;
   options: Option[];
   value: string | null;
   onChange: (id: string | null) => void;
   loading?: boolean;
+  allowNone?: boolean; // the leading "Nenhum" tile
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const all: (Option & { none?: boolean })[] = [
-    { id: "__none", label: "Nenhum", preview: <Ban aria-hidden className="size-6 text-text-muted" />, none: true },
+    ...(allowNone ? [{ id: "__none", label: "Nenhum", preview: <Ban aria-hidden className="size-6 text-text-muted" />, none: true }] : []),
     ...options,
   ];
 

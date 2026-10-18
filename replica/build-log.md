@@ -70,6 +70,19 @@ is disposed before another loads; the preview's video is released during the
 run; and a run that never finished is reported on the next open, switching
 the quality to "Mais rápida".
 
+**Caption templates (2026-10-18):** the iPhone run worked but the captions
+looked odd next to the reference video the user sent (one UPPERCASE word at a
+time in the middle of the frame, bold white with a dark offset shadow, a quick
+pop, plus a glowing orange phone number). Whisper's ONNX models give sentence
+timestamps only, so each word's time is now estimated from the loudness of
+the voice inside its sentence (`captions/align.ts`). Captions are built from
+those words by a template: "Palavra por palavra" (the default, matching the
+reference), "Destaque amarelo" (3 words, the spoken one in yellow),
+"Clássica", "Caixa", "Neon" and "Impacto". Switching the template regroups
+the same words without transcribing again. Text items got 8 style presets,
+"Neon" matching the phone number in the reference. Side by side with a frame
+of the reference, the exported word is the same size and position.
+
 | ID | date | status | missing | harder than expected |
 | --- | --- | --- | --- | --- |
 | shell | 2026-10-17 | done | — | — |
@@ -81,8 +94,8 @@ the quality to "Mais rápida".
 | S06 Transição | 2026-10-18 | done | — | our model keeps the total length (A holds its last frame, B waits on its first) instead of overlapping clips; the preview animates the <video> and a still with CSS so HDR video never has to be drawn on a canvas; the export prepares stills before each clip so two decoders never run at once |
 | S07 Áudio | 2026-10-18 | done | the original's music library (licensed, out of scope) | preview sound now goes through Web Audio (GainNode on the video element) so volume works on iOS; music lanes are decoded once and re-synced if they drift > 120 ms from the video |
 | S08 Ferramentas de áudio | 2026-10-18 | partial | beat marking, noise reduction, speed for audio | — |
-| S09 Texto | 2026-10-18 | done | loop animations; text presets/templates | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |
-| S10 Legendas automáticas | 2026-10-18 | done | word-by-word timing (segments only), karaoke-style highlight | Whisper on the device: transformers.js in a worker, WebGPU when the device has it, else WASM; the 27 MB ONNX runtime comes from the jsDelivr CDN (over Pages' 25 MB file limit) and the model from Hugging Face, both cached after the first run. Tested here with whisper-tiny on CPU (no Hugging Face access in this environment): 9.5 s of speech in 11.6 s. Portuguese accuracy and the GPU path need the iPhone |
+| S09 Texto | 2026-10-18 | done | loop animations | drawing the same text in the preview and in export (one drawText for both); a paused preview shows the text without its entrance animation, or it would be invisible at its first frame |
+| S10 Legendas automáticas | 2026-10-18 | done | word timing is estimated, not measured | Whisper on the device: transformers.js in a worker, WebGPU when the device has it, else WASM; the 27 MB ONNX runtime comes from the jsDelivr CDN (over Pages' 25 MB file limit) and the model from Hugging Face, both cached after the first run. Tested here with whisper-tiny on CPU (no Hugging Face access in this environment): 9.5 s of speech in 11.6 s. Portuguese accuracy and the GPU path need the iPhone |
 | S11 Texto para fala | — | not started | — | — |
 | S12 Sobrepor | — | stub | everything | — |
 | S13 Efeitos / Stickers | — | stub | everything | — |

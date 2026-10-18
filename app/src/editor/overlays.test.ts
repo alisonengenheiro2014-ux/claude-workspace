@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { AssetRow, MediaClip, TextClip } from "../data/db";
+import type { AssetRow, CaptionClip, MediaClip, TextClip } from "../data/db";
 import { validateDoc } from "../data/db";
 import {
   addAudio,
@@ -13,6 +13,10 @@ import {
   move,
   moveItem,
   remove,
+  applyCaptionPreset,
+  captionWords,
+  groupWords,
+  setCaptionText,
   setCaptions,
   setCaptionStyle,
   setCaptionTransform,
@@ -183,31 +187,44 @@ describe("transitions", () => {
 });
 
 describe("captions", () => {
+  const w = (start: number, end: number, word: string) => ({ start, end, word });
+  const words = [w(0.5, 0.8, "Oi"), w(0.85, 1.2, "gente,"), w(1.3, 1.6, "hoje"), w(1.65, 1.9, "vamos"), w(1.95, 2.3, "falar"), w(3.5, 3.8, "do"), w(3.85, 4.3, "carro.")];
+
   it("splits text into captions of two short lines", () => {
     expect(splitCaption("um dois três")).toEqual(["um dois três"]);
     const parts = splitCaption("Olá pessoal, hoje vamos testar as legendas automáticas no celular e ver se funciona bem");
     expect(parts.every((p) => p.split("\n").length <= 2 && p.split("\n").every((l) => l.length <= 32))).toBe(true);
-    expect(parts.join(" ").replace(/\n/g, " ")).toBe("Olá pessoal, hoje vamos testar as legendas automáticas no celular e ver se funciona bem");
   });
 
-  it("turns segments into one caption lane, time shared by text length", () => {
-    const d = setCaptions(base(), [
-      { start: 0.5, end: 2.5, text: "Oi gente" },
-      { start: 3, end: 9, text: "Hoje vamos falar de um carro preto muito rápido que apareceu na garagem esta semana" },
-    ], CAPTION_STYLE);
-    const t = d.tracks.filter((x) => x.kind === "caption");
-    expect(t).toHaveLength(1);
-    const items = t[0].items;
-    expect(items[0].startUs).toBe(500_000);
-    expect(items.length).toBeGreaterThan(2);
-    const last = items[items.length - 1];
-    expect(last.startUs + last.durationUs).toBeLessThanOrEqual(9_000_001);
+  it("groups words by template: one word, short phrases, or lines", () => {
+    expect(groupWords(words, "word", 1)).toHaveLength(7);
+    // phrases of up to 3 words, closing at the comma and at the 1.2 s pause
+    expect(groupWords(words, "phrase", 3).map((g) => g.map((x) => x.word).join(" "))).toEqual(["Oi gente,", "hoje vamos falar", "do carro."]);
+    expect(groupWords(words, "lines", 12).map((g) => g.map((x) => x.word).join(" "))).toEqual(["Oi gente, hoje vamos falar", "do carro."]);
+  });
+
+  it("one caption per word, words kept relative to their caption", () => {
+    const d = setCaptions(base(), words, "word-pop");
+    const lane = d.tracks.find((x) => x.kind === "caption")!;
+    expect(lane.items).toHaveLength(7);
+    expect(lane.preset).toBe("word-pop");
+    const first = lane.items[0] as CaptionClip;
+    expect(first.startUs).toBe(500_000);
+    expect(first.words[0]).toEqual({ startUs: 0, endUs: 300_000, word: "Oi" });
     expect(validateDoc(d, assets)).toEqual([]);
-    expect(setCaptions(d, [], CAPTION_STYLE).tracks.some((x) => x.kind === "caption")).toBe(false);
+  });
+
+  it("switching template regroups the same words", () => {
+    const d = setCaptions(base(), words, "word-pop");
+    const r = applyCaptionPreset(d, "highlight-yellow");
+    const lane = r.tracks.find((x) => x.kind === "caption")!;
+    expect(lane.items.map((c) => (c as CaptionClip).text)).toEqual(["Oi gente,", "hoje vamos falar", "do carro."]);
+    expect(captionWords(r).map((x) => x.word)).toEqual(words.map((x) => x.word));
+    expect(lane.style?.uppercase).toBe(true);
   });
 
   it("style and position apply to every caption; a caption moves within its lane", () => {
-    let d = setCaptions(base(), [{ start: 0, end: 2, text: "a" }, { start: 4, end: 6, text: "b" }], CAPTION_STYLE);
+    let d = setCaptions(base(), [w(0, 2, "a"), w(4, 6, "b")], "classic");
     d = setCaptionStyle(d, { ...CAPTION_STYLE, color: "#ffd400" });
     d = setCaptionTransform(d, { x: 0.5, y: 0.3, scale: 1, rotation: 0 });
     const lane = d.tracks.find((x) => x.kind === "caption")!;
@@ -217,5 +234,14 @@ describe("captions", () => {
     const l2 = moved.tracks.filter((x) => x.kind === "caption");
     expect(l2).toHaveLength(1);
     expect(l2[0].items.find((c) => c.id === lane.items[1].id)!.startUs).toBe(2_000_000);
+  });
+
+  it("editing a caption's text retimes its words", () => {
+    const d = setCaptions(base(), words, "highlight-yellow");
+    const c = d.tracks.find((x) => x.kind === "caption")!.items[1] as CaptionClip;
+    const e = setCaptionText(d, c.id, "hoje vou falar demais");
+    const after = findItem(e, c.id)!.clip as CaptionClip;
+    expect(after.words.map((x) => x.word)).toEqual(["hoje", "vou", "falar", "demais"]);
+    expect(after.words[after.words.length - 1].endUs).toBeLessThanOrEqual(after.durationUs);
   });
 });

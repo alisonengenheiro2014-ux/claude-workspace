@@ -2,6 +2,7 @@
 // returns a new one; the store keeps the old one for undo.
 import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip, TextStyle, TimelineDoc, Track, Transform, Us } from "../data/db";
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
+import { captionPreset, type CaptionGrouping } from "./presets";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
 export const MIN_CLIP_US: Us = 100_000; // shortest clip a split or trim may leave
@@ -493,6 +494,12 @@ export interface SpeechSegment {
   text: string;
 }
 
+export interface SpeechWord {
+  start: number; // seconds on the timeline
+  end: number;
+  word: string;
+}
+
 // Breaks a sentence into captions of up to maxLines lines of up to maxChars
 // characters each, breaking between words.
 export function splitCaption(text: string, maxChars = 32, maxLines = 2): string[] {
@@ -515,40 +522,102 @@ export function captionTrack(doc: TimelineDoc) {
   return doc.tracks.find((t) => t.kind === "caption");
 }
 
-// Replaces the captions with these segments. A long segment becomes several
-// captions, with its time shared out by length of text.
-export function setCaptions(doc: TimelineDoc, segments: SpeechSegment[], style: TextStyle, y = 0.78): TimelineDoc {
-  return edit(doc, (d) => {
-    const old = captionTrack(d);
-    const transform = (old?.items[0]?.transform as Transform | undefined) ?? { x: 0.5, y, scale: 1, rotation: 0 };
-    d.tracks = d.tracks.filter((t) => t.kind !== "caption");
-    const items: CaptionClip[] = [];
-    let lastEnd = 0;
-    for (const seg of segments) {
-      const parts = splitCaption(seg.text);
-      const totalChars = parts.reduce((n, p) => n + p.length, 0) || 1;
-      let t = Math.max(Math.round(seg.start * 1e6), lastEnd);
-      const segEnd = Math.max(t + MIN_CLIP_US, Math.round(seg.end * 1e6));
-      for (const p of parts) {
-        const dur = Math.max(MIN_CLIP_US, Math.round(((segEnd - t) * p.length) / totalChars) || MIN_CLIP_US);
-        items.push({
-          id: uid(),
-          type: "caption",
-          text: p,
-          words: [],
-          startUs: t,
-          durationUs: dur,
-          transform: { ...transform },
-          opacity: 1,
-          blendMode: "normal",
-          animation: { in: null, out: null, loop: null },
-          keyframes: [],
-        });
-        t += dur;
-      }
-      lastEnd = t;
+// Groups words into captions the way a template says: one word each, a few
+// words each, or up to two lines. A pause or the end of a sentence always
+// starts a new caption.
+export function groupWords(words: SpeechWord[], group: CaptionGrouping, maxWords: number): SpeechWord[][] {
+  const groups: SpeechWord[][] = [];
+  let cur: SpeechWord[] = [];
+  const close = () => {
+    if (cur.length) groups.push(cur);
+    cur = [];
+  };
+  for (const w of words) {
+    const prev = cur[cur.length - 1];
+    const pause = prev ? w.start - prev.end : 0;
+    const sentenceEnd = prev ? /[.?!]$/.test(prev.word) : false;
+    if (prev) {
+      if (group === "word") close();
+      else if (group === "phrase" && (cur.length >= maxWords || pause > 0.5 || sentenceEnd || /[,;:]$/.test(prev.word))) close();
+      else if (group === "lines" && (pause > 0.7 || sentenceEnd || splitCaption([...cur, w].map((x) => x.word).join(" ")).length > 1)) close();
     }
-    if (items.length) d.tracks.push({ id: uid(), kind: "caption", muted: false, hidden: false, locked: false, items, style: structuredClone(style) });
+    cur.push(w);
+  }
+  close();
+  return groups;
+}
+
+// Replaces the captions with these words, grouped and styled by a template.
+export function setCaptions(doc: TimelineDoc, words: SpeechWord[], presetId: string, style?: TextStyle): TimelineDoc {
+  const preset = captionPreset(presetId);
+  return edit(doc, (d) => {
+    d.tracks = d.tracks.filter((t) => t.kind !== "caption");
+    const groups = groupWords(words, preset.group, preset.maxWords);
+    const items: CaptionClip[] = [];
+    groups.forEach((g, i) => {
+      const startUs = Math.round(g[0].start * 1e6);
+      const nextStart = groups[i + 1] ? Math.round(groups[i + 1][0].start * 1e6) : Infinity;
+      let endUs = Math.max(startUs + 150_000, Math.round(g[g.length - 1].end * 1e6));
+      if (nextStart - endUs < 350_000) endUs = nextStart; // no flicker between close captions
+      endUs = Math.min(endUs, nextStart);
+      if (endUs - startUs < MIN_CLIP_US) return;
+      const text = g.map((w) => w.word).join(" ");
+      items.push({
+        id: uid(),
+        type: "caption",
+        text: preset.group === "lines" ? (splitCaption(text)[0] ?? text) : text,
+        words: g.map((w) => ({ startUs: Math.round(w.start * 1e6) - startUs, endUs: Math.round(w.end * 1e6) - startUs, word: w.word })),
+        startUs,
+        durationUs: endUs - startUs,
+        transform: { x: 0.5, y: preset.y, scale: 1, rotation: 0 },
+        opacity: 1,
+        blendMode: "normal",
+        animation: { in: preset.anim, out: null, loop: null },
+        keyframes: [],
+      });
+    });
+    if (items.length)
+      d.tracks.push({
+        id: uid(),
+        kind: "caption",
+        muted: false,
+        hidden: false,
+        locked: false,
+        items,
+        style: structuredClone(style ?? preset.style),
+        preset: preset.id,
+      });
+  });
+}
+
+// All caption words back on the timeline, in order (to regroup them).
+export function captionWords(doc: TimelineDoc): SpeechWord[] {
+  const t = captionTrack(doc);
+  if (!t) return [];
+  const out: SpeechWord[] = [];
+  for (const c of t.items) {
+    if (c.type !== "caption") continue;
+    const ws = c.words.length ? c.words : spreadWords(c.text, c.durationUs);
+    for (const w of ws) out.push({ start: (c.startUs + w.startUs) / 1e6, end: (c.startUs + w.endUs) / 1e6, word: w.word });
+  }
+  return out;
+}
+
+// Same words, another template.
+export function applyCaptionPreset(doc: TimelineDoc, presetId: string): TimelineDoc {
+  return setCaptions(doc, captionWords(doc), presetId);
+}
+
+// Words spread over a caption by their length (for typed or edited text).
+function spreadWords(text: string, durationUs: Us): CaptionClip["words"] {
+  const words = text.replace(/\s+/g, " ").trim().split(" ").filter(Boolean);
+  const total = words.reduce((n, w) => n + w.length + 1, 0) || 1;
+  let t = 0;
+  return words.map((word) => {
+    const d = (durationUs * (word.length + 1)) / total;
+    const w = { startUs: Math.round(t), endUs: Math.round(t + d), word };
+    t += d;
+    return w;
   });
 }
 
@@ -570,7 +639,10 @@ export function setCaptionTransform(doc: TimelineDoc, transform: Transform): Tim
 export function setCaptionText(doc: TimelineDoc, id: Id, text: string): TimelineDoc {
   return edit(doc, (d) => {
     const hit = findItem(d, id);
-    if (hit?.clip.type === "caption") hit.clip.text = text;
+    if (hit?.clip.type !== "caption") return;
+    hit.clip.text = text;
+    // the words changed: share the caption's time out again
+    hit.clip.words = spreadWords(text, hit.clip.durationUs);
   });
 }
 

@@ -12,6 +12,8 @@ import { OptionGrid } from "../ui/OptionGrid";
 import { Sheet } from "../ui/Sheet";
 import { Slider } from "../ui/Slider";
 import { Tabs } from "../ui/Tabs";
+import { StylePreview } from "../ui/StylePreview";
+import { TEXT_PRESETS } from "../editor/presets";
 
 export type TextTab = "text" | "style" | "anim";
 
@@ -178,6 +180,16 @@ export function TextSheet({ id, tab, onTab, onClose }: { id: Id | null; tab: Tex
               label: "Estilo",
               content: (
                 <div className="flex flex-col gap-4">
+                  <OptionGrid
+                    label="Modelos de texto"
+                    allowNone={false}
+                    value={null}
+                    onChange={(id) => {
+                      const t = TEXT_PRESETS.find((x) => x.id === id);
+                      if (t) patch({ style: { ...t.style } });
+                    }}
+                    options={TEXT_PRESETS.map((t) => ({ id: t.id, label: t.label, preview: <StylePreview style={t.style} sample="Texto" /> }))}
+                  />
                   <StyleControls value={clip.style} onChange={style} />
                   <Slider
                     label="Opacidade"

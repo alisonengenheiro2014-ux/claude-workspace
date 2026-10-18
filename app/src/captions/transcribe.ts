@@ -3,7 +3,8 @@
 // model loads once per session.
 import type { Input } from "mediabunny";
 import type { AssetRow, Id, TimelineDoc } from "../data/db";
-import { durationOf, type SpeechSegment } from "../editor/timeline";
+import { durationOf, type SpeechSegment, type SpeechWord } from "../editor/timeline";
+import { alignWords, envelope } from "./align";
 import { mixAudio } from "../export/exporter";
 import type { AsrMessage, AsrModel, AsrRequest } from "./asr.worker";
 
@@ -45,7 +46,7 @@ export async function transcribe(
   opts: TranscribeOptions,
   onEvent: (e: TranscribeEvent) => void,
   signal: AbortSignal,
-): Promise<SpeechSegment[]> {
+): Promise<SpeechWord[]> {
   onEvent({ stage: "mixing" });
   const totalUs = durationOf(doc);
   const inputs = new Map<Id, Input>();
@@ -68,9 +69,12 @@ export async function transcribe(
   for (let i = 0; i < audio.length; i += 8) energy += audio[i] * audio[i];
   if (Math.sqrt(energy / (audio.length / 8)) < 0.002) throw new NoSpeechError("O som está em silêncio.");
 
+  // loudness per 10 ms, kept here: the audio itself is handed to the worker
+  const env = envelope(audio);
+
   const w = getWorker();
   let device: "webgpu" | "wasm" = "wasm";
-  return new Promise<SpeechSegment[]>((resolve, reject) => {
+  return new Promise<SpeechWord[]>((resolve, reject) => {
     const segments: SpeechSegment[] = [];
     const onAbort = () => {
       w.terminate();
@@ -89,7 +93,7 @@ export async function transcribe(
       else if (m.type === "done") {
         signal.removeEventListener("abort", onAbort);
         if (!segments.length) reject(new NoSpeechError("Não encontrei fala nesse som."));
-        else resolve(segments.sort((a, b) => a.start - b.start));
+        else resolve(alignWords(segments.sort((a, b) => a.start - b.start), env));
       } else if (m.type === "error") {
         signal.removeEventListener("abort", onAbort);
         reject(new Error(m.message));

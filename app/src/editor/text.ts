@@ -9,6 +9,7 @@ import "@fontsource/oswald/latin-700.css";
 import "@fontsource/pacifico/latin-400.css";
 import "@fontsource/permanent-marker/latin-400.css";
 import type { AnimRef, CaptionClip, TextClip, TextStyle, Track, Us } from "../data/db";
+import { captionPreset } from "./presets";
 
 // Open fonts shipped with the app (OFL / Apache), latin subset only.
 export const FONTS: { id: string; label: string; family: string; weight: number }[] = [
@@ -125,9 +126,14 @@ function fontCss(style: TextStyle, px: number) {
 // the item's start). Returns its box for hit-testing, or null if hidden.
 // animate=false draws it fully shown: the paused preview, so a text sitting
 // at the start of its entrance animation is still visible while you edit.
+export type DrawableText = TextClip & {
+  // captions: the word being spoken (index across all lines) and its colour
+  highlight?: { color: string; index: number };
+};
+
 export function drawText(
   ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D,
-  clip: TextClip,
+  clip: DrawableText,
   W: number,
   H: number,
   localUs: Us,
@@ -137,10 +143,11 @@ export function drawText(
   const anim = animate ? animState(clip, localUs) : { alpha: 1, dy: 0, scale: 1, chars: 1 };
   const unit = Math.min(W, H) / 1080;
   const px = Math.max(4, st.size * unit * clip.transform.scale);
-  let text = clip.text || " ";
-  if (anim.chars < 1) text = text.slice(0, Math.ceil(text.length * anim.chars));
-  const lines = (clip.text || " ").split("\n");
-  const shownLines = text.split("\n");
+  const shape = (t: string) => (st.uppercase ? t.toLocaleUpperCase("pt-BR") : t);
+  const full = shape(clip.text || " ");
+  const shown = anim.chars < 1 ? full.slice(0, Math.ceil(full.length * anim.chars)) : full;
+  const lines = full.split("\n");
+  const shownLines = shown.split("\n");
 
   ctx.save();
   ctx.font = fontCss(st, px);
@@ -171,27 +178,56 @@ export function drawText(
     ctx.fill();
   }
 
-  ctx.textBaseline = "middle";
-  ctx.textAlign = st.align;
-  const x = st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad : 0;
-  shownLines.forEach((line, i) => {
-    const y = -h / 2 + pad + lineH * (i + 0.5);
+  // one run of text with every layer of the style: glow, shadow, outline, fill
+  const paint = (t: string, x: number, y: number, color: string) => {
+    if (st.glow) {
+      ctx.shadowColor = st.glow.color;
+      ctx.shadowBlur = st.glow.blur * unit;
+      ctx.fillStyle = st.glow.color;
+      ctx.fillText(t, x, y);
+      ctx.fillText(t, x, y);
+    }
     if (st.shadow && !st.background) {
       ctx.shadowColor = st.shadow.color;
       ctx.shadowBlur = st.shadow.blur * unit;
       ctx.shadowOffsetX = st.shadow.x * unit;
       ctx.shadowOffsetY = st.shadow.y * unit;
-    }
+    } else ctx.shadowColor = "transparent";
     if (st.stroke) {
       ctx.lineJoin = "round";
       ctx.lineWidth = st.stroke.width * unit * clip.transform.scale;
       ctx.strokeStyle = st.stroke.color;
-      ctx.strokeText(line, x, y);
+      ctx.strokeText(t, x, y);
       ctx.shadowColor = "transparent";
     }
-    ctx.fillStyle = st.color;
-    ctx.fillText(line, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(t, x, y);
     ctx.shadowColor = "transparent";
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+  };
+
+  ctx.textBaseline = "middle";
+  const hl = clip.highlight;
+  let wordIndex = 0;
+  shownLines.forEach((line, i) => {
+    const y = -h / 2 + pad + lineH * (i + 0.5);
+    if (!hl) {
+      ctx.textAlign = st.align;
+      paint(line, st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad : 0, y, st.color);
+      return;
+    }
+    // word by word, so the spoken word can take the highlight colour
+    ctx.textAlign = "left";
+    const lw = ctx.measureText(line).width;
+    let x = st.align === "left" ? -w / 2 + pad : st.align === "right" ? w / 2 - pad - lw : -lw / 2;
+    const space = ctx.measureText(" ").width;
+    for (const word of line.split(" ")) {
+      if (!word) continue;
+      paint(word, x, y, wordIndex === hl.index ? hl.color : st.color);
+      x += ctx.measureText(word).width + space;
+      wordIndex++;
+    }
   });
   ctx.restore();
   return box;
@@ -215,14 +251,26 @@ export function captionAsText(c: CaptionClip, style: TextStyle | undefined): Tex
 }
 
 // Every text item and caption visible at timeline time tUs, bottom track first.
-export function textsAt(tracks: Track[], tUs: Us): TextClip[] {
-  const out: TextClip[] = [];
+export function textsAt(tracks: Track[], tUs: Us): DrawableText[] {
+  const out: DrawableText[] = [];
   for (const t of tracks) {
     if ((t.kind !== "text" && t.kind !== "caption") || t.hidden) continue;
     for (const c of t.items) {
       if (tUs < c.startUs || tUs >= c.startUs + c.durationUs) continue;
       if (c.type === "text") out.push(c);
-      else if (c.type === "caption") out.push(captionAsText(c, t.style));
+      else if (c.type === "caption") {
+        const item: DrawableText = captionAsText(c, t.style);
+        const color = captionPreset(t.preset).highlight;
+        if (color && c.words.length) {
+          const local = tUs - c.startUs;
+          let index = 0;
+          c.words.forEach((w, i) => {
+            if (local >= w.startUs) index = i;
+          });
+          item.highlight = { color, index };
+        }
+        out.push(item);
+      }
     }
   }
   return out;

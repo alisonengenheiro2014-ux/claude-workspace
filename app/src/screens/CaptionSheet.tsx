@@ -7,7 +7,10 @@ import type { AsrModel } from "../captions/asr.worker";
 import type { TextStyle } from "../data/db";
 import { useEditor } from "../editor/store";
 import { CAPTION_STYLE } from "../editor/text";
-import { captionTrack, remove, removeCaptions, setCaptions, setCaptionStyle, setCaptionText } from "../editor/timeline";
+import { applyCaptionPreset, captionTrack, remove, removeCaptions, setCaptions, setCaptionStyle, setCaptionText } from "../editor/timeline";
+import { CAPTION_PRESETS, DEFAULT_CAPTION_PRESET } from "../editor/presets";
+import { OptionGrid } from "../ui/OptionGrid";
+import { StylePreview } from "../ui/StylePreview";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { ProgressBar } from "../ui/Progress";
@@ -17,7 +20,7 @@ import { useToast } from "../ui/Toast";
 import { formatTime } from "../ui/Transport";
 import { StyleControls } from "./TextSheet";
 
-export type CaptionTab = "generate" | "edit" | "style";
+export type CaptionTab = "generate" | "templates" | "edit" | "style";
 
 const LANGUAGES = [
   { value: "portuguese", label: "Português" },
@@ -53,15 +56,17 @@ interface Prefs {
   language: string;
   source: CaptionSource;
   model: AsrModel;
+  preset: string;
 }
+const DEFAULT_PREFS: Prefs = { language: "portuguese", source: "video", model: "base", preset: DEFAULT_CAPTION_PRESET };
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem("caption-prefs");
-    if (raw) return { language: "portuguese", source: "video", model: "base", ...(JSON.parse(raw) as Partial<Prefs>) };
+    if (raw) return { ...DEFAULT_PREFS, ...(JSON.parse(raw) as Partial<Prefs>) };
   } catch {
     // defaults
   }
-  return { language: "portuguese", source: "video", model: "base" };
+  return DEFAULT_PREFS;
 }
 
 function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { value: T; label: string }[]; onChange: (v: T) => void }) {
@@ -143,7 +148,7 @@ export function CaptionSheet({
     onBeforeRun?.();
     try {
       lock = await navigator.wakeLock?.request("screen").catch(() => null);
-      const segments = await transcribe(
+      const words = await transcribe(
         s.doc,
         s.assets,
         { source: prefs.source, language: prefs.language || null, model: prefs.model },
@@ -151,7 +156,7 @@ export function CaptionSheet({
         ctl.signal,
       );
       const now = useEditor.getState();
-      const next = setCaptions(now.doc!, segments, captionTrack(now.doc!)?.style ?? CAPTION_STYLE);
+      const next = setCaptions(now.doc!, words, prefs.preset);
       now.commit(next, "Legendas automáticas");
       toast(`${captionTrack(next)?.items.length ?? 0} legendas criadas`);
       onTab("edit");
@@ -251,6 +256,30 @@ export function CaptionSheet({
     <p className="text-sm text-text-muted">Ainda não há legendas. Gere na primeira aba.</p>
   );
 
+  // Templates: pick one before generating, or switch later (same words, regrouped)
+  const templatesTab = (
+    <div className="flex flex-col gap-3">
+      <OptionGrid
+        label="Modelo de legenda"
+        allowNone={false}
+        value={track?.preset ?? prefs.preset}
+        onChange={(id) => {
+          if (!id) return;
+          savePrefs({ ...prefs, preset: id });
+          if (track) draft((d) => applyCaptionPreset(d, id));
+        }}
+        options={CAPTION_PRESETS.map((p) => ({
+          id: p.id,
+          label: p.label,
+          preview: <StylePreview style={p.style} sample={p.group === "word" ? "LEGENDA" : "sua legenda aqui"} highlight={p.highlight} />,
+        }))}
+      />
+      <p className="text-xs text-text-muted">
+        {track ? "Trocar o modelo reorganiza as mesmas palavras, sem transcrever de novo." : "O modelo escolhido é usado ao gerar as legendas."}
+      </p>
+    </div>
+  );
+
   const styleTab = (
     <div className="flex flex-col gap-4">
       <StyleControls value={style} onChange={(p: Partial<TextStyle>) => draft((d) => setCaptionStyle(d, { ...style, ...p }))} />
@@ -273,6 +302,7 @@ export function CaptionSheet({
         onValueChange={(v) => onTab(v as CaptionTab)}
         tabs={[
           { value: "generate", label: "Gerar", content: generateTab },
+          { value: "templates", label: "Modelos", content: templatesTab },
           { value: "edit", label: "Editar", content: editTab },
           { value: "style", label: "Estilo", content: styleTab },
         ]}
