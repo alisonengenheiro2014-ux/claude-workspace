@@ -24,7 +24,7 @@ import {
 import { useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
-import { runImport } from "../app/importFlow";
+import { describeAsset, runImport, takeImport } from "../app/importFlow";
 import { navigate } from "../app/router";
 import type { AspectRatio, Id } from "../data/db";
 import { assetFile, onImportEvent } from "../media/import";
@@ -111,6 +111,10 @@ export function Editor({ projectId }: { projectId: Id }) {
       const gone = new Set<Id>();
       for (const a of useEditor.getState().assets.values()) if (!(await assetFile(a))) gone.add(a.id);
       if (alive) setMissing(gone);
+      const secs = takeImport(projectId);
+      const first = [...useEditor.getState().assets.values()].find((a) => a.kind === "video");
+      if (secs !== null && first)
+        toast(`Aberto em ${secs.toFixed(1).replace(".", ",")} s · chegou como ${describeAsset(first)}`);
     });
     return () => {
       alive = false;

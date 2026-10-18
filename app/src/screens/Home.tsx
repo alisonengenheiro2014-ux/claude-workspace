@@ -3,7 +3,7 @@ import { Copy, Film, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
-import { runImport } from "../app/importFlow";
+import { markImport, runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
 import type { Id, ProjectRow } from "../data/db";
 import { requestPersistence, storageInfo } from "../data/opfs";
@@ -69,6 +69,7 @@ export function Home() {
   }, [refresh]);
 
   async function onFiles(files: File[]) {
+    const startedAt = performance.now();
     const project = await createProject();
     const assets = await runImport(project.id, files, setImporting, toast);
     if (!assets.length) {
@@ -77,6 +78,7 @@ export function Home() {
     }
     const loaded = await loadProject(project.id);
     if (loaded) await saveDoc(project.id, insertMedia(loaded.doc, assets, 0).doc);
+    markImport(project.id, startedAt);
     navigate(`/p/${project.id}`);
   }
 

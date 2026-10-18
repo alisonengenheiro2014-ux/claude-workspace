@@ -1,6 +1,27 @@
 import type { AssetRow, Id } from "../data/db";
 import { startImport } from "../media/import";
 
+// Timing of the last "Novo projeto", shown once when the editor opens, so a
+// slow import on the iPhone can be pinned down. Starts when iOS hands over
+// the files, so the wait inside the photo picker is not included.
+export let lastImport: { projectId: Id; startedAt: number } | null = null;
+export function markImport(projectId: Id, startedAt: number) {
+  lastImport = { projectId, startedAt };
+}
+export function takeImport(projectId: Id) {
+  const l = lastImport;
+  if (!l || l.projectId !== projectId) return null;
+  lastImport = null;
+  return (performance.now() - l.startedAt) / 1000;
+}
+
+// "HEVC 3840×2160 60 fps HDR, 612 MB"
+export function describeAsset(a: AssetRow) {
+  const codec = a.codec?.startsWith("avc") ? "H.264" : a.codec?.match(/^(hvc|hev)/) ? "HEVC" : (a.codec?.split(".")[0] ?? "?");
+  const mb = Math.round(a.sizeBytes / 1e6);
+  return `${codec} ${a.width}×${a.height}${a.fps ? ` ${a.fps} fps` : ""}${a.hdr ? " HDR" : ""}, ${mb} MB`;
+}
+
 export interface ImportProgress {
   index: number; // 0-based file being read
   total: number;
