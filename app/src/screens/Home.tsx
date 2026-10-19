@@ -98,7 +98,7 @@ export function Home() {
       return;
     }
     const loaded = await loadProject(project.id);
-    if (loaded) await saveDoc(project.id, insertMedia(loaded.doc, assets, 0).doc);
+    if (loaded) await saveDoc(project.id, { ...insertMedia(loaded.doc, assets, 0).doc, photo: true });
     navigate(`/p/${project.id}`);
   }
 

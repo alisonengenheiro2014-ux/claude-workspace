@@ -4,6 +4,7 @@ import type { AspectRatio, AssetRow, CaptionClip, Clip, Id, MediaClip, TextClip,
 import { DEFAULT_STYLE, DEFAULT_TEXT_US } from "./text";
 import { captionPreset, type CaptionGrouping } from "./presets";
 import { newEffect } from "./effects";
+import { shapedSize, shapeOf } from "./frame";
 import { animatedAt, keyNear, shiftKeys, volumeAt, withKeyAt, withoutKeyAt, type Animated } from "./keyframes";
 
 export const IMAGE_DEFAULT_US: Us = 3_000_000;
@@ -348,7 +349,9 @@ export function frameSize(doc: TimelineDoc, assets: Map<Id, AssetRow>, shortSide
   if (doc.canvas.aspectRatio === "original") {
     const first = mainClips(doc)[0];
     const a = first && assets.get(first.assetId);
-    ratio = a && a.width && a.height ? a.width / a.height : 9 / 16;
+    // a photo (Editar foto) takes the shape of its cut and turn, like a photo editor
+    const size = a && a.width && a.height ? (doc.photo ? shapedSize(a.width, a.height, shapeOf(first)) : { w: a.width, h: a.height }) : null;
+    ratio = size ? size.w / size.h : 9 / 16;
   } else ratio = ASPECTS[doc.canvas.aspectRatio];
   const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
   return ratio >= 1

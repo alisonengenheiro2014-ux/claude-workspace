@@ -97,7 +97,7 @@ import {
 } from "../editor/timeline";
 import { OverlayMedia } from "../editor/OverlayMedia";
 import { LookLayer } from "../editor/LookLayer";
-import { frameBgCss } from "../editor/frame";
+import { frameBgCss, shapedSize, shapeOf } from "../editor/frame";
 import { BLENDS } from "../editor/blend";
 import { EffectsBox } from "../editor/EffectsBox";
 import { EFFECTS } from "../editor/effects";
@@ -215,6 +215,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   const bgCanvasRef = useRef<HTMLCanvasElement>(null);
   const stageBox = useRef<HTMLDivElement>(null);
   const [box, setBox] = useState({ w: 0, h: 0 });
+  const [cropSheetH, setCropSheetH] = useState(0); // the Recortar sheet: the preview shrinks above it
   const player = useRef<Player | null>(null);
   const addPicker = useRef<HTMLInputElement>(null);
   const replacePicker = useRef<HTMLInputElement>(null);
@@ -222,6 +223,9 @@ export function Editor({ projectId }: { projectId: Id }) {
   const overlayPicker = useRef<HTMLInputElement>(null);
   const [state, setState] = useState<"loading" | "ready" | "notfound">("loading");
   const [panel, setPanel] = useState<Panel>(null);
+  // Recortar on a main clip: the cut being made (the preview shows the whole
+  // picture meanwhile); undefined when not cropping
+  const [cropCut, setCropCut] = useState<MediaClip["crop"] | undefined>(undefined);
   const [fullscreen, setFullscreen] = useState(false);
   const [importing, setImporting] = useState<ImportProgress | null>(null);
   // the overlay videos let go of their decoders while captions or export run
@@ -451,7 +455,8 @@ export function Editor({ projectId }: { projectId: Id }) {
   useEffect(() => {
     const el = stageBox.current;
     if (!el) return;
-    const ro = new ResizeObserver(() => setBox({ w: el.clientWidth, h: el.clientHeight }));
+    // the content box: while cropping, padding keeps the picture above the sheet
+    const ro = new ResizeObserver(([e]) => setBox({ w: e.contentRect.width, h: e.contentRect.height }));
     ro.observe(el);
     return () => ro.disconnect();
   }, [state, fullscreen]);
@@ -867,8 +872,42 @@ export function Editor({ projectId }: { projectId: Id }) {
   function changeCrop(patch: Partial<MediaClip>) {
     const s = useEditor.getState();
     const cur = s.draft ?? s.doc;
-    if (cur && cropClip) s.setDraft(setItem(cur, cropClip.id, patch));
+    if (!cur || !cropClip) return;
+    if (cropCut !== undefined && "crop" in patch) {
+      const { crop, ...rest } = patch;
+      setCropCut(crop ?? null);
+      if (Object.keys(rest).length) s.setDraft(setItem(cur, cropClip.id, rest));
+      return;
+    }
+    s.setDraft(setItem(cur, cropClip.id, patch));
   }
+  // a main clip is cropped on the whole picture: its crop comes off while
+  // the sheet is open and goes back on (changed) when it closes
+  function openCrop(id: Id) {
+    stop();
+    const s = useEditor.getState();
+    const hit = s.doc && findItem(s.doc, id);
+    if (hit?.track.kind === "main" && hit.clip.type === "media") {
+      setCropCut(hit.clip.crop);
+      s.setDraft(setItem(s.doc!, id, { crop: null }));
+    }
+    setPanel({ name: "crop", id });
+  }
+  function closeCrop() {
+    const s = useEditor.getState();
+    if (cropCut !== undefined && panel?.name === "crop") {
+      const next = setItem(s.draft ?? s.doc!, panel.id, { crop: cropCut });
+      setCropCut(undefined);
+      if (JSON.stringify(next) === JSON.stringify(s.doc)) {
+        s.setDraft(null);
+        setPanel(null);
+        return;
+      }
+      s.setDraft(next);
+    }
+    closeEditing("Recortar");
+  }
+
   function onFreeze() {
     stop();
     const s = useEditor.getState();
@@ -995,7 +1034,9 @@ export function Editor({ projectId }: { projectId: Id }) {
     const main = s.doc ? clipAt(s.doc, 0)?.clip : undefined;
     const a = main && s.assets.get(main.assetId);
     if (!s.doc || !a) return;
-    const natural = frameSize(s.doc, s.assets, Math.min(a.width, a.height));
+    // the cut's own pixels set the size: no blowing a small cut up
+    const cut = shapedSize(a.width, a.height, shapeOf(main));
+    const natural = frameSize(s.doc, s.assets, Math.min(cut.w, cut.h));
     const k = Math.min(1, 4096 / Math.max(natural.width, natural.height));
     const shortSide = Math.floor(Math.min(natural.width, natural.height) * k) as ExportOptions["shortSide"];
     const abort = new AbortController();
@@ -1029,7 +1070,12 @@ export function Editor({ projectId }: { projectId: Id }) {
         }}
       />
 
-      <div ref={stageBox} className="relative flex min-h-0 flex-1 items-center justify-center bg-canvas" onClick={() => setFullscreen(false)}>
+      <div
+        ref={stageBox}
+        className="relative flex min-h-0 flex-1 items-center justify-center bg-canvas"
+        style={{ paddingBottom: cropSheetH ? Math.max(0, (stageBox.current?.getBoundingClientRect().bottom ?? 0) - (window.innerHeight - cropSheetH) + 8) : 0 }}
+        onClick={() => setFullscreen(false)}
+      >
         {state === "loading" && <span className="text-sm text-text-muted">Abrindo projeto…</span>}
         {/* the project frame: its shape follows the aspect ratio */}
         <div
@@ -1064,7 +1110,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             {state === "ready" && stage.w > 0 && !mediaReleased && <OverlayMedia width={stage.w} height={stage.h} />}
           </EffectsBox>
           {cropClip && cropHit?.track.kind === "main" && stage.w > 0 && (
-            <CropPan clip={cropClip} asset={assets.get(cropClip.assetId)} width={stage.w} height={stage.h} onChange={changeCrop} onDone={() => {}} />
+            <CropPan clip={cropClip} asset={assets.get(cropClip.assetId)} width={stage.w} height={stage.h} cut={cropCut ?? null} onCut={setCropCut} />
           )}
           {state === "ready" && stage.w > 0 && (
             <TextOverlay
@@ -1177,7 +1223,7 @@ export function Editor({ projectId }: { projectId: Id }) {
             <Toolbar label="Ferramentas da foto">
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
-              <ToolbarItem icon={<Crop />} label="Recortar" disabled={!target} onClick={() => target && setPanel({ name: "crop", id: target.id })} />
+              <ToolbarItem icon={<Crop />} label="Recortar" disabled={!target} onClick={() => target && openCrop(target.id)} />
               <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" disabled={!target} onClick={() => target && void onCutout(target)} />
               <ToolbarItem icon={<Type />} label="Texto" onClick={onAddText} />
               <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => setPanel({ name: "stickers" })} />
@@ -1336,7 +1382,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
               <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
               <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />
-              <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => (stop(), setPanel({ name: "crop", id: selected!.id }))} />
+              <ToolbarItem icon={<Crop />} label="Recortar" onClick={() => openCrop(selected!.id)} />
               <ToolbarItem
                 icon={<FlipHorizontal2 />}
                 label={selected?.reverse ? "Desinverter" : "Inverter"}
@@ -1586,7 +1632,14 @@ export function Editor({ projectId }: { projectId: Id }) {
       <MaskSheet clip={panel?.name === "mask" ? (selectedOverlay ?? selected ?? null) : null} onChange={changeMasked} onClose={() => closeEditing("Máscara")} />
       <ChromaSheet clip={panel?.name === "chroma" ? selectedOverlay : null} onChange={changeOverlay} onClose={() => closeEditing("Chroma key")} />
 
-      <CropSheet clip={cropClip} layer={cropHit?.track.kind === "overlay"} asset={cropClip ? assets.get(cropClip.assetId) : undefined} onChange={changeCrop} onClose={() => closeEditing("Recortar")} />
+      <CropSheet
+        clip={cropClip && cropCut !== undefined ? { ...cropClip, crop: cropCut } : cropClip}
+        layer={cropHit?.track.kind === "overlay"}
+        asset={cropClip ? assets.get(cropClip.assetId) : undefined}
+        onChange={changeCrop}
+        onClose={closeCrop}
+        onHeight={cropHit?.track.kind === "main" ? setCropSheetH : undefined}
+      />
 
       <FilterSheet
         clip={panel?.name === "filters" ? lookClip : null}

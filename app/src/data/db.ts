@@ -196,6 +196,7 @@ export interface TimelineDoc {
   // Capa: the exported video's first frame (what feeds and galleries show).
   // A moment of the edit, or a photo. None: the video starts as it is.
   cover?: { type: "frame"; atUs: Us } | { type: "image"; assetId: Id } | null;
+  photo?: boolean; // Editar foto: the frame follows the picture's cut and turn
 }
 
 export type TrackKind = "main" | "overlay" | "audio" | "text" | "effect" | "caption";
