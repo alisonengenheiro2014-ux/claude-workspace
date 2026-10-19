@@ -6,6 +6,7 @@ export function DraftCard({
   thumb,
   name,
   durationUs,
+  photo,
   updatedAt,
   onOpen,
   onMenu,
@@ -13,6 +14,7 @@ export function DraftCard({
   thumb?: string;
   name: string;
   durationUs: number;
+  photo?: boolean;
   updatedAt: number;
   onOpen?: () => void;
   onMenu?: () => void;
@@ -27,7 +29,7 @@ export function DraftCard({
         <span className="flex min-w-0 flex-col gap-0.5">
           <span className="truncate text-sm font-semibold">{name}</span>
           <span className="text-xs text-text-muted">
-            {formatTime(durationUs)} · {date}
+            {photo ? "Foto" : formatTime(durationUs)} · {date}
           </span>
         </span>
       </button>

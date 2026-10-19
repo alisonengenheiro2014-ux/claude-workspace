@@ -17,6 +17,7 @@ type SaveState = "saved" | "pending" | "saving" | "error";
 interface EditorState {
   projectId: Id | null;
   name: string;
+  photo: boolean; // Editar foto: no timeline, saved as a picture
   doc: TimelineDoc | null;
   assets: Map<Id, AssetRow>;
   thumbs: Map<Id, Thumbs>;
@@ -102,6 +103,7 @@ export const useEditor = create<EditorState>((set, get) => {
   return {
     projectId: null,
     name: "",
+    photo: false,
     doc: null,
     assets: new Map(),
     thumbs: new Map(),
@@ -126,6 +128,7 @@ export const useEditor = create<EditorState>((set, get) => {
       set({
         projectId,
         name: loaded.project.name,
+        photo: !!loaded.project.photo,
         doc: loaded.doc,
         assets: new Map(loaded.assets.map((a) => [a.id, a])),
         thumbs,

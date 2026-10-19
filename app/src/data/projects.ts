@@ -7,9 +7,9 @@ export async function listProjects(): Promise<ProjectRow[]> {
   return db.projects.orderBy("updatedAt").reverse().toArray();
 }
 
-export async function createProject(): Promise<ProjectRow> {
+export async function createProject(as: { photo?: boolean } = {}): Promise<ProjectRow> {
   const now = Date.now();
-  const name = `Projeto ${new Date(now).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${new Date(now).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
+  const name = `${as.photo ? "Foto" : "Projeto"} ${new Date(now).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit" })} ${new Date(now).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" })}`;
   const row: ProjectRow = {
     id: crypto.randomUUID(),
     name,
@@ -18,6 +18,7 @@ export async function createProject(): Promise<ProjectRow> {
     durationUs: 0,
     thumbAssetKey: null,
     docVersion: 0,
+    photo: as.photo || undefined,
     createdAt: now,
     updatedAt: now,
   };

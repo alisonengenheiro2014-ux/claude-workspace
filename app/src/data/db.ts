@@ -24,6 +24,7 @@ export interface ProjectRow {
   thumbAssetKey: string | null; // OPFS path of the cover thumbnail
   docVersion: number; // bumped on every save
   template?: boolean; // a project kept as a starting point (Modelos)
+  photo?: boolean; // Editar foto: one picture, saved as a photo
   createdAt: number;
   updatedAt: number;
 }

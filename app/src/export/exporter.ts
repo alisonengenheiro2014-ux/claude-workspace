@@ -37,13 +37,14 @@ import { clipAt, durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
+  still?: boolean; // Editar foto: the picture at 0 as a JPEG, no video
   fps: 24 | 25 | 30 | 50 | 60;
   quality: "low" | "recommended" | "high";
 }
 
 export interface ExportResult {
   file: File;
-  videoCodec: VideoCodec;
+  videoCodec: VideoCodec | null; // null: a photo (Editar foto)
   audioCodec: AudioCodec | null;
 }
 
@@ -174,9 +175,6 @@ export async function exportTimeline(
   if (!clips.length || totalUs <= 0) throw new Error("O projeto está vazio.");
 
   const { width, height } = frameSize(doc, assets, opts.shortSide);
-  const bitrate = videoBitrate(width, height, opts.fps, opts.quality);
-  const codecs = await pickCodecs(width, height, bitrate);
-  if (!codecs.video) throw new Error("Este aparelho não consegue gerar vídeo neste tamanho.");
 
   await loadFonts();
   const canvas = new OffscreenCanvas(width, height);
@@ -263,9 +261,207 @@ export async function exportTimeline(
   };
   const inputs = new Map<Id, Input>();
 
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  // Each clip draws into `layer`; the output frame is the layer, or the
+  // layer mixed with a neighbour's still during a transition, then text.
+  const layer = new OffscreenCanvas(width, height);
+  const lctx = layer.getContext("2d")!;
+  const windows = transitionWindows(doc);
+
+  // A clip's frame at source time us, letterboxed to the output size.
+  const makeStill = async (clip: MediaClip, us: number, localUs: number) => {
+    const c = new OffscreenCanvas(width, height);
+    const cx = c.getContext("2d")!;
+    const a = assets.get(clip.assetId);
+    let pic: ImageBitmap | OffscreenCanvas | null = null;
+    if (a?.kind === "image") {
+      const file = await assetFile(a);
+      pic = file ? await createImageBitmap(file) : null;
+    } else if (a) pic = await frameAsPicture(a, clip.freeze ? clip.inUs : us);
+    const r = drawFrame(cx, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shapeOf(clip)), clip.mask), mainZoom(clip, localUs)) : () => null);
+    if (r) applyLook(cx, r, lookOf(clip));
+    if (pic instanceof ImageBitmap) pic.close();
+    return c;
+  };
+
+  // photos and videos on top (S12): photos decoded once, each video read in
+  // order while it is on screen, then closed
+  type Reader = { samples: AsyncGenerator<VideoSample, void, unknown>; current: VideoSample | null; next: VideoSample | null; ended: boolean };
+  const overlayImages = new Map<Id, ImageBitmap>();
+  const readers = new Map<Id, Reader>();
+  let overlayScratch: OffscreenCanvas | null = null;
+  let maskScratch: OffscreenCanvas | null = null;
+  const closeReader = async (r: Reader) => {
+    r.current?.close();
+    r.next?.close();
+    await r.samples.return(undefined);
+  };
+  const pullFrom = async (r: Reader) => {
+    const x = await r.samples.next();
+    if (x.done) {
+      r.ended = true;
+      return null;
+    }
+    return x.value;
+  };
+  const drawOverlays = async (tUs: number) => {
+    const live = overlaysAt(doc, tUs);
+    for (const [id, r] of readers)
+      if (!live.some((c) => c.id === id)) {
+        readers.delete(id);
+        await closeReader(r);
+      }
+    for (const c of live) {
+      const a = assets.get(c.assetId);
+      if (!a) continue;
+      let draw: ((x: OffscreenCanvasRenderingContext2D, b: TextBox) => void) | null = null;
+      if (a.kind === "image") {
+        let bmp = overlayImages.get(a.id);
+        if (!bmp) {
+          const file = await assetFile(a);
+          if (!file) throw new Error(`Mídia ausente: ${a.name}`);
+          bmp = await createImageBitmap(file);
+          overlayImages.set(a.id, bmp);
+        }
+        const img = bmp;
+        draw = (x, b) => x.drawImage(img, -b.w / 2, -b.h / 2, b.w, b.h);
+      } else {
+        try {
+          let r = readers.get(c.id);
+          if (!r) {
+            const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
+            if (!track) continue;
+            r = { samples: new VideoSampleSink(track).samples(c.inUs / 1e6, c.outUs / 1e6), current: null, next: null, ended: false };
+            readers.set(c.id, r);
+            r.next = await pullFrom(r);
+          }
+          const srcS = Math.min(c.outUs / 1e6 - 1e-4, sourceTimeUs(c, tUs - c.startUs) / 1e6);
+          while (r.next && r.next.timestamp <= srcS + 1e-6) {
+            r.current?.close();
+            r.current = r.next;
+            r.next = r.ended ? null : await pullFrom(r);
+          }
+          const cur = r.current;
+          if (cur) draw = (x, b) => cur.draw(x, -b.w / 2, -b.h / 2, b.w, b.h);
+        } catch (err) {
+          throw readError(a, err);
+        }
+      }
+      if (!draw) continue;
+      if (c.crop || c.flip) {
+        // the whole picture placed so the cropped part fills the box, clipped to it; mirrored after
+        const whole = draw;
+        const pl = cropPlacement(c.crop);
+        draw = (x, b) => {
+          x.save();
+          x.beginPath();
+          x.rect(-b.w / 2, -b.h / 2, b.w, b.h);
+          x.clip();
+          if (c.flip) x.scale(-1, 1);
+          x.translate(-b.w / 2 + pl.x * b.w + (pl.w * b.w) / 2, -b.h / 2 + pl.y * b.h + (pl.h * b.h) / 2);
+          whole(x, { ...b, w: pl.w * b.w, h: pl.h * b.h });
+          x.restore();
+        };
+      }
+      const { box: b, alpha } = overlayAt(a, c, width, height, tUs);
+      const look = lookOf(c);
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.globalCompositeOperation = blendOf(c.blendMode).canvas;
+      ctx.translate(b.cx, b.cy);
+      ctx.rotate((b.rotation * Math.PI) / 180);
+      if (isNeutral(look) && !c.chroma && !c.mask) draw(ctx, b);
+      else {
+        // filtered on its own canvas first, so the look stays inside it
+        const w = Math.max(1, Math.round(b.w));
+        const h = Math.max(1, Math.round(b.h));
+        if (!overlayScratch || overlayScratch.width !== w || overlayScratch.height !== h) overlayScratch = new OffscreenCanvas(w, h);
+        const o = overlayScratch.getContext("2d")!;
+        o.clearRect(0, 0, w, h);
+        o.save();
+        o.translate(w / 2, h / 2);
+        draw(o, { ...b, w, h });
+        o.restore();
+        applyLook(o, { x: 0, y: 0, w, h }, look);
+        if (c.chroma) {
+          const img = o.getImageData(0, 0, w, h);
+          keyImage(img, c.chroma);
+          o.putImageData(img, 0, 0);
+        }
+        if (c.mask) {
+          if (!maskScratch || maskScratch.width !== w || maskScratch.height !== h) maskScratch = new OffscreenCanvas(w, h);
+          drawMask(maskScratch.getContext("2d")!, w, h, c.mask);
+          o.save();
+          o.globalCompositeOperation = "destination-in";
+          o.drawImage(maskScratch, 0, 0);
+          o.restore();
+        }
+        ctx.drawImage(overlayScratch, -b.w / 2, -b.h / 2, b.w, b.h);
+      }
+      ctx.restore();
+    }
+  };
+
+  // The whole picture at timeline time `at` (the clip, layers, effects and
+  // text) on the output canvas: the cover, or Editar foto's result. The
+  // layers' videos read ahead to it are closed, to start over from 0.
+  const composeAt = async (at: number) => {
+    const hit = clipAt(doc, at);
+    if (!hit) return false;
+    try {
+      const still = await makeStill(hit.clip, hit.clip.freeze ? hit.clip.inUs : sourceTimeUs(hit.clip, hit.offsetUs), hit.offsetUs);
+      ctx.drawImage(still, 0, 0);
+    } catch (err) {
+      const a = assets.get(hit.clip.assetId);
+      throw a ? readError(a, err) : err;
+    }
+    await drawOverlays(at);
+    const fx = effectsAt(doc, at);
+    if (fx) applyEffects(ctx, fx, bg);
+    for (const t of textsAt(doc.tracks, at)) drawText(ctx, t, width, height, at - t.startUs);
+    for (const r of readers.values()) await closeReader(r);
+    readers.clear();
+    return true;
+  };
+
+  // Capa: the first output frame shows the cover (a moment of the edit,
+  // whole, with layers and text; or a photo) instead of the start
+  let coverPic: OffscreenCanvas | null = null;
+  const cover = doc.cover;
+  if (cover?.type === "image") {
+    const a = assets.get(cover.assetId);
+    const file = a && (await assetFile(a));
+    if (file) {
+      const img = await createImageBitmap(file);
+      coverPic = new OffscreenCanvas(width, height);
+      drawFrame(coverPic.getContext("2d")!, fbg, shapedDraw(img, img.width, img.height, { crop: null, rotation: 0, flip: false }));
+      img.close();
+    }
+  } else if (cover?.type === "frame") {
+    if (await composeAt(Math.min(cover.atUs, Math.max(0, totalUs - 1)))) {
+      coverPic = new OffscreenCanvas(width, height);
+      coverPic.getContext("2d")!.drawImage(canvas, 0, 0);
+    }
+  }
+
+  // Editar foto: just the composed picture, as a JPEG at full size
+  if (opts.still) {
+    try {
+      if (!(await composeAt(0))) throw new Error("O projeto está vazio.");
+      const blob = await canvas.convertToBlob({ type: "image/jpeg", quality: 0.95 });
+      return { file: new File([blob], `foto-${stamp}.jpg`, { type: "image/jpeg" }), videoCodec: null, audioCodec: null };
+    } finally {
+      for (const b of overlayImages.values()) b.close();
+      for (const input of inputs.values()) input.dispose();
+    }
+  }
+
+  const bitrate = videoBitrate(width, height, opts.fps, opts.quality);
+  const codecs = await pickCodecs(width, height, bitrate);
+  if (!codecs.video) throw new Error("Este aparelho não consegue gerar vídeo neste tamanho.");
+
   // Straight to a file in OPFS when the browser allows it (long videos don't
   // fit in the iPhone's memory); otherwise in memory, as before.
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
   const name = `video-${stamp}.mp4`;
   let stream: WritableStream | null = null;
   try {
@@ -297,182 +493,6 @@ export async function exportTimeline(
     const frameS = 1 / opts.fps;
     const totalFrames = Math.max(1, Math.round((totalUs / 1e6) * opts.fps));
     let frame = 0;
-    // Each clip draws into `layer`; the output frame is the layer, or the
-    // layer mixed with a neighbour's still during a transition, then text.
-    const layer = new OffscreenCanvas(width, height);
-    const lctx = layer.getContext("2d")!;
-    const windows = transitionWindows(doc);
-
-    // A clip's frame at source time us, letterboxed to the output size.
-    const makeStill = async (clip: MediaClip, us: number, localUs: number) => {
-      const c = new OffscreenCanvas(width, height);
-      const cx = c.getContext("2d")!;
-      const a = assets.get(clip.assetId);
-      let pic: ImageBitmap | OffscreenCanvas | null = null;
-      if (a?.kind === "image") {
-        const file = await assetFile(a);
-        pic = file ? await createImageBitmap(file) : null;
-      } else if (a) pic = await frameAsPicture(a, clip.freeze ? clip.inUs : us);
-      const r = drawFrame(cx, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shapeOf(clip)), clip.mask), mainZoom(clip, localUs)) : () => null);
-      if (r) applyLook(cx, r, lookOf(clip));
-      if (pic instanceof ImageBitmap) pic.close();
-      return c;
-    };
-
-    // photos and videos on top (S12): photos decoded once, each video read in
-    // order while it is on screen, then closed
-    type Reader = { samples: AsyncGenerator<VideoSample, void, unknown>; current: VideoSample | null; next: VideoSample | null; ended: boolean };
-    const overlayImages = new Map<Id, ImageBitmap>();
-    const readers = new Map<Id, Reader>();
-    let overlayScratch: OffscreenCanvas | null = null;
-    let maskScratch: OffscreenCanvas | null = null;
-    const closeReader = async (r: Reader) => {
-      r.current?.close();
-      r.next?.close();
-      await r.samples.return(undefined);
-    };
-    const pullFrom = async (r: Reader) => {
-      const x = await r.samples.next();
-      if (x.done) {
-        r.ended = true;
-        return null;
-      }
-      return x.value;
-    };
-    const drawOverlays = async (tUs: number) => {
-      const live = overlaysAt(doc, tUs);
-      for (const [id, r] of readers)
-        if (!live.some((c) => c.id === id)) {
-          readers.delete(id);
-          await closeReader(r);
-        }
-      for (const c of live) {
-        const a = assets.get(c.assetId);
-        if (!a) continue;
-        let draw: ((x: OffscreenCanvasRenderingContext2D, b: TextBox) => void) | null = null;
-        if (a.kind === "image") {
-          let bmp = overlayImages.get(a.id);
-          if (!bmp) {
-            const file = await assetFile(a);
-            if (!file) throw new Error(`Mídia ausente: ${a.name}`);
-            bmp = await createImageBitmap(file);
-            overlayImages.set(a.id, bmp);
-          }
-          const img = bmp;
-          draw = (x, b) => x.drawImage(img, -b.w / 2, -b.h / 2, b.w, b.h);
-        } else {
-          try {
-            let r = readers.get(c.id);
-            if (!r) {
-              const track = await (await openInput(a, inputs)).getPrimaryVideoTrack();
-              if (!track) continue;
-              r = { samples: new VideoSampleSink(track).samples(c.inUs / 1e6, c.outUs / 1e6), current: null, next: null, ended: false };
-              readers.set(c.id, r);
-              r.next = await pullFrom(r);
-            }
-            const srcS = Math.min(c.outUs / 1e6 - 1e-4, sourceTimeUs(c, tUs - c.startUs) / 1e6);
-            while (r.next && r.next.timestamp <= srcS + 1e-6) {
-              r.current?.close();
-              r.current = r.next;
-              r.next = r.ended ? null : await pullFrom(r);
-            }
-            const cur = r.current;
-            if (cur) draw = (x, b) => cur.draw(x, -b.w / 2, -b.h / 2, b.w, b.h);
-          } catch (err) {
-            throw readError(a, err);
-          }
-        }
-        if (!draw) continue;
-        if (c.crop || c.flip) {
-          // the whole picture placed so the cropped part fills the box, clipped to it; mirrored after
-          const whole = draw;
-          const pl = cropPlacement(c.crop);
-          draw = (x, b) => {
-            x.save();
-            x.beginPath();
-            x.rect(-b.w / 2, -b.h / 2, b.w, b.h);
-            x.clip();
-            if (c.flip) x.scale(-1, 1);
-            x.translate(-b.w / 2 + pl.x * b.w + (pl.w * b.w) / 2, -b.h / 2 + pl.y * b.h + (pl.h * b.h) / 2);
-            whole(x, { ...b, w: pl.w * b.w, h: pl.h * b.h });
-            x.restore();
-          };
-        }
-        const { box: b, alpha } = overlayAt(a, c, width, height, tUs);
-        const look = lookOf(c);
-        ctx.save();
-        ctx.globalAlpha = alpha;
-        ctx.globalCompositeOperation = blendOf(c.blendMode).canvas;
-        ctx.translate(b.cx, b.cy);
-        ctx.rotate((b.rotation * Math.PI) / 180);
-        if (isNeutral(look) && !c.chroma && !c.mask) draw(ctx, b);
-        else {
-          // filtered on its own canvas first, so the look stays inside it
-          const w = Math.max(1, Math.round(b.w));
-          const h = Math.max(1, Math.round(b.h));
-          if (!overlayScratch || overlayScratch.width !== w || overlayScratch.height !== h) overlayScratch = new OffscreenCanvas(w, h);
-          const o = overlayScratch.getContext("2d")!;
-          o.clearRect(0, 0, w, h);
-          o.save();
-          o.translate(w / 2, h / 2);
-          draw(o, { ...b, w, h });
-          o.restore();
-          applyLook(o, { x: 0, y: 0, w, h }, look);
-          if (c.chroma) {
-            const img = o.getImageData(0, 0, w, h);
-            keyImage(img, c.chroma);
-            o.putImageData(img, 0, 0);
-          }
-          if (c.mask) {
-            if (!maskScratch || maskScratch.width !== w || maskScratch.height !== h) maskScratch = new OffscreenCanvas(w, h);
-            drawMask(maskScratch.getContext("2d")!, w, h, c.mask);
-            o.save();
-            o.globalCompositeOperation = "destination-in";
-            o.drawImage(maskScratch, 0, 0);
-            o.restore();
-          }
-          ctx.drawImage(overlayScratch, -b.w / 2, -b.h / 2, b.w, b.h);
-        }
-        ctx.restore();
-      }
-    };
-
-    // Capa: the first output frame shows the cover (a moment of the edit,
-    // whole, with layers and text; or a photo) instead of the start
-    let coverPic: OffscreenCanvas | null = null;
-    const cover = doc.cover;
-    if (cover?.type === "image") {
-      const a = assets.get(cover.assetId);
-      const file = a && (await assetFile(a));
-      if (file) {
-        const img = await createImageBitmap(file);
-        coverPic = new OffscreenCanvas(width, height);
-        drawFrame(coverPic.getContext("2d")!, fbg, shapedDraw(img, img.width, img.height, { crop: null, rotation: 0, flip: false }));
-        img.close();
-      }
-    } else if (cover?.type === "frame") {
-      const at = Math.min(cover.atUs, Math.max(0, totalUs - 1));
-      const hit = clipAt(doc, at);
-      if (hit) {
-        try {
-          const still = await makeStill(hit.clip, hit.clip.freeze ? hit.clip.inUs : sourceTimeUs(hit.clip, hit.offsetUs), hit.offsetUs);
-          ctx.drawImage(still, 0, 0);
-        } catch (err) {
-          const a = assets.get(hit.clip.assetId);
-          throw a ? readError(a, err) : err;
-        }
-        await drawOverlays(at);
-        const fx = effectsAt(doc, at);
-        if (fx) applyEffects(ctx, fx, bg);
-        for (const t of textsAt(doc.tracks, at)) drawText(ctx, t, width, height, at - t.startUs);
-        coverPic = new OffscreenCanvas(width, height);
-        coverPic.getContext("2d")!.drawImage(canvas, 0, 0);
-        // the layers' videos were read ahead to the cover: start them over
-        for (const r of readers.values()) await closeReader(r);
-        readers.clear();
-      }
-    }
-
     try {
       for (const clip of clips) {
         const asset = assets.get(clip.assetId);

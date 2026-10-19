@@ -19,6 +19,7 @@ export function Transport({
   onRedo,
   onFullscreen,
   keyframe,
+  photo = false,
 }: {
   playing: boolean;
   currentUs: number;
@@ -31,7 +32,15 @@ export function Transport({
   onFullscreen?: () => void;
   // the selected item can have keyframes: is there one at the playhead?
   keyframe?: { on: boolean; onToggle: () => void } | null;
+  photo?: boolean; // Editar foto: only undo and redo
 }) {
+  if (photo)
+    return (
+      <div className="flex h-[var(--layout-transport)] items-center justify-end bg-bg px-2">
+        <IconButton label="Desfazer" icon={<Undo2 className="size-5" />} disabled={!canUndo} onClick={onUndo} />
+        <IconButton label="Refazer" icon={<Redo2 className="size-5" />} disabled={!canRedo} onClick={onRedo} />
+      </div>
+    );
   return (
     <div className="grid h-[var(--layout-transport)] grid-cols-[1fr_auto_1fr] items-center bg-bg px-2">
       <span className="font-mono text-xs text-text-muted tabular-nums">

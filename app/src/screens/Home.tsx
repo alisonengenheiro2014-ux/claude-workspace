@@ -1,5 +1,5 @@
 // S01 Início: new project and the drafts list.
-import { Archive, ArchiveRestore, Copy, Film, LayoutTemplate, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Film, ImageIcon, LayoutTemplate, Pencil, Plus, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
@@ -38,6 +38,7 @@ function formatBytes(n: number) {
 export function Home() {
   const toast = useToast();
   const picker = useRef<HTMLInputElement>(null);
+  const photoPicker = useRef<HTMLInputElement>(null);
   const updateReady = useUpdateReady();
   const [projects, setProjects] = useState<ProjectRow[] | null>(null);
   const [loadError, setLoadError] = useState(false);
@@ -84,6 +85,20 @@ export function Home() {
     const loaded = await loadProject(project.id);
     if (loaded) await saveDoc(project.id, insertMedia(loaded.doc, assets, 0).doc);
     markImport(project.id, startedAt);
+    navigate(`/p/${project.id}`);
+  }
+
+  // Editar foto: a photo project with the one picture, then its editor
+  async function onPhoto(files: File[]) {
+    const project = await createProject({ photo: true });
+    const assets = await runImport(project.id, files.slice(0, 1), setImporting, toast);
+    if (assets[0]?.kind !== "image") {
+      await removeProject(project.id);
+      if (assets.length) toast("Escolha uma foto.");
+      return;
+    }
+    const loaded = await loadProject(project.id);
+    if (loaded) await saveDoc(project.id, insertMedia(loaded.doc, assets, 0).doc);
     navigate(`/p/${project.id}`);
   }
 
@@ -165,16 +180,19 @@ export function Home() {
       )}
 
       <div className="px-4">
-        <Button
-          variant="primary"
-          size="lg"
-          className="w-full"
-          icon={<Plus aria-hidden className="size-5" />}
-          onClick={() => picker.current?.click()}
-        >
-          Novo projeto
-        </Button>
+        {/* like CapCut: a video project, or a photo edited on its own */}
+        <div className="grid grid-cols-2 gap-3">
+          <button type="button" onClick={() => picker.current?.click()} className="flex h-28 flex-col items-center justify-center gap-2 rounded-lg bg-accent text-on-accent active:brightness-90">
+            <Plus aria-hidden className="size-7" />
+            <span className="text-base font-semibold">Novo vídeo</span>
+          </button>
+          <button type="button" onClick={() => photoPicker.current?.click()} className="flex h-28 flex-col items-center justify-center gap-2 rounded-lg bg-surface-2 text-text active:brightness-90">
+            <ImageIcon aria-hidden className="size-7" />
+            <span className="text-base font-semibold">Editar foto</span>
+          </button>
+        </div>
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
+        <FilePicker ref={photoPicker} accept="image/*" onFiles={(f) => void onPhoto(f)} />
         <Button variant="ghost" className="mt-2 w-full" icon={<ArchiveRestore aria-hidden className="size-4" />} onClick={() => backupPicker.current?.click()}>
           Abrir backup
         </Button>
@@ -207,6 +225,7 @@ export function Home() {
                   <DraftCard
                     name={p.name}
                     durationUs={p.durationUs}
+                  photo={p.photo}
                     updatedAt={p.updatedAt}
                     thumb={p.thumbAssetKey ? thumbs.get(p.thumbAssetKey) : undefined}
                     onOpen={() => void onUseTemplate(p)}
@@ -247,7 +266,7 @@ export function Home() {
           <div className="mx-1 flex flex-col items-center gap-2 rounded-md border border-dashed border-border px-4 py-10 text-center">
             <Film aria-hidden className="size-8 text-text-subtle" />
             <p className="text-sm">Nenhum projeto ainda</p>
-            <p className="text-xs text-text-muted">Toque em Novo projeto e escolha vídeos ou fotos do seu iPhone.</p>
+            <p className="text-xs text-text-muted">Toque em Novo vídeo para editar vídeos, ou em Editar foto para uma foto.</p>
           </div>
         ) : (
           <ul className="flex flex-col gap-1">
@@ -256,6 +275,7 @@ export function Home() {
                 <DraftCard
                   name={p.name}
                   durationUs={p.durationUs}
+                  photo={p.photo}
                   updatedAt={p.updatedAt}
                   thumb={p.thumbAssetKey ? thumbs.get(p.thumbAssetKey) : undefined}
                   onOpen={() => navigate(`/p/${p.id}`)}

@@ -10,6 +10,8 @@ import {
   ChevronLeft,
   Copy,
   Crop,
+  ImageIcon,
+  ImagePlus,
   FlipHorizontal2,
   Gauge,
   Layers,
@@ -115,6 +117,8 @@ import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import { CoverSheet } from "./CoverSheet";
+import { exportTimeline } from "../export/exporter";
+import { shareFile } from "../data/backup";
 import { LayoutSheet } from "./LayoutSheet";
 import { LAYOUTS, layerInCell, mainInCell } from "../editor/layouts";
 import { overlaysAt } from "../editor/overlay";
@@ -254,6 +258,7 @@ export function Editor({ projectId }: { projectId: Id }) {
   }, [bgAssetId]);
   const bgPicker = useRef<HTMLInputElement>(null);
   const coverPicker = useRef<HTMLInputElement>(null);
+  const photoPicker = useRef<HTMLInputElement>(null); // Editar foto: Adicionar foto
 
   // Tela dividida: the main video at the cursor in cell 1, the layers there
   // in the others; when some are missing, the phone's picker asks for them
@@ -983,10 +988,35 @@ export function Editor({ projectId }: { projectId: Id }) {
 
   const clipTools = !!selected;
 
+  // Editar foto: the picture with its layers and text, at full size (at most
+  // 4096 px a side, the iPhone's canvas limit), as a JPEG to share or save
+  async function savePhoto() {
+    const s = useEditor.getState();
+    const main = s.doc ? clipAt(s.doc, 0)?.clip : undefined;
+    const a = main && s.assets.get(main.assetId);
+    if (!s.doc || !a) return;
+    const natural = frameSize(s.doc, s.assets, Math.min(a.width, a.height));
+    const k = Math.min(1, 4096 / Math.max(natural.width, natural.height));
+    const shortSide = Math.floor(Math.min(natural.width, natural.height) * k) as ExportOptions["shortSide"];
+    const abort = new AbortController();
+    setBusy({ label: "Salvando a foto", fraction: 0.5, abort });
+    try {
+      const r = await exportTimeline(s.doc, s.assets, { shortSide, fps: 30, quality: "high", still: true }, () => {}, abort.signal);
+      setBusy(null);
+      await shareFile(r.file);
+    } catch (err) {
+      toast(`Não foi possível salvar: ${err instanceof Error ? err.message : err}`, "error");
+    } finally {
+      setBusy(null);
+    }
+  }
+  const photoMode = useEditor.getState().photo;
+
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-bg">
       <TopBar
-        resolution={resolutionLabel(exportOptions.shortSide)}
+        resolution={photoMode ? null : resolutionLabel(exportOptions.shortSide)}
+        action={photoMode ? "Salvar" : "Exportar"}
         onClose={() => navigate("/")}
         onSettings={() => {
           stop();
@@ -994,7 +1024,8 @@ export function Editor({ projectId }: { projectId: Id }) {
         }}
         onExport={() => {
           stop();
-          setPanel({ name: "export" });
+          if (photoMode) void savePhoto();
+          else setPanel({ name: "export" });
         }}
       />
 
@@ -1097,6 +1128,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       </div>
 
       <Transport
+        photo={photoMode}
         playing={playing}
         currentUs={playheadUs}
         durationUs={totalUs}
@@ -1127,7 +1159,7 @@ export function Editor({ projectId }: { projectId: Id }) {
 
       {!fullscreen && (
         <>
-          <TimelineView
+          {!photoMode && <TimelineView
             missing={missing}
             onAddMedia={() => addPicker.current?.click()}
             onAddAudio={() => setPanel({ name: "audio" })}
@@ -1138,9 +1170,23 @@ export function Editor({ projectId }: { projectId: Id }) {
               stop();
               setPanel({ name: "transition", fromId });
             }}
-          />
+          />}
 
-          {selectedCaption ? (
+          {photoMode && (!selectedItem || selected) ? (
+            // Editar foto: the picture's tools, like CapCut's photo editor
+            <Toolbar label="Ferramentas da foto">
+              <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
+              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
+              <ToolbarItem icon={<Crop />} label="Recortar" disabled={!target} onClick={() => target && setPanel({ name: "crop", id: target.id })} />
+              <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" disabled={!target} onClick={() => target && void onCutout(target)} />
+              <ToolbarItem icon={<Type />} label="Texto" onClick={onAddText} />
+              <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => setPanel({ name: "stickers" })} />
+              <ToolbarItem icon={<ImagePlus />} label="Adicionar foto" onClick={() => photoPicker.current?.click()} />
+              <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => setPanel({ name: "effects" })} />
+              <ToolbarItem icon={<ImageIcon />} label="Plano de fundo" onClick={() => setPanel({ name: "format" })} />
+              <ToolbarItem icon={<RectangleHorizontal />} label="Formato" onClick={() => setPanel({ name: "format" })} />
+            </Toolbar>
+          ) : selectedCaption ? (
             <Toolbar
               label="Ferramentas das legendas"
               leading={
@@ -1328,6 +1374,7 @@ export function Editor({ projectId }: { projectId: Id }) {
       <FilePicker ref={replacePicker} onFiles={(f) => void onReplaceFiles(f)} />
       <FilePicker ref={bgPicker} accept="image/*" onFiles={(f) => void onBgImage(f)} />
       <FilePicker ref={coverPicker} accept="image/*" onFiles={(f) => void onCoverImage(f)} />
+      <FilePicker ref={photoPicker} accept="image/*" onFiles={(f) => void onAddOverlay(f)} />
       <FilePicker ref={layoutPicker} onFiles={(f) => void onLayoutFiles(f)} />
       <LayoutSheet
         open={panel?.name === "layout"}

@@ -8,8 +8,10 @@ export function TopBar({
   onSettings,
   onExport,
   exporting,
+  action = "Exportar",
 }: {
-  resolution: string;
+  resolution: string | null; // null: no export settings (Editar foto)
+  action?: string;
   onClose?: () => void;
   onSettings?: () => void;
   onExport?: () => void;
@@ -19,6 +21,7 @@ export function TopBar({
     <header className="flex h-[var(--layout-topbar)] items-center justify-between bg-bg px-2">
       <IconButton label="Fechar projeto" icon={<X className="size-6" />} onClick={onClose} />
       <div className="flex items-center gap-1">
+        {resolution !== null && (
         <button
           type="button"
           onClick={onSettings}
@@ -28,8 +31,9 @@ export function TopBar({
           {resolution}
           <ChevronDown aria-hidden className="size-4" />
         </button>
+        )}
         <Button variant="primary" size="sm" onClick={onExport} loading={exporting}>
-          Exportar
+          {action}
         </Button>
       </div>
     </header>
