@@ -33,10 +33,17 @@ export function buildRouter(cfg: Config, opts: { gateway?: ChannelGateway; store
     vision: { create: (p) => client.beta.messages.create(p), model: cfg.MODEL_VISAO },
     transcribe: cfg.TRANSCRICAO_URL ? httpTranscriber(cfg.TRANSCRICAO_URL, cfg.TRANSCRICAO_MODELO) : null,
     extractFrames: (video) => extractFrames(video),
-    // horários e base vêm do banco a partir do painel (semana 2); por enquanto, os padrões
-    hours: () => opts.hours ?? { windows: HORARIO_PADRAO, holidays: [], timeZone: cfg.TZ_ATENDIMENTO },
-    knowledge: () => BASE_INICIAL,
+    // horários e base são editados no painel; sem nada cadastrado, valem os padrões
+    hours: async () => {
+      if (opts.hours) return opts.hours;
+      const h = await store.getHours();
+      return { windows: h.windows.length ? h.windows : HORARIO_PADRAO, holidays: h.holidays, timeZone: cfg.TZ_ATENDIMENTO };
+    },
+    knowledge: async () => {
+      const items = await store.listKnowledge();
+      return items.length ? items : BASE_INICIAL;
+    },
     log: (msg, extra) => console.log(JSON.stringify({ t: new Date().toISOString(), msg, extra: extra instanceof Error ? extra.message : extra })),
   });
-  return { router, store, sgp };
+  return { router, store, sgp, gateway };
 }

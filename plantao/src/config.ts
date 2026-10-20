@@ -2,6 +2,8 @@ import { z } from "zod";
 
 const Env = z.object({
   PORT: z.coerce.number().default(3000),
+  PUBLIC_BASE_URL: z.string().default(""),
+  SESSION_SECRET: z.string().default(""),
   TZ_ATENDIMENTO: z.string().default("America/Sao_Paulo"),
   DATABASE_URL: z.string().optional(),
 

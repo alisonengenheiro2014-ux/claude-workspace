@@ -13,7 +13,7 @@ describe.skipIf(!url)("PgStore", () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
     await pool.query("drop schema public cascade; create schema public;");
-    expect(await migrate(pool)).toEqual(["001_init.sql"]);
+    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql"]);
     expect(await migrate(pool)).toEqual([]);
     store = new PgStore(pool);
   });
@@ -54,5 +54,53 @@ describe.skipIf(!url)("PgStore", () => {
     const list = await store.listPending("aberto");
     expect(list.map((p) => p.summary)).toEqual(["LOS", "baixa"]);
     expect(list[0].data).toEqual({ a: 1 });
+  });
+
+  it("seed de horários e base; salvar horários e itens da base", async () => {
+    const h = await store.getHours();
+    expect(h.windows).toHaveLength(6);
+    expect(h.windows[0]).toEqual({ weekday: 1, opensAt: "08:00", closesAt: "21:00" });
+    expect(h.windows.at(-1)).toEqual({ weekday: 6, opensAt: "08:00", closesAt: "12:00" });
+    await store.setHours([{ weekday: 2, opensAt: "09:00", closesAt: "17:30" }], ["2026-12-25"]);
+    expect(await store.getHours()).toEqual({ windows: [{ weekday: 2, opensAt: "09:00", closesAt: "17:30" }], holidays: ["2026-12-25"] });
+
+    expect((await store.listKnowledge()).length).toBe(4);
+    const k = await store.saveKnowledge({ kind: "plano", title: "300 Mega", body: "R$ 89,90", active: true });
+    await store.saveKnowledge({ ...k, active: false });
+    expect((await store.listKnowledge()).some((x) => x.id === k.id)).toBe(false);
+    expect((await store.listKnowledge(true)).some((x) => x.id === k.id)).toBe(true);
+  });
+
+  it("usuários, conversa com contato, massivo e estatísticas", async () => {
+    const u = await store.createUser({ name: "Bia", email: "bia@t.test", passwordHash: "scrypt$aa$bb", role: "atendente" });
+    expect((await store.findUserByEmail("bia@t.test"))?.id).toBe(u.id);
+    expect((await store.findUser(u.id))?.role).toBe("atendente");
+    await expect(store.createUser({ name: "x", email: "bia@t.test", passwordHash: "x", role: "admin" })).rejects.toThrow();
+
+    const c = await store.upsertContact("5511911112222");
+    const conv = await store.openConversation(c.id, "meta", "n");
+    const full = await store.getConversation(conv.id);
+    expect(full?.contact.phone).toBe("5511911112222");
+
+    const inc = await store.createIncident({ areaType: "pon", areaId: "PON-7/7", status: "confirmado", message: "queda", eta: null });
+    await store.linkIncidentContact(inc.id, c.id);
+    const eta = new Date("2026-10-21T09:30:00Z");
+    await store.updateIncident(inc.id, { eta });
+    expect((await store.getIncident(inc.id))?.eta?.toISOString()).toBe(eta.toISOString());
+    await store.updateIncident(inc.id, { message: "nova msg" });
+    expect((await store.getIncident(inc.id))?.eta?.toISOString()).toBe(eta.toISOString());
+    const open = (await store.listOpenIncidents()).find((i) => i.id === inc.id);
+    expect(open?.contactsCount).toBe(1);
+    expect((await store.incidentContactsInWindow(inc.id, new Date(Date.now() - 86_400_000))).map((x) => x.id)).toEqual([c.id]);
+    expect(await store.incidentContactsInWindow(inc.id, new Date(Date.now() + 60_000))).toEqual([]);
+    await store.updateIncident(inc.id, { status: "resolvido" });
+    expect((await store.listOpenIncidents()).some((i) => i.id === inc.id)).toBe(false);
+
+    const p = await store.createPending({ conversationId: conv.id, kind: "outro", priority: 2, summary: "s", data: {}, sgpTicketId: null });
+    const before = await store.stats(new Date(Date.now() - 86_400_000));
+    await store.markPendingDone(p.id, u.id);
+    const after = await store.stats(new Date(Date.now() - 86_400_000));
+    expect(after.pendentes).toBe(before.pendentes - 1);
+    expect(after.conversas).toBeGreaterThanOrEqual(3);
   });
 });

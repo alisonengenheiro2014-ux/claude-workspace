@@ -67,4 +67,37 @@ export interface Store {
   linkIncidentContact(incidentId: string, contactId: string): Promise<void>;
   createPending(p: Omit<PendingItem, "id" | "status" | "createdAt">): Promise<PendingItem>;
   listPending(status?: PendingItem["status"]): Promise<PendingItem[]>;
+
+  // --- painel ---
+  createUser(u: Omit<User, "id">): Promise<User>;
+  findUserByEmail(email: string): Promise<User | null>;
+  findUser(id: string): Promise<User | null>;
+  markPendingDone(id: string, userId: string): Promise<void>;
+  getConversation(id: string): Promise<(Conversation & { contact: Contact }) | null>;
+  listOpenIncidents(): Promise<(Incident & { contactsCount: number; startedAt: Date })[]>;
+  getIncident(id: string): Promise<Incident | null>;
+  updateIncident(id: string, patch: Partial<Pick<Incident, "status" | "message" | "eta">>): Promise<void>;
+  // contatos do incidente que falaram nas últimas 24h (janela grátis da Meta)
+  incidentContactsInWindow(incidentId: string, since: Date): Promise<Contact[]>;
+  getHours(): Promise<{ windows: { weekday: number; opensAt: string; closesAt: string }[]; holidays: string[] }>;
+  setHours(windows: { weekday: number; opensAt: string; closesAt: string }[], holidays: string[]): Promise<void>;
+  listKnowledge(includeInactive?: boolean): Promise<KnowledgeRow[]>;
+  saveKnowledge(k: Omit<KnowledgeRow, "id"> & { id?: string }): Promise<KnowledgeRow>;
+  stats(since: Date): Promise<{ conversas: number; resolvidasIa: number; pendentes: number; massivo: number }>;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  passwordHash: string;
+  role: "admin" | "atendente";
+}
+
+export interface KnowledgeRow {
+  id: string;
+  kind: "plano" | "cobertura" | "faq" | "roteiro_onu" | "politica";
+  title: string;
+  body: string;
+  active: boolean;
 }

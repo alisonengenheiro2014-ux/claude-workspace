@@ -23,6 +23,8 @@ export interface RouterDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
+const MEDIA_LABEL = { image: "[foto recebida]", audio: "[áudio recebido]", video: "[vídeo recebido]" } as const;
+
 export type Outcome = "duplicada" | "equipe_atendendo" | "humano_assumiu" | "massivo_sem_ia" | "agente";
 
 export function incidentMessage(inc: Incident, retorno: string): string {
@@ -70,7 +72,7 @@ export class Router {
     const isNew = await store.addMessage({
       conversationId: conversation.id,
       author: "cliente",
-      body: firstText ?? (msg.media ? `[${msg.media.kind} recebido]` : null),
+      body: firstText ?? (msg.media ? MEDIA_LABEL[msg.media.kind] : null),
       channelMessageId: msg.channelMessageId,
     });
     if (!isNew) return "duplicada";

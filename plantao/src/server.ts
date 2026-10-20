@@ -3,10 +3,12 @@ import { pathToFileURL } from "node:url";
 import { buildRouter } from "./app.js";
 import { parseMetaWebhook, verifyMetaSignature } from "./channels/meta.js";
 import { loadConfig, type Config } from "./config.js";
+import { registerPanel, type PanelDeps } from "./panel/routes.js";
 import type { Router } from "./router.js";
 
-export function buildServer(cfg: Config, router: Router) {
-  const app = Fastify({ logger: { level: "info" } });
+export function buildServer(cfg: Config, router: Router, panel?: PanelDeps) {
+  const app = Fastify({ logger: { level: process.env.NODE_ENV === "test" ? "silent" : "info" } });
+  if (panel) registerPanel(app, panel);
 
   // guarda o corpo bruto para conferir a assinatura da Meta
   app.addContentTypeParser("application/json", { parseAs: "buffer" }, (_req, body, done) => {
@@ -45,8 +47,14 @@ export function buildServer(cfg: Config, router: Router) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const cfg = loadConfig();
-  const { router } = buildRouter(cfg);
-  const app = buildServer(cfg, router);
+  if (cfg.SESSION_SECRET.length < 32) throw new Error("defina SESSION_SECRET com pelo menos 32 caracteres no .env");
+  const { router, store, gateway } = buildRouter(cfg);
+  const app = buildServer(cfg, router, {
+    store,
+    gateway,
+    sessionSecret: cfg.SESSION_SECRET,
+    secureCookie: cfg.PUBLIC_BASE_URL.startsWith("https://"),
+  });
   app.listen({ port: cfg.PORT, host: "0.0.0.0" }).catch((err) => {
     app.log.error(err);
     process.exit(1);
