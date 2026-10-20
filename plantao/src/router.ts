@@ -1,0 +1,143 @@
+// Recebe cada mensagem e decide: ignorar (equipe atendendo), responder o massivo sem IA, ou chamar o agente.
+import { runAgentTurn, type AgentDeps } from "./agent/agent.js";
+import type { KnowledgeItem } from "./agent/knowledge.js";
+import type { ToolContext } from "./agent/tools.js";
+import type { ChannelGateway, IncomingMessage } from "./channels/types.js";
+import { isHumanHours, nextOpeningText, type HoursConfig } from "./hours.js";
+import type { Transcriber } from "./media/audio.js";
+import { describeReading, readEquipment, type CreateBetaMessage } from "./media/vision.js";
+import type { SgpClient, SgpCustomer } from "./sgp/types.js";
+import type { Incident, Store } from "./store/types.js";
+
+export interface RouterDeps {
+  store: Store;
+  sgp: SgpClient;
+  gateway: ChannelGateway;
+  agent: AgentDeps;
+  vision: { create: CreateBetaMessage; model: string };
+  transcribe: Transcriber | null;
+  extractFrames: (video: Buffer) => Promise<{ data: Buffer; mimeType: string }[]>;
+  hours: () => Promise<HoursConfig> | HoursConfig;
+  knowledge: () => Promise<KnowledgeItem[]> | KnowledgeItem[];
+  now?: () => Date;
+  log?: (msg: string, extra?: unknown) => void;
+}
+
+export type Outcome = "duplicada" | "equipe_atendendo" | "humano_assumiu" | "massivo_sem_ia" | "agente";
+
+export function incidentMessage(inc: Incident, retorno: string): string {
+  const previsao = inc.eta
+    ? ` A previsão de normalização é ${inc.eta.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" })}.`
+    : " Assim que tivermos previsão, avisamos por aqui.";
+  return `${inc.message}${previsao}\nNão precisa abrir chamado: seu atendimento já está registrado nessa ocorrência. Se depois de normalizar ainda ficar sem internet, é só responder aqui. (Equipe de atendimento volta ${retorno}.)`;
+}
+
+export class Router {
+  private queues = new Map<string, Promise<unknown>>();
+  constructor(private deps: RouterDeps) {}
+
+  // mensagens do mesmo cliente são processadas uma de cada vez, na ordem de chegada
+  handle(msg: IncomingMessage): Promise<Outcome> {
+    const prev = this.queues.get(msg.from) ?? Promise.resolve();
+    const next = prev.catch(() => undefined).then(() => this.process(msg));
+    this.queues.set(msg.from, next);
+    next.finally(() => {
+      if (this.queues.get(msg.from) === next) this.queues.delete(msg.from);
+    }).catch(() => undefined);
+    return next;
+  }
+
+  private async findCustomer(cpf: string | null, phone: string): Promise<SgpCustomer | null> {
+    try {
+      return await this.deps.sgp.findCustomer(cpf ? { cpf } : { phone });
+    } catch (err) {
+      this.deps.log?.("falha ao consultar cliente no SGP", err);
+      return null;
+    }
+  }
+
+  private async process(msg: IncomingMessage): Promise<Outcome> {
+    const { store, gateway } = this.deps;
+    const now = this.deps.now?.() ?? new Date();
+    const hours = await this.deps.hours();
+    const retorno = nextOpeningText(now, hours);
+
+    const contact = await store.upsertContact(msg.from);
+    if (msg.profileName && !contact.name) await store.updateContact(contact.id, { name: msg.profileName });
+    const conversation = await store.openConversation(contact.id, msg.channel, msg.channelNumber);
+
+    const firstText = msg.text?.trim() || null;
+    const isNew = await store.addMessage({
+      conversationId: conversation.id,
+      author: "cliente",
+      body: firstText ?? (msg.media ? `[${msg.media.kind} recebido]` : null),
+      channelMessageId: msg.channelMessageId,
+    });
+    if (!isNew) return "duplicada";
+    if (conversation.status === "humano") return "humano_assumiu";
+
+    // massivo vale 24h: a equipe não dá conta de 140 conversas nem no horário comercial
+    const customer = await this.findCustomer(contact.cpf, contact.phone);
+    const incident = customer ? await store.openIncidentForArea(customer.area) : null;
+    if (incident && conversation.incidentId !== incident.id) {
+      await store.linkIncidentContact(incident.id, contact.id);
+      await store.updateConversation(conversation.id, { topic: "massivo", incidentId: incident.id });
+      const text = incidentMessage(incident, retorno);
+      await gateway.sendText(msg.from, text);
+      await store.addMessage({ conversationId: conversation.id, author: "ia", body: text });
+      return "massivo_sem_ia";
+    }
+
+    if (!incident && isHumanHours(now, hours)) return "equipe_atendendo";
+
+    if (msg.media) await this.processMedia(msg, conversation.id);
+
+    const ctx: ToolContext = {
+      store,
+      sgp: this.deps.sgp,
+      contact,
+      conversation,
+      knowledge: await this.deps.knowledge(),
+      customer: contact.sgpCustomerId ? customer : null,
+    };
+    const result = await runAgentTurn(
+      {
+        history: await store.history(conversation.id),
+        agora: now.toLocaleString("pt-BR", { timeZone: hours.timeZone, weekday: "long", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }),
+        retornoEquipe: retorno,
+        incidente: incident ? incident.message : null,
+      },
+      ctx,
+      this.deps.agent,
+    );
+    this.deps.log?.("agente respondeu", { de: msg.from, ferramentas: result.toolCalls, parada: result.stopReason });
+    await gateway.sendText(msg.from, result.reply);
+    await store.addMessage({ conversationId: conversation.id, author: "ia", body: result.reply });
+    return "agente";
+  }
+
+  // transforma áudio em texto e foto/vídeo em leitura das luzes; tudo entra no histórico
+  private async processMedia(msg: IncomingMessage, conversationId: string) {
+    const { store, gateway } = this.deps;
+    const media = msg.media!;
+    try {
+      const file = await gateway.downloadMedia(media.mediaId);
+      if (media.kind === "audio") {
+        if (!this.deps.transcribe) throw new Error("transcrição não configurada");
+        const text = await this.deps.transcribe(file.data, file.mimeType);
+        await store.addMessage({ conversationId, author: "cliente", body: `[áudio transcrito] ${text}` });
+      } else {
+        const images = media.kind === "video" ? await this.deps.extractFrames(file.data) : [file];
+        const reading = await readEquipment(images, this.deps.vision);
+        await store.addMessage({ conversationId, author: "sistema", body: describeReading(reading) });
+      }
+    } catch (err) {
+      this.deps.log?.("falha ao processar mídia", err);
+      const aviso =
+        media.kind === "audio"
+          ? "[não foi possível ouvir o áudio: peça para o cliente escrever]"
+          : "[não foi possível analisar a imagem: peça outra foto ou descreva as luzes]";
+      await store.addMessage({ conversationId, author: "sistema", body: aviso });
+    }
+  }
+}

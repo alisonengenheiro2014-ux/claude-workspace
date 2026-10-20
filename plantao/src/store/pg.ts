@@ -1,0 +1,133 @@
+import pg from "pg";
+import type { Contact, Conversation, Incident, PendingItem, Store, StoredMessage } from "./types.js";
+
+const toContact = (r: any): Contact => ({
+  id: r.id, phone: r.phone, name: r.name, cpf: r.cpf, sgpCustomerId: r.sgp_customer_id, kind: r.kind,
+});
+const toConversation = (r: any): Conversation => ({
+  id: r.id, contactId: r.contact_id, channel: r.channel, channelNumber: r.channel_number,
+  status: r.status, topic: r.topic, incidentId: r.incident_id, createdAt: r.created_at,
+});
+const toIncident = (r: any): Incident => ({
+  id: r.id, areaType: r.area_type, areaId: r.area_id, status: r.status, message: r.message, eta: r.eta,
+});
+const toPending = (r: any): PendingItem => ({
+  id: r.id, conversationId: r.conversation_id, kind: r.kind, priority: r.priority, summary: r.summary,
+  data: r.data, sgpTicketId: r.sgp_ticket_id, status: r.status, createdAt: r.created_at,
+});
+
+export class PgStore implements Store {
+  constructor(private pool: pg.Pool) {}
+
+  async upsertContact(phone: string) {
+    const { rows } = await this.pool.query(
+      `insert into contacts (phone) values ($1)
+       on conflict (phone) do update set updated_at = now()
+       returning *`,
+      [phone],
+    );
+    return toContact(rows[0]);
+  }
+
+  async updateContact(id: string, patch: Partial<Omit<Contact, "id" | "phone">>) {
+    const { rows } = await this.pool.query(
+      `update contacts set
+         name = coalesce($2, name), cpf = coalesce($3, cpf),
+         sgp_customer_id = coalesce($4, sgp_customer_id), kind = coalesce($5, kind), updated_at = now()
+       where id = $1 returning *`,
+      [id, patch.name ?? null, patch.cpf ?? null, patch.sgpCustomerId ?? null, patch.kind ?? null],
+    );
+    return toContact(rows[0]);
+  }
+
+  async openConversation(contactId: string, channel: Conversation["channel"], channelNumber: string) {
+    // o índice único parcial garante uma conversa aberta por contato, mesmo com webhooks simultâneos
+    const { rows } = await this.pool.query(
+      `insert into conversations (contact_id, channel, channel_number, ai_started_at)
+       values ($1, $2, $3, now())
+       on conflict (contact_id) where status <> 'closed' do nothing
+       returning *`,
+      [contactId, channel, channelNumber],
+    );
+    if (rows[0]) return toConversation(rows[0]);
+    const existing = await this.pool.query(
+      `select * from conversations where contact_id = $1 and status <> 'closed'`,
+      [contactId],
+    );
+    return toConversation(existing.rows[0]);
+  }
+
+  async updateConversation(id: string, patch: Partial<Pick<Conversation, "status" | "topic" | "incidentId">>) {
+    await this.pool.query(
+      `update conversations set
+         status = coalesce($2, status), topic = coalesce($3, topic),
+         incident_id = coalesce($4, incident_id), updated_at = now(),
+         closed_at = case when $2 = 'closed' then now() else closed_at end
+       where id = $1`,
+      [id, patch.status ?? null, patch.topic ?? null, patch.incidentId ?? null],
+    );
+  }
+
+  async addMessage(m: { conversationId: string; author: StoredMessage["author"]; body: string | null; channelMessageId?: string }) {
+    const { rowCount } = await this.pool.query(
+      `insert into messages (conversation_id, author, body, channel_message_id)
+       values ($1, $2, $3, $4) on conflict (channel_message_id) do nothing`,
+      [m.conversationId, m.author, m.body, m.channelMessageId ?? null],
+    );
+    return rowCount === 1;
+  }
+
+  async history(conversationId: string, limit = 40) {
+    const { rows } = await this.pool.query(
+      `select * from (select * from messages where conversation_id = $1 order by sent_at desc limit $2) t
+       order by sent_at asc`,
+      [conversationId, limit],
+    );
+    return rows.map((r) => ({ id: r.id, conversationId: r.conversation_id, author: r.author, body: r.body, sentAt: r.sent_at }));
+  }
+
+  async openIncidentForArea(area: { pop: string; olt: string; pon: string }) {
+    const { rows } = await this.pool.query(
+      `select * from incidents
+       where status in ('suspeito','confirmado')
+         and ((area_type = 'pop' and area_id = $1) or (area_type = 'olt' and area_id = $2) or (area_type = 'pon' and area_id = $3))
+       order by started_at limit 1`,
+      [area.pop, area.olt, area.pon],
+    );
+    return rows[0] ? toIncident(rows[0]) : null;
+  }
+
+  async createIncident(i: Omit<Incident, "id">) {
+    const { rows } = await this.pool.query(
+      `insert into incidents (area_type, area_id, status, message, eta, detected_by)
+       values ($1, $2, $3, $4, $5, 'equipe') returning *`,
+      [i.areaType, i.areaId, i.status, i.message, i.eta],
+    );
+    return toIncident(rows[0]);
+  }
+
+  async linkIncidentContact(incidentId: string, contactId: string) {
+    await this.pool.query(
+      `insert into incident_contacts (incident_id, contact_id) values ($1, $2)
+       on conflict (incident_id, contact_id) do update set last_contact_at = now()`,
+      [incidentId, contactId],
+    );
+  }
+
+  async createPending(p: Omit<PendingItem, "id" | "status" | "createdAt">) {
+    const { rows } = await this.pool.query(
+      `insert into pending_items (conversation_id, kind, priority, summary, data, sgp_ticket_id)
+       values ($1, $2, $3, $4, $5, $6) returning *`,
+      [p.conversationId, p.kind, p.priority, p.summary, p.data, p.sgpTicketId],
+    );
+    return toPending(rows[0]);
+  }
+
+  async listPending(status?: PendingItem["status"]) {
+    const { rows } = await this.pool.query(
+      `select * from pending_items where ($1::text is null or status = $1) order by priority, created_at`,
+      [status ?? null],
+    );
+    return rows.map(toPending);
+  }
+}

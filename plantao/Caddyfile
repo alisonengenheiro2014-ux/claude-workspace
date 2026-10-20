@@ -1,0 +1,4 @@
+# troque pelo subdomínio apontado para a VPS
+plantao.seudominio.com.br {
+	reverse_proxy app:3000
+}
