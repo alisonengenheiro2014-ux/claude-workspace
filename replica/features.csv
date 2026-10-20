@@ -1,4 +1,6 @@
 feature,area,priority,original,clone,notes
+Analisar vídeo do equipamento (quadros extraídos) e detectar LOS/luzes,midia,must,no,no,ffmpeg extrai quadros e o Claude analisa as imagens
+Guiar reinício de ONU e roteador passo a passo e confirmar o resultado,suporte,must,no,no,a automação atual não faz
 Integração com o Chat Mix (agente entra como bot; equipe segue no Chat Mix),integracao,must,no,no,o número da API só tem um webhook; confirmar a API do Chat Mix
 Modo massivo: detectar queda em massa pelo status online/offline do SGP,massivo,must,no,no,120-140 contatos simultâneos já aconteceram
 Modo massivo: resposta imediata + marcação de afetado sem abrir chamado,massivo,must,no,no,vale 24h
@@ -7,7 +9,7 @@ Modo massivo: avisar a normalização e reabrir só quem continuar offline,massi
 Consultar online/offline do cliente no SGP antes do roteiro,suporte,must,no,no,online = problema de Wi-Fi/aparelho
 Agente ativo só fora do horário (noite/domingo/feriado configurável),agente,must,no,no,decisão do usuário
 Agente responde no WhatsApp oficial em segundos,agente,must,yes,no,site-01 site-03
-Conversa natural com tom da marca (sem menu numerado),agente,must,yes,no,site-03
+Conversa humanizada: tom da Maxgiga; entende gíria/erro de digitação; sem menu numerado,agente,must,yes,no,principal diferencial pedido pelo usuário
 Identificar cliente por CPF/telefone no SGP,integracao,must,yes,no,original: "sistema de gestão"
 Segunda via de boleto/PIX pelo SGP,financeiro,must,no,no,
 Desbloqueio de confiança,financeiro,must,no,no,
@@ -22,8 +24,8 @@ Contato cai sozinho no CRM com histórico completo,crm,must,yes,no,site-05
 Registro de início e fim do atendimento da IA,crm,must,yes,no,site-05
 Acesso por papel,seguranca,must,yes,no,site-06
 LGPD: consentimento e exclusão de dados,seguranca,must,yes,no,site-06
-Ler foto das luzes da ONU,suporte,should,no,no,o cliente manda foto
-Transcrição de áudio do cliente,agente,should,unknown,no,
+Ler foto das luzes da ONU (LOS/PON) e orientar,midia,must,no,no,o Claude lê imagem nativamente
+Ouvir e interpretar áudio do cliente (transcrição),midia,must,unknown,no,o Claude não recebe áudio; transcrição antes (Whisper na VPS ou serviço externo)
 Funil kanban de pré-vendas,crm,could,yes,no,talvez o Chat Mix já cubra
 Ganho/perdido com motivo,crm,should,yes,no,site-05
 Métricas: atendidos fora do horário/% resolvidos pela IA,relatorios,should,yes,no,site-07
@@ -36,3 +38,4 @@ Atendimento no horário comercial,agente,could,no,skip,a equipe atende
 Multi-empresa (vários tenants),plataforma,could,yes,skip,a Maxgiga usa um só
 Serviço de agência (acompanhamento mensal),servico,could,yes,skip,é serviço e não software
 Marca/textos/números de resultados do Maestro,marca,could,yes,skip,pertencem ao original
+Responder em áudio (voz sintetizada),midia,could,no,no,opcional; precisa de TTS

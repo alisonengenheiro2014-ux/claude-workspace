@@ -10,6 +10,7 @@ Nome provisório. O `/replica-brand` define o nome final.
 | serviço | Node.js 22 + TypeScript + Fastify | um processo só recebe webhooks, conversa com o Claude e roda os jobs. Simples de manter numa VPS |
 | IA | Claude API (SDK oficial `@anthropic-ai/sdk`) com tool use | o agente chama ferramentas (SGP, incidente, registrar pendência) em vez de inventar resposta. O modelo fica em config por rota (`MODEL_SUPORTE`, `MODEL_VENDAS`) e a escolha final é do usuário (ver Custos) |
 | canal | adaptador `ChannelGateway` com 2 implementações: **Chat Mix** (preferida, depende da API deles) e **Meta Cloud API direta** (alternativa e ambiente de teste) | o número da API oficial só entrega para um sistema, então o agente precisa entrar pelo Chat Mix. O adaptador isola essa dúvida |
+| mídia | pipeline `MediaProcessor`: **foto** vai direto ao Claude (visão nativa); **vídeo** passa pelo ffmpeg, que extrai ~6 quadros, analisados como imagens; **áudio** é transcrito (Whisper local na VPS via whisper.cpp, ou API de transcrição se a VPS for fraca) e o texto entra na conversa marcado como "transcrição de áudio" | o Claude lê imagem, mas não recebe áudio nem vídeo direto |
 | SGP | adaptador `SgpClient` (API REST do SGP com token próprio) | cliente, faturas, desbloqueio, chamado, status online/offline. Os endpoints exatos serão confirmados na doc do SGP |
 | banco | Postgres 16 em Docker na VPS | um banco só, dentro da VPS que já existe, sem custo extra |
 | ORM | Drizzle | migrations versionadas, SQL legível |
@@ -92,6 +93,13 @@ Webhooks in: Chat Mix (ou Meta). Webhooks out: nenhum. Envio pelo `ChannelGatewa
 | `resumo_da_manha` | 7h50 nos dias úteis | manda à equipe o resumo da noite (no painel e, se quiser, no grupo da equipe) |
 | `retencao_lgpd` | diário | apaga histórico mais antigo que o prazo configurado |
 
+## Mídia: como o agente "vê" e "ouve"
+
+- **Foto da ONU:** o modelo recebe a imagem com um guia de referência (quais luzes, quais cores) e responde num formato estruturado: `{led_los: vermelho|apagado|incerto, led_pon: ..., confianca}`. Se a confiança for baixa, pede outra foto ("chega mais perto da luz escrita LOS"). Nunca afirma LOS sem ver.
+- **Vídeo:** quadros a cada ~1s (máx. 8), para pegar luz piscando, que uma foto sozinha não mostra.
+- **Áudio:** transcrição em pt-BR; o agente responde ao conteúdo, e a transcrição fica no histórico para a equipe.
+- **Limites:** vídeo até ~60s, arquivos apagados da VPS após processar (LGPD); só a análise fica gravada.
+
 ## The parts that bite
 
 - **Fuso e horário:** tudo em UTC no banco; "está no horário humano?" é calculado em `America/Sao_Paulo`. Sábado às 12h e feriados vêm da config.
@@ -115,7 +123,7 @@ Só a API da Anthropic é custo novo; a conta é paga por uso, com crédito pré
 | Sonnet 5.5 | pré-venda | ~R$ 0,70 |
 | Haiku 5.5 | suporte e boleto | ~R$ 0,04 |
 
-Com ~600 conversas/mês: Haiku no suporte + Sonnet nas vendas ≈ R$ 50–100/mês. O piloto mede o custo real e a qualidade antes de fixar.
+Com ~600 conversas/mês: Haiku no suporte + Sonnet nas vendas ≈ R$ 50–100/mês; tudo no Sonnet (foco em conversa humanizada e visão) ≈ R$ 400–500/mês; mais a transcrição de áudio (grátis com Whisper na VPS, ou centavos por minuto num serviço externo). O piloto mede o custo real e a qualidade antes de fixar.
 
 ## Build order
 
@@ -123,5 +131,5 @@ Com ~600 conversas/mês: Haiku no suporte + Sonnet nas vendas ≈ R$ 50–100/m�
 2. **Integração Chat Mix (semana 1–2, depende deles):** `ChannelGateway` do Chat Mix, passagem para a equipe às 8h.
 3. **Must-haves (semana 2–3):** roteiro completo de "sem internet" (online/offline, luzes da ONU, reinício), desbloqueio, pré-venda sem agendar, `registrar_pendencia` e fila da manhã (S03/painel), base de conhecimento, login e papéis, LGPD.
 4. **Modo massivo (semana 3–4):** varredura do SGP, incidentes (manual primeiro, automático depois), resposta sem IA, atualização de previsão, aviso de normalização.
-5. **Should-haves:** foto das luzes da ONU, transcrição de áudio, métricas.
+5. **Mídia (dentro das semanas 2–3, é must):** foto e vídeo das luzes da ONU, áudio. **Should-haves:** métricas.
 6. **Piloto:** uma semana só em noites e domingo, com a equipe revisando todas as conversas de manhã; ajuste de prompts, base e modelos.

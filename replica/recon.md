@@ -44,6 +44,11 @@ Daqui o domínio não resolve no DNS, por isso as fotos são a fonte.
 Um número da API oficial entrega as mensagens (webhook) para **um único app**. Como os 4 números estão no Chat Mix, o agente precisa **entrar pelo Chat Mix** (integração com bot externo/webhook/API do Chat Mix), e não tomar o número para si. A equipe continua atendendo no Chat Mix, e a "fila da manhã" pode virar filas/etiquetas lá dentro. Assim não é preciso reconstruir uma caixa de entrada.
 **A confirmar:** se o Chat Mix tem API ou integração com bot externo. Se não tiver, a alternativa é tirar um número do Chat Mix para o agente, com perdas.
 
+## Automação que já existe (Chat Mix, usuário 2026-10-20)
+
+Ela já envia boleto e já faz desbloqueio de confiança. **Não** reinicia equipamento, não entende áudio, não analisa foto ou vídeo e não conversa de forma humanizada.
+O diferencial do novo agente é justamente isso: atender como uma pessoa, **ouvir áudio**, **ver foto e vídeo** do equipamento para identificar LOS, diagnosticar e guiar o reinício, e o modo massivo. Boleto e desbloqueio continuam no agente para a conversa não "trocar de robô" no meio.
+
 ## Core loop
 
 Fora do horário, o cliente chama no WhatsApp. O agente identifica a pessoa (CPF no SGP) e entende o assunto. O que é financeiro ou diagnóstico simples ele resolve sozinho. O que precisa de gente (instalação, visita técnica, caso fora do roteiro) vira uma pendência organizada na fila da manhã, com o histórico completo, e o cliente fica sabendo quando terá retorno.
