@@ -1,30 +1,35 @@
 feature,area,priority,original,clone,notes
-Agente de IA responde no WhatsApp na hora 24/7,atendimento,must,yes,no,via WhatsApp Business API oficial
-Identificar cliente por CPF/telefone no SGP,integracao sgp,must,no,no,adaptação para provedor
-Segunda via de boleto e PIX,financeiro,must,no,no,adaptação para provedor
-Desbloqueio de confiança,financeiro,must,no,no,adaptação para provedor
-Diagnóstico guiado de conexão,suporte,must,no,no,adaptação para provedor
-Abrir chamado técnico no SGP,integracao sgp,must,no,no,
-Agendar instalação/visita técnica,agenda,must,yes,no,original agenda avaliações
-Qualificar novo interessado (endereço/cobertura/plano),vendas,must,yes,no,
-Transbordo para atendente humano,atendimento,must,yes,no,inferido
-Caixa de conversas da equipe,painel,must,yes,no,inferido
-Tela de conversa com dados do cliente,painel,must,yes,no,inferido
-Base de conhecimento (planos/FAQ/cobertura),agente,must,yes,no,inferido
-Login da equipe com papéis,painel,must,yes,no,inferido
-Aviso de falha massiva por região,suporte,should,no,no,evita chamados duplicados
-Lembrete de agendamento por WhatsApp,agenda,should,yes,no,inferido
-Painel de métricas (resolvidos pela IA/tempo de resposta),painel,should,yes,no,inferido
-Configurar tom e horário do agente,agente,should,yes,no,inferido
-Regras de transbordo configuráveis,agente,should,yes,no,inferido
-Contatos/leads com etapas e tags,crm,should,yes,no,inferido
-Lista de espera para quem está sem cobertura,vendas,should,no,no,
-Mensagens de mídia (áudio/foto da ONU),atendimento,should,no,no,transcrever áudio
-Pesquisa de satisfação no fim do atendimento,atendimento,should,no,no,
-Instagram/Facebook como canal,atendimento,could,unknown,no,
-Página de demonstração/landing,marketing,could,yes,no,
-Relatórios exportáveis,painel,could,unknown,no,
-Campanhas ativas (cobrança/retenção),financeiro,could,unknown,no,respeitar opt-in do WhatsApp
-Agenda de técnicos com rotas,agenda,could,no,no,
-Integração com prontuário/agenda de clínica,integracao,could,yes,skip,específico de clínicas e não serve para provedor
-Marca/textos/prompts do Maestro AI,marca,could,yes,skip,pertencem ao original
+Agente responde no WhatsApp oficial em segundos 24/7,agente,must,yes,no,site-01 site-03
+Conversa natural com tom da marca (sem menu numerado),agente,must,yes,no,site-03
+Qualificação com poucas perguntas,agente,must,yes,no,Maxgiga: CEP/cobertura + perfil de uso
+Agendamento na conversa com horários reais,agenda,must,yes,no,Maxgiga: instalação/visita técnica
+Confirmação e lembrete do agendamento,agenda,must,yes,no,site-03; exige template aprovado na Meta
+Follow-up automático de quem sumiu,agente,must,yes,no,site-03 site-05
+Passagem para humano com contexto,agente,must,yes,no,site-03
+Base de conhecimento editável (planos/preços/FAQ/cobertura),agente,must,yes,no,site-04
+Contato cai sozinho no CRM com histórico completo,crm,must,yes,no,site-05
+Funil kanban com etapas e arrastar,crm,must,yes,no,site-05
+Badges de status (IA atendendo/follow-up/agendado pela IA/equipe),crm,must,yes,no,site-05
+Registro de início e fim do atendimento da IA,crm,must,yes,no,site-05
+Ganho/perdido com motivo,crm,must,yes,no,site-05
+Acesso por papel,seguranca,must,yes,no,site-06
+LGPD: consentimento e exclusão de dados,seguranca,must,yes,no,site-06
+Integração com o SGP (cliente/plano),integracao,must,yes,no,original: "sistema de gestão"; Maxgiga: SGP
+Campos personalizados no contato,crm,should,yes,no,Maxgiga: CPF/endereço/plano/origem
+Origem do contato (Instagram/anúncio/indicação),crm,should,yes,no,site-05
+Relatórios de origem/conversão/perdas,relatorios,should,yes,no,site-05
+Desempenho por atendente,relatorios,should,yes,no,site-05
+NPS por etapa,relatorios,should,yes,no,site-05
+Métricas de tempo de resposta e % respondidos,relatorios,should,yes,no,site-07
+Segunda via de boleto/PIX pelo SGP,financeiro,should,no,no,específico de provedor
+Desbloqueio de confiança,financeiro,should,no,no,específico de provedor
+Diagnóstico + abertura de chamado no SGP,suporte,should,no,no,específico de provedor
+Aviso de falha massiva por região,suporte,should,no,no,específico de provedor
+Atender centenas de conversas simultâneas,agente,could,yes,no,site-03; fila e limites da API
+Transcrição de áudio do cliente,agente,could,unknown,no,
+Instagram Direct como canal,agente,could,unknown,no,origem Instagram aparece no CRM
+Landing com formulário que continua no WhatsApp,marketing,could,yes,no,site-08
+Lista de espera para quem está sem cobertura,vendas,could,no,no,
+Multi-empresa (vários tenants),plataforma,could,yes,skip,a Maxgiga usa um só; o modelo já fica preparado
+Serviço de agência (acompanhamento mensal),servico,could,yes,skip,é serviço e não software
+Marca/textos/números de resultados do Maestro,marca,could,yes,skip,pertencem ao original
