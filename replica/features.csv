@@ -1,4 +1,10 @@
 feature,area,priority,original,clone,notes
+Integração com o Chat Mix (agente entra como bot; equipe segue no Chat Mix),integracao,must,no,no,o número da API só tem um webhook; confirmar a API do Chat Mix
+Modo massivo: detectar queda em massa pelo status online/offline do SGP,massivo,must,no,no,120-140 contatos simultâneos já aconteceram
+Modo massivo: resposta imediata + marcação de afetado sem abrir chamado,massivo,must,no,no,vale 24h
+Modo massivo: atualizar a previsão uma vez e avisar todos que chamaram,massivo,must,no,no,
+Modo massivo: avisar a normalização e reabrir só quem continuar offline,massivo,should,no,no,grátis dentro de 24h
+Consultar online/offline do cliente no SGP antes do roteiro,suporte,must,no,no,online = problema de Wi-Fi/aparelho
 Agente ativo só fora do horário (noite/domingo/feriado configurável),agente,must,no,no,decisão do usuário
 Agente responde no WhatsApp oficial em segundos,agente,must,yes,no,site-01 site-03
 Conversa natural com tom da marca (sem menu numerado),agente,must,yes,no,site-03
@@ -11,14 +17,14 @@ Registrar chamado técnico para a manhã com prioridade,suporte,must,no,no,LOS p
 Pré-qualificação de interessado (cobertura/plano/dados) sem agendar,vendas,must,yes,no,técnico terceirizado; a equipe agenda
 Avisar o horário de retorno da equipe,agente,must,no,no,
 Base de conhecimento editável (planos/preços/FAQ/cobertura/luzes da ONU),agente,must,yes,no,site-04
-Fila da manhã: o que a IA resolveu e o que ficou pendente,crm,must,no,no,principal tela da equipe
+Fila da manhã: o que a IA resolveu e o que ficou pendente,crm,must,no,no,de preferência como filas/etiquetas no Chat Mix
 Contato cai sozinho no CRM com histórico completo,crm,must,yes,no,site-05
 Registro de início e fim do atendimento da IA,crm,must,yes,no,site-05
 Acesso por papel,seguranca,must,yes,no,site-06
 LGPD: consentimento e exclusão de dados,seguranca,must,yes,no,site-06
 Ler foto das luzes da ONU,suporte,should,no,no,o cliente manda foto
 Transcrição de áudio do cliente,agente,should,unknown,no,
-Funil kanban de pré-vendas,crm,should,yes,no,site-05
+Funil kanban de pré-vendas,crm,could,yes,no,talvez o Chat Mix já cubra
 Ganho/perdido com motivo,crm,should,yes,no,site-05
 Métricas: atendidos fora do horário/% resolvidos pela IA,relatorios,should,yes,no,site-07
 Follow-up automático de pré-venda,agente,could,yes,no,template de marketing ~R$0.32

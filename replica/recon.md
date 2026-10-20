@@ -30,6 +30,20 @@ Daqui o domínio não resolve no DNS, por isso as fotos são a fonte.
 - **Identifica, mas não agenda:** instalação nova e visita técnica. Os técnicos são terceiros, então o agente coleta os dados e deixa a pendência para a equipe agendar.
 - Quando o cliente pede um humano, ninguém está disponível. O agente avisa o horário de retorno e registra a pendência.
 
+## Contexto operacional (usuário, 2026-10-20)
+
+- **Base:** ~400 clientes.
+- **Horário humano:** seg a sex 8h–21h (2 atendentes), sáb até 12h, domingo em plantão (vai mudar com a escala 5x2). Tudo configurável.
+- **Volume fora do horário:** ~20 por noite útil, 20–25 no sábado à tarde, 10–15 no domingo. Ou seja, ~600 por mês. Sobe quando há tráfego pago rodando.
+- **Massivo** (rompimento de fibra, queda geral): já chegaram **120–140 clientes ao mesmo tempo**. Isso é demais para 2 atendentes até no horário comercial.
+- **WhatsApp:** API oficial na BM da Meta, 4 números, todos operados pelo **Chat Mix** (plataforma de atendimento atual). Já existe uma automação lá; o usuário vai mostrar como funciona.
+- **SGP:** dá para consultar se cada cliente está online ou offline (o SGP lê isso do concentrador MikroTik). Os endpoints exatos ainda precisam ser confirmados na documentação da API.
+
+### Restrição de arquitetura
+
+Um número da API oficial entrega as mensagens (webhook) para **um único app**. Como os 4 números estão no Chat Mix, o agente precisa **entrar pelo Chat Mix** (integração com bot externo/webhook/API do Chat Mix), e não tomar o número para si. A equipe continua atendendo no Chat Mix, e a "fila da manhã" pode virar filas/etiquetas lá dentro. Assim não é preciso reconstruir uma caixa de entrada.
+**A confirmar:** se o Chat Mix tem API ou integração com bot externo. Se não tiver, a alternativa é tirar um número do Chat Mix para o agente, com perdas.
+
 ## Core loop
 
 Fora do horário, o cliente chama no WhatsApp. O agente identifica a pessoa (CPF no SGP) e entende o assunto. O que é financeiro ou diagnóstico simples ele resolve sozinho. O que precisa de gente (instalação, visita técnica, caso fora do roteiro) vira uma pendência organizada na fila da manhã, com o histórico completo, e o cliente fica sabendo quando terá retorno.
@@ -71,9 +85,19 @@ Fora do horário, o cliente chama no WhatsApp. O agente identifica a pessoa (CPF
 ## Flows (escopo plantão)
 
 ```
+F00 Modo massivo                               (vale 24h, inclusive no horário comercial)
+    detecção: muitos clientes do mesmo POP/OLT/PON ficam offline no SGP em poucos minutos -> abre "incidente" (ou a equipe abre com 1 clique)
+    -> todo cliente afetado que chamar recebe na hora a mensagem do incidente (o que houve, previsão, sem abrir chamado), e a conversa é marcada "afetado pelo massivo"
+    -> a equipe atualiza a previsão num só lugar e todos os afetados que chamaram recebem a atualização
+    -> normalizou no SGP: o agente avisa os afetados que chamaram (dentro das 24h é grátis) e pede para testarem
+    -> quem continua offline depois de normalizar vira chamado individual
+    edge: cliente de fora da área afetada (segue o F01 normal), previsão estourada, falso positivo (queda de energia no bairro)
+
 F01 Sem internet                               (principal)
     CPF/telefone -> SGP: cliente suspenso por débito? -> sim: vai para F02
-    -> falha massiva/manutenção na região? -> sim: avisa e registra, sem chamado novo
+    -> incidente aberto na região dele? -> sim: F00
+    -> SGP diz ONLINE: a conexão chega na casa -> o problema é Wi-Fi/roteador/aparelho -> roteiro de Wi-Fi
+    -> SGP diz OFFLINE:
     -> pergunta as luzes da ONU:
          LOS vermelho  -> problema na fibra, reiniciar não resolve -> registra chamado prioritário para a manhã e avisa o cliente
          PON piscando  -> sem sincronia -> reinicia a ONU -> não voltou: registra chamado
@@ -125,6 +149,7 @@ FollowUp      id, contact_id, due_at, attempt, status   evidence: badge "follow-
 Appointment   id, contact_id, start_at, kind, status, reminder_sent   evidence: chat de exemplo + lembretes (site-01, site-03); confidence: high
 NpsResponse   id, contact_id, stage, score, comment  evidence: "NPS por etapa" (site-05); confidence: medium
 StageChange   id, contact_id, from_stage, to_stage, by (ia|user), at   evidence: "fica registrado com motivo" (site-05); confidence: medium
+Incident      id, area (pop|olt|pon), started_at, eta?, resolved_at?, status, message   evidence: decisão do usuário (massivo); confidence: high
 User          id, tenant_id, name, role              evidence: "acesso controlado por papel" (site-06); confidence: medium
 AgentConfig   id, tenant_id, tone, knowledge, rules, schedule   evidence: site-04; confidence: medium
 ```
@@ -133,7 +158,7 @@ Relationships: Tenant 1-n Contact/Stage/User. Contact 1-n Conversation, Appointm
 
 ## Feature matrix
 
-See `features.csv`. Must: 17, should: 5, could: 4, skip: 5.
+See `features.csv`. Must: 22, should: 5, could: 5, skip: 5.
 
 ## Out of scope (cannot or should not be cloned)
 
@@ -143,7 +168,7 @@ See `features.csv`. Must: 17, should: 5, could: 4, skip: 5.
 
 ## Size
 
-Screens 8 (6 do painel), flows 5, entities 11. Hard parts:
+Screens 8 (6 do painel), flows 6, entities 12 (+Incident). Hard parts:
 1. WhatsApp Business API oficial (conta na Meta ou num BSP, templates aprovados para follow-up e lembretes fora da janela de 24h).
 2. Agente de IA confiável: roteiro de qualificação, uso de ferramentas (SGP, agenda), passagem para humano, sem inventar preço ou prazo.
 3. Integração com o SGP para cliente, faturas, desbloqueio, falha massiva e registro de chamado (já existe em parte via MCP).
