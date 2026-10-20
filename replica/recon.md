@@ -1,7 +1,7 @@
 # Recon map: Maestro AI (agente de IA no WhatsApp + CRM próprio)
 
-Scope: o ciclo principal (o agente atende no WhatsApp, qualifica, agenda e faz follow-up) e o CRM em funil que recebe cada conversa. Adaptado ao atendimento de um provedor de internet.
-For: Maxgiga (provedor de internet), uso interno no atendimento e nas vendas.
+Scope: **atendente de plantão fora do horário** (noite, domingo, feriado). Resolve sozinho o que dá: boleto, desbloqueio, LOS e reinício de equipamento. O resto ele registra e deixa organizado para a equipe na abertura. **Não agenda instalação**: a instalação depende de técnico terceirizado, então o agente só identifica e pré-qualifica o interessado.
+For: Maxgiga (provedor de internet), uso interno.
 Date: 2026-10-20
 
 > **Confiança: MÉDIA.** O site público foi mapeado inteiro pelas 8 fotos enviadas pelo usuário (`screens/site-01..08.jpg`). O painel interno do CRM só aparece numa ilustração do funil (site-05). As outras telas internas são inferidas e estão marcadas assim.
@@ -23,9 +23,16 @@ Para a Maxgiga isso significa que não existe um "app" para copiar tela por tela
 
 Daqui o domínio não resolve no DNS, por isso as fotos são a fonte.
 
+## Decisões de escopo (usuário, 2026-10-20)
+
+- O agente funciona só **fora do horário de atendimento** (configurável: noites, domingos, feriados). No horário comercial a equipe atende normalmente.
+- **Resolve sozinho:** segunda via de boleto/PIX, desbloqueio de confiança, diagnóstico de "sem internet" (LOS, luzes da ONU, reinício de ONU e roteador).
+- **Identifica, mas não agenda:** instalação nova e visita técnica. Os técnicos são terceiros, então o agente coleta os dados e deixa a pendência para a equipe agendar.
+- Quando o cliente pede um humano, ninguém está disponível. O agente avisa o horário de retorno e registra a pendência.
+
 ## Core loop
 
-O contato chega no WhatsApp, a IA responde em segundos (24/7), faz poucas perguntas para qualificar, oferece horários reais e agenda. Se o contato some, a IA retoma depois. Cada conversa vira automaticamente um card no funil do CRM, com o histórico e a indicação de quem está atendendo (IA ou equipe).
+Fora do horário, o cliente chama no WhatsApp. O agente identifica a pessoa (CPF no SGP) e entende o assunto. O que é financeiro ou diagnóstico simples ele resolve sozinho. O que precisa de gente (instalação, visita técnica, caso fora do roteiro) vira uma pendência organizada na fila da manhã, com o histórico completo, e o cliente fica sabendo quando terá retorno.
 
 ## Capacidades declaradas no site
 
@@ -61,29 +68,33 @@ O contato chega no WhatsApp, a IA responde em segundos (24/7), faz poucas pergun
 | S07 | Configuração do agente | interno da agência | conhecimento, regras, tom, roteiro de agendamento | n/a | inferido: no Maestro quem configura é a agência. Na Maxgiga será uma tela própria |
 | S08 | Landing + formulário de demonstração | site público | captar interessados | hero, seções, FAQ em acordeão, formulário (nome, WhatsApp, empresa), botão flutuante do WhatsApp | visto (site-01..08) |
 
-## Flows (adaptados à Maxgiga)
+## Flows (escopo plantão)
 
 ```
-F01 Interessado contrata internet          (equivale a "qualifica e agenda avaliação")
-    S01: pergunta -> IA pede endereço/CEP -> checa cobertura -> 2 perguntas de perfil (uso, quantas pessoas) -> sugere plano -> oferece 2 horários de instalação -> confirma
-    S02: card nasce em "Novo contato" -> "Qualificado" -> "Instalação agendada" (badge: agendado pela IA)
-    happy path: ~5 mensagens do cliente (no exemplo do site são 3 até os horários)
-    edge: sem cobertura (lista de espera), CPF com pendência, nenhum horário serve, pergunta fora do roteiro
+F01 Sem internet                               (principal)
+    CPF/telefone -> SGP: cliente suspenso por débito? -> sim: vai para F02
+    -> falha massiva/manutenção na região? -> sim: avisa e registra, sem chamado novo
+    -> pergunta as luzes da ONU:
+         LOS vermelho  -> problema na fibra, reiniciar não resolve -> registra chamado prioritário para a manhã e avisa o cliente
+         PON piscando  -> sem sincronia -> reinicia a ONU -> não voltou: registra chamado
+         tudo normal   -> reinicia ONU e roteador passo a passo -> testa (Wi-Fi, cabo, outro aparelho) -> resolvido ou registra chamado
+    edge: cliente sem acesso ao equipamento, não sabe ler as luzes (pedir foto), áudio em vez de texto
 
-F02 Follow-up de quem sumiu
-    contato parou de responder -> badge "follow-up em N dias" -> IA retoma -> volta ao fluxo ou é marcado perdido com motivo
+F02 Boleto / desbloqueio
+    CPF -> faturas em aberto no SGP -> envia 2ª via/PIX -> se suspenso: oferece desbloqueio de confiança (regra do SGP)
+    edge: desbloqueio já usado, várias faturas, CPF não encontrado, cliente diz que já pagou (registra para conferência)
 
-F03 Cliente com problema técnico               (novo, específico de provedor)
-    S01: identifica por CPF no SGP -> checa falha massiva na região -> diagnóstico guiado -> abre chamado -> agenda visita
+F03 Interessado em contratar                   (identifica, NÃO agenda)
+    endereço/CEP -> cobertura -> perfil de uso -> sugere o plano -> coleta nome, CPF, telefone, melhor horário
+    -> card "Pré-venda: aguardando equipe" -> equipe liga e agenda com o técnico terceirizado
+    edge: sem cobertura (lista de espera), já é cliente (mudança de endereço/upgrade)
 
-F04 Segunda via e desbloqueio                  (novo, específico de provedor)
-    S01: CPF -> faturas no SGP -> boleto/PIX -> desbloqueio de confiança se permitido
+F04 Pedido de visita técnica / outros
+    registra motivo + dados -> pendência para a manhã -> informa o horário de retorno
 
-F05 Passagem para humano
-    IA detecta pedido, irritação ou caso fora do escopo -> badge "IA finalizou / equipe" -> atendente assume com o histórico em S03
-
-F06 Gestor acompanha
-    S02 / S04: onde o funil perde, de onde vêm os contatos, NPS por etapa
+F05 Equipe abre o dia
+    painel "Fila da manhã": resolvidos pela IA (só conferir) | chamados técnicos (por prioridade, LOS primeiro) | pré-vendas | outros
+    atendente assume com o histórico -> marca como feito
 ```
 
 ## Components
@@ -122,7 +133,7 @@ Relationships: Tenant 1-n Contact/Stage/User. Contact 1-n Conversation, Appointm
 
 ## Feature matrix
 
-See `features.csv`. Must: 16, should: 10, could: 5, skip: 3.
+See `features.csv`. Must: 17, should: 5, could: 4, skip: 5.
 
 ## Out of scope (cannot or should not be cloned)
 
@@ -132,9 +143,9 @@ See `features.csv`. Must: 16, should: 10, could: 5, skip: 3.
 
 ## Size
 
-Screens 8 (6 do painel), flows 6, entities 11. Hard parts:
+Screens 8 (6 do painel), flows 5, entities 11. Hard parts:
 1. WhatsApp Business API oficial (conta na Meta ou num BSP, templates aprovados para follow-up e lembretes fora da janela de 24h).
 2. Agente de IA confiável: roteiro de qualificação, uso de ferramentas (SGP, agenda), passagem para humano, sem inventar preço ou prazo.
-3. Integração com o SGP para cliente, faturas, desbloqueio e chamados (já existe em parte via MCP), e agenda de instalação e técnicos.
+3. Integração com o SGP para cliente, faturas, desbloqueio, falha massiva e registro de chamado (já existe em parte via MCP).
 
-Size: **M**. Umas 3 a 5 semanas para o agente com F01, F02 e F05 mais o funil do CRM. F03, F04, relatórios e NPS ficam para uma segunda fase.
+Size: **M, no limite inferior**. Umas 3 a 4 semanas: F01, F02, F03 e a fila da manhã. Sem agendamento automático, a parte mais difícil (agenda de técnicos) sai do escopo.

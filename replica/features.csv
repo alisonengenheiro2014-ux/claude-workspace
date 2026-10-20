@@ -1,35 +1,32 @@
 feature,area,priority,original,clone,notes
-Agente responde no WhatsApp oficial em segundos 24/7,agente,must,yes,no,site-01 site-03
+Agente ativo só fora do horário (noite/domingo/feriado configurável),agente,must,no,no,decisão do usuário
+Agente responde no WhatsApp oficial em segundos,agente,must,yes,no,site-01 site-03
 Conversa natural com tom da marca (sem menu numerado),agente,must,yes,no,site-03
-Qualificação com poucas perguntas,agente,must,yes,no,Maxgiga: CEP/cobertura + perfil de uso
-Agendamento na conversa com horários reais,agenda,must,yes,no,Maxgiga: instalação/visita técnica
-Confirmação e lembrete do agendamento,agenda,must,yes,no,site-03; exige template aprovado na Meta
-Follow-up automático de quem sumiu,agente,must,yes,no,site-03 site-05
-Passagem para humano com contexto,agente,must,yes,no,site-03
-Base de conhecimento editável (planos/preços/FAQ/cobertura),agente,must,yes,no,site-04
+Identificar cliente por CPF/telefone no SGP,integracao,must,yes,no,original: "sistema de gestão"
+Segunda via de boleto/PIX pelo SGP,financeiro,must,no,no,
+Desbloqueio de confiança,financeiro,must,no,no,
+Diagnóstico sem internet: suspensão/falha massiva/luzes da ONU,suporte,must,no,no,LOS vermelho = fibra; não adianta reiniciar
+Roteiro guiado de reinício de ONU e roteador,suporte,must,no,no,
+Registrar chamado técnico para a manhã com prioridade,suporte,must,no,no,LOS primeiro
+Pré-qualificação de interessado (cobertura/plano/dados) sem agendar,vendas,must,yes,no,técnico terceirizado; a equipe agenda
+Avisar o horário de retorno da equipe,agente,must,no,no,
+Base de conhecimento editável (planos/preços/FAQ/cobertura/luzes da ONU),agente,must,yes,no,site-04
+Fila da manhã: o que a IA resolveu e o que ficou pendente,crm,must,no,no,principal tela da equipe
 Contato cai sozinho no CRM com histórico completo,crm,must,yes,no,site-05
-Funil kanban com etapas e arrastar,crm,must,yes,no,site-05
-Badges de status (IA atendendo/follow-up/agendado pela IA/equipe),crm,must,yes,no,site-05
 Registro de início e fim do atendimento da IA,crm,must,yes,no,site-05
-Ganho/perdido com motivo,crm,must,yes,no,site-05
 Acesso por papel,seguranca,must,yes,no,site-06
 LGPD: consentimento e exclusão de dados,seguranca,must,yes,no,site-06
-Integração com o SGP (cliente/plano),integracao,must,yes,no,original: "sistema de gestão"; Maxgiga: SGP
-Campos personalizados no contato,crm,should,yes,no,Maxgiga: CPF/endereço/plano/origem
-Origem do contato (Instagram/anúncio/indicação),crm,should,yes,no,site-05
-Relatórios de origem/conversão/perdas,relatorios,should,yes,no,site-05
-Desempenho por atendente,relatorios,should,yes,no,site-05
-NPS por etapa,relatorios,should,yes,no,site-05
-Métricas de tempo de resposta e % respondidos,relatorios,should,yes,no,site-07
-Segunda via de boleto/PIX pelo SGP,financeiro,should,no,no,específico de provedor
-Desbloqueio de confiança,financeiro,should,no,no,específico de provedor
-Diagnóstico + abertura de chamado no SGP,suporte,should,no,no,específico de provedor
-Aviso de falha massiva por região,suporte,should,no,no,específico de provedor
-Atender centenas de conversas simultâneas,agente,could,yes,no,site-03; fila e limites da API
-Transcrição de áudio do cliente,agente,could,unknown,no,
-Instagram Direct como canal,agente,could,unknown,no,origem Instagram aparece no CRM
-Landing com formulário que continua no WhatsApp,marketing,could,yes,no,site-08
+Ler foto das luzes da ONU,suporte,should,no,no,o cliente manda foto
+Transcrição de áudio do cliente,agente,should,unknown,no,
+Funil kanban de pré-vendas,crm,should,yes,no,site-05
+Ganho/perdido com motivo,crm,should,yes,no,site-05
+Métricas: atendidos fora do horário/% resolvidos pela IA,relatorios,should,yes,no,site-07
+Follow-up automático de pré-venda,agente,could,yes,no,template de marketing ~R$0.32
+NPS após atendimento,relatorios,could,yes,no,site-05
 Lista de espera para quem está sem cobertura,vendas,could,no,no,
-Multi-empresa (vários tenants),plataforma,could,yes,skip,a Maxgiga usa um só; o modelo já fica preparado
+Instagram Direct como canal,agente,could,unknown,no,
+Agendamento automático de instalação/visita,agenda,could,yes,skip,técnico terceirizado; fica fora por decisão do usuário
+Atendimento no horário comercial,agente,could,no,skip,a equipe atende
+Multi-empresa (vários tenants),plataforma,could,yes,skip,a Maxgiga usa um só
 Serviço de agência (acompanhamento mensal),servico,could,yes,skip,é serviço e não software
 Marca/textos/números de resultados do Maestro,marca,could,yes,skip,pertencem ao original
