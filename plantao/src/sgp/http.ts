@@ -127,10 +127,17 @@ export class HttpSgp implements SgpClient {
 
   private async customerFromContract(c: Json, raw: Json): Promise<SgpCustomer> {
     const id = String(pick(c, "contratoId", "contrato", "idContrato", "id"));
-    const phones = firstArray(c, "telefones", "contatos").concat(firstArray(raw, "telefones", "contatos"))
-      .map((t) => digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t))
-      .filter((p) => p.length >= 10)
-      .map((p) => (p.startsWith("55") ? p : `55${p}`));
+    // coleta telefones do contrato ativo e de todos os contratos da resposta (SGP pode ter o telefone em qualquer um)
+    const allContratos = firstArray(raw, "contratos", "dados", "data", "clientes");
+    const allPhoneEntries = firstArray(c, "telefones", "contatos")
+      .concat(firstArray(raw, "telefones", "contatos"))
+      .concat(allContratos.flatMap((ct) => firstArray(ct, "telefones", "contatos")));
+    const phones = [...new Set(
+      allPhoneEntries
+        .map((t) => digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t))
+        .filter((p) => p.length >= 10)
+        .map((p) => (p.startsWith("55") ? p : `55${p}`))
+    )];
     return {
       id,
       name: String(pick(c, "razaoSocial", "nome") ?? pick(raw, "razaoSocial", "nome") ?? ""),
