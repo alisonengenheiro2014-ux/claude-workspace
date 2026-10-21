@@ -4,7 +4,7 @@ Agente de atendimento no WhatsApp para provedor de internet. Atende fora do hor�
 
 Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features.csv`).
 
-## O que já funciona (semanas 1 e 2)
+## O que já funciona (semanas 1 a 3)
 
 - **Quando atende:** fora do horário humano (seg–sex 8h–21h, sáb 8h–12h; domingo e feriado sem equipe) e, **em massivo, 24h**.
 - **Massivo:** cliente de área com incidente aberto recebe na hora a mensagem do incidente, **sem chamar a IA**, e fica vinculado à ocorrência.
@@ -13,6 +13,8 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 - **Áudio:** transcrito (servidor Whisper local) e respondido como texto.
 - **Foto e vídeo da ONU:** leitura das luzes POWER/PON/LOS com resposta estruturada; vídeo vira até 8 quadros para pegar luz piscando. Arquivos não ficam guardados.
 - **Painel da equipe** (`/painel`): login com papéis (admin e atendente), fila da manhã por prioridade com "ver conversa" e "feito", números das últimas 24h, abrir massivo por área, atualizar a previsão e encerrar avisando automaticamente quem chamou nas últimas 24h, horários e feriados editáveis, base de conhecimento editável (o agente só usa o que estiver lá). Funciona no celular, com tema claro e escuro.
+- **Massivo automático:** a cada 2 minutos o sistema lê o status de todos os clientes no SGP. Se pelo menos 3 clientes da mesma PON caem em 10 minutos e 60% da área fica offline, abre um massivo "suspeito" sozinho (a equipe confirma ou descarta no painel). Sobe para OLT ou POP só quando duas ou mais áreas abaixo caíram. Quando 90% da área volta (e o massivo tem pelo menos 5 minutos), encerra, avisa quem chamou e cria chamado para quem continua offline. Tudo ajustável no `.env`.
+- **Manutenção:** conversa parada há 12h é encerrada (a próxima mensagem abre um atendimento novo); histórico com mais de 180 dias é apagado (LGPD).
 - **Robustez:** webhook repetido não gera resposta dupla, mensagens do mesmo cliente são atendidas em ordem, assinatura da Meta conferida, uma conversa aberta por cliente.
 
 ## Ainda falta
@@ -21,14 +23,13 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 | --- | --- |
 | integração com o Chat Mix | documentação da API do Chat Mix |
 | SGP real (hoje usa dados simulados) | token e documentação da API do SGP |
-| detecção automática de massivo pela varredura do SGP | semana 3–4 |
-| passagem para a equipe às 8h, resumo da manhã, retenção LGPD | semana 3–4 |
+| passagem da conversa para a equipe às 8h | integração com o Chat Mix |
 
 ## Rodar
 
 ```bash
 npm install
-npm test                 # 42 testes (4 precisam de Postgres)
+npm test                 # 56 testes (5 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")

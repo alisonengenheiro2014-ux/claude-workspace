@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { StoredSnapshot } from "../jobs/detector.js";
 import type { Contact, Conversation, Incident, KnowledgeRow, PendingItem, Store, StoredMessage, User } from "./types.js";
 
 export class MemoryStore implements Store {
@@ -11,6 +12,7 @@ export class MemoryStore implements Store {
   knowledge: KnowledgeRow[] = [];
   hours: { windows: { weekday: number; opensAt: string; closesAt: string }[]; holidays: string[] } = { windows: [], holidays: [] };
   pending: PendingItem[] = [];
+  snapshots: StoredSnapshot[] = [];
 
   async upsertContact(phone: string) {
     let c = this.contacts.find((x) => x.phone === phone);
@@ -63,10 +65,15 @@ export class MemoryStore implements Store {
     );
   }
 
-  async createIncident(i: Omit<Incident, "id">) {
-    const inc = { id: randomUUID(), startedAt: new Date(), ...i };
+  async createIncident(i: Omit<Incident, "id"> & { detectedBy?: "varredura" | "equipe" }) {
+    if (await this.openIncidentExact(i.areaType, i.areaId)) throw new Error("já existe massivo aberto nessa área");
+    const inc = { id: randomUUID(), startedAt: new Date(), detectedBy: "equipe" as const, ...i };
     this.incidents.push(inc);
     return inc;
+  }
+
+  private async openIncidentExact(areaType: string, areaId: string) {
+    return this.incidents.find((x) => x.areaType === areaType && x.areaId === areaId && (x.status === "suspeito" || x.status === "confirmado"));
   }
 
   async linkIncidentContact(incidentId: string, contactId: string) {
@@ -162,5 +169,31 @@ export class MemoryStore implements Store {
       pendentes: this.pending.filter((p) => p.status === "aberto").length,
       massivo: convs.filter((c) => c.topic === "massivo").length,
     };
+  }
+
+  async loadSnapshots() {
+    return this.snapshots;
+  }
+
+  async saveSnapshots(snaps: StoredSnapshot[]) {
+    this.snapshots = snaps;
+  }
+
+  async closeIdleConversations(before: Date) {
+    let n = 0;
+    for (const c of this.conversations.filter((x) => x.status !== "closed")) {
+      const last = this.messages.filter((m) => m.conversationId === c.id).at(-1)?.sentAt ?? c.createdAt;
+      if (last < before) {
+        c.status = "closed";
+        n++;
+      }
+    }
+    return n;
+  }
+
+  async deleteMessagesBefore(before: Date) {
+    const n = this.messages.length;
+    this.messages = this.messages.filter((m) => m.sentAt >= before);
+    return n - this.messages.length;
   }
 }

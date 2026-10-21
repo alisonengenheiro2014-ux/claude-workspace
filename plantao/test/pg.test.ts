@@ -103,4 +103,31 @@ describe.skipIf(!url)("PgStore", () => {
     expect(after.pendentes).toBe(before.pendentes - 1);
     expect(after.conversas).toBeGreaterThanOrEqual(3);
   });
+
+  it("leituras do SGP, massivo automático, conversas paradas e retenção", async () => {
+    const t1 = new Date("2026-10-21T02:00:00Z");
+    await store.saveSnapshots([
+      { customerId: "a", area: { pop: "P", olt: "O", pon: "N1" }, online: true, changedAt: t1 },
+      { customerId: "b", area: { pop: "P", olt: "O", pon: "N1" }, online: false, changedAt: t1 },
+    ], t1);
+    const t2 = new Date("2026-10-21T02:02:00Z");
+    // "b" saiu do SGP (cancelado): some da tabela
+    await store.saveSnapshots([{ customerId: "a", area: { pop: "P", olt: "O", pon: "N1" }, online: false, changedAt: t2 }], t2);
+    const snaps = await store.loadSnapshots();
+    expect(snaps).toHaveLength(1);
+    expect(snaps[0]).toMatchObject({ customerId: "a", online: false, area: { pon: "N1" } });
+    expect(snaps[0].changedAt.toISOString()).toBe(t2.toISOString());
+
+    const auto = await store.createIncident({ areaType: "pon", areaId: "N1", status: "suspeito", message: "auto", eta: null, detectedBy: "varredura" });
+    expect((await store.getIncident(auto.id))?.detectedBy).toBe("varredura");
+
+    const c = await store.upsertContact("5511977776666");
+    const conv = await store.openConversation(c.id, "meta", "n");
+    await store.addMessage({ conversationId: conv.id, author: "cliente", body: "antiga" });
+    await pool.query(`update messages set sent_at = now() - interval '200 days' where conversation_id = $1`, [conv.id]);
+    expect(await store.closeIdleConversations(new Date(Date.now() - 12 * 3_600_000))).toBeGreaterThanOrEqual(1);
+    expect((await store.getConversation(conv.id))?.status).toBe("closed");
+    expect(await store.deleteMessagesBefore(new Date(Date.now() - 180 * 86_400_000))).toBe(1);
+    expect(await store.history(conv.id)).toEqual([]);
+  });
 });

@@ -24,6 +24,12 @@ const Env = z.object({
   TRANSCRICAO_MODELO: z.string().default("Systran/faster-whisper-small"),
 
   EMPRESA_NOME: z.string().default("Maxgiga"),
+
+  VARREDURA_MINUTOS: z.coerce.number().min(1).default(2),
+  MASSIVO_MIN_CLIENTES: z.coerce.number().min(1).default(3),
+  MASSIVO_PERCENTUAL: z.coerce.number().min(1).max(100).default(60),
+  CONVERSA_INATIVA_HORAS: z.coerce.number().min(1).default(12),
+  RETENCAO_DIAS: z.coerce.number().min(7).default(180),
 });
 
 export type Config = z.infer<typeof Env>;

@@ -24,6 +24,7 @@ export class HttpSgp implements SgpClient {
     throw new Error(`SGP: operação "${op}" aguardando confirmação dos endpoints`);
   }
 
+  listConnections(): never { return this.pending("listConnections"); }
   findCustomer(): never { return this.pending("findCustomer"); }
   connectionStatus(): never { return this.pending("connectionStatus"); }
   openInvoices(): never { return this.pending("openInvoices"); }

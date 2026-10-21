@@ -1,3 +1,5 @@
+import type { StoredSnapshot } from "../jobs/detector.js";
+
 // Persistência. Duas implementações: memória (testes e simulador) e Postgres (produção).
 
 export type Author = "cliente" | "ia" | "humano" | "sistema";
@@ -35,6 +37,7 @@ export interface StoredMessage {
 
 export interface Incident {
   id: string;
+  detectedBy?: "varredura" | "equipe";
   areaType: "pop" | "olt" | "pon" | "manual";
   areaId: string;
   status: "suspeito" | "confirmado" | "resolvido" | "descartado";
@@ -63,7 +66,7 @@ export interface Store {
   addMessage(m: { conversationId: string; author: Author; body: string | null; channelMessageId?: string }): Promise<boolean>;
   history(conversationId: string, limit?: number): Promise<StoredMessage[]>;
   openIncidentForArea(area: { pop: string; olt: string; pon: string }): Promise<Incident | null>;
-  createIncident(i: Omit<Incident, "id">): Promise<Incident>;
+  createIncident(i: Omit<Incident, "id"> & { detectedBy?: "varredura" | "equipe" }): Promise<Incident>;
   linkIncidentContact(incidentId: string, contactId: string): Promise<void>;
   createPending(p: Omit<PendingItem, "id" | "status" | "createdAt">): Promise<PendingItem>;
   listPending(status?: PendingItem["status"]): Promise<PendingItem[]>;
@@ -83,6 +86,13 @@ export interface Store {
   setHours(windows: { weekday: number; opensAt: string; closesAt: string }[], holidays: string[]): Promise<void>;
   listKnowledge(includeInactive?: boolean): Promise<KnowledgeRow[]>;
   saveKnowledge(k: Omit<KnowledgeRow, "id"> & { id?: string }): Promise<KnowledgeRow>;
+  // --- rotinas ---
+  loadSnapshots(): Promise<StoredSnapshot[]>;
+  saveSnapshots(snaps: StoredSnapshot[], checkedAt: Date): Promise<void>;
+  // fecha conversas sem mensagem desde "before"; devolve quantas
+  closeIdleConversations(before: Date): Promise<number>;
+  // LGPD: apaga mensagens anteriores a "before"; devolve quantas
+  deleteMessagesBefore(before: Date): Promise<number>;
   stats(since: Date): Promise<{ conversas: number; resolvidasIa: number; pendentes: number; massivo: number }>;
 }
 

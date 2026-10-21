@@ -1,5 +1,6 @@
 // SGP simulado para desenvolvimento e testes. Dados fictícios: nenhum cliente real.
 import type {
+  ConnectionSnapshot,
   ConnectionStatus,
   CoverageResult,
   Invoice,
@@ -9,7 +10,7 @@ import type {
   TrustUnlockResult,
 } from "./types.js";
 
-interface MockRecord {
+export interface MockRecord {
   customer: SgpCustomer;
   status: ConnectionStatus;
   invoices: Invoice[];
@@ -17,6 +18,16 @@ interface MockRecord {
 }
 
 const area = (pon: string) => ({ pop: "POP-CENTRO", olt: "OLT-01", pon });
+
+// cliente fictício extra, para montar cenários (ex.: uma PON inteira caindo)
+export function mockRecord(id: string, pon: string, online = true, olt = "OLT-01"): MockRecord {
+  return {
+    customer: { id, name: `Cliente ${id}`, cpf: id.padStart(11, "0"), phones: [`55119${id.padStart(8, "0")}`], plan: "300 Mega", area: { pop: "POP-CENTRO", olt, pon } },
+    status: { state: online ? "online" : "offline", suspended: false, since: "2026-10-01T00:00:00Z" },
+    invoices: [],
+    unlockUsed: false,
+  };
+}
 
 export function defaultMockData(): MockRecord[] {
   return [
@@ -49,6 +60,17 @@ export class MockSgp implements SgpClient {
     const r = this.records.find((x) => x.customer.id === customerId);
     if (!r) throw new Error(`cliente ${customerId} não encontrado`);
     return r;
+  }
+
+  async listConnections(): Promise<ConnectionSnapshot[]> {
+    return this.records.map((r) => ({ customerId: r.customer.id, area: r.customer.area, online: r.status.state === "online" }));
+  }
+
+  // só para testes e simulador: derruba ou religa todos os clientes de uma PON
+  setPonState(pon: string, online: boolean) {
+    for (const r of this.records.filter((x) => x.customer.area.pon === pon)) {
+      r.status = { ...r.status, state: online ? "online" : "offline", since: new Date().toISOString() };
+    }
   }
 
   async findCustomer(q: { cpf?: string; phone?: string }) {

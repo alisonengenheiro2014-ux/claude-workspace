@@ -136,6 +136,13 @@ export function registerPanel(app: FastifyInstance, deps: PanelDeps) {
     return reply.redirect("/painel?aviso=" + encodeURIComponent(`Massivo encerrado. ${n} cliente(s) avisado(s).`));
   });
 
+  app.post("/incidentes/:id/confirmar", async (req, reply) => {
+    const user = await guard(req, reply);
+    if (!user) return;
+    await store.updateIncident((req.params as { id: string }).id, { status: "confirmado" });
+    return reply.redirect("/painel?aviso=Massivo%20confirmado");
+  });
+
   app.post("/incidentes/:id/descartar", async (req, reply) => {
     const user = await guard(req, reply);
     if (!user) return;

@@ -1,4 +1,5 @@
 import pg from "pg";
+import type { StoredSnapshot } from "../jobs/detector.js";
 import type { Contact, Conversation, Incident, KnowledgeRow, PendingItem, Store, StoredMessage, User } from "./types.js";
 
 const toContact = (r: any): Contact => ({
@@ -9,7 +10,7 @@ const toConversation = (r: any): Conversation => ({
   status: r.status, topic: r.topic, incidentId: r.incident_id, createdAt: r.created_at,
 });
 const toIncident = (r: any): Incident => ({
-  id: r.id, areaType: r.area_type, areaId: r.area_id, status: r.status, message: r.message, eta: r.eta,
+  id: r.id, areaType: r.area_type, areaId: r.area_id, status: r.status, message: r.message, eta: r.eta, detectedBy: r.detected_by,
 });
 const toUser = (r: any): User => ({ id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash, role: r.role });
 const toKnowledge = (r: any): KnowledgeRow => ({ id: r.id, kind: r.kind, title: r.title, body: r.body, active: r.active });
@@ -99,11 +100,11 @@ export class PgStore implements Store {
     return rows[0] ? toIncident(rows[0]) : null;
   }
 
-  async createIncident(i: Omit<Incident, "id">) {
+  async createIncident(i: Omit<Incident, "id"> & { detectedBy?: "varredura" | "equipe" }) {
     const { rows } = await this.pool.query(
       `insert into incidents (area_type, area_id, status, message, eta, detected_by)
-       values ($1, $2, $3, $4, $5, 'equipe') returning *`,
-      [i.areaType, i.areaId, i.status, i.message, i.eta],
+       values ($1, $2, $3, $4, $5, $6) returning *`,
+      [i.areaType, i.areaId, i.status, i.message, i.eta, i.detectedBy ?? "equipe"],
     );
     return toIncident(rows[0]);
   }
@@ -262,5 +263,57 @@ export class PgStore implements Store {
     );
     const r = rows[0];
     return { conversas: r.conversas, resolvidasIa: r.resolvidas_ia, pendentes: r.pendentes, massivo: r.massivo };
+  }
+
+  async loadSnapshots() {
+    const { rows } = await this.pool.query(`select * from sgp_status_snapshots`);
+    return rows.map((r) => ({
+      customerId: r.sgp_customer_id,
+      area: { pop: r.area_pop ?? "", olt: r.area_olt ?? "", pon: r.area_pon ?? "" },
+      online: r.online,
+      changedAt: r.changed_at,
+    }));
+  }
+
+  async saveSnapshots(snaps: StoredSnapshot[], checkedAt: Date) {
+    const client = await this.pool.connect();
+    try {
+      await client.query("begin");
+      await client.query(
+        `insert into sgp_status_snapshots (sgp_customer_id, area_pop, area_olt, area_pon, online, changed_at, checked_at)
+         select * from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::boolean[], $6::timestamptz[], $7::timestamptz[])
+         on conflict (sgp_customer_id) do update set
+           area_pop = excluded.area_pop, area_olt = excluded.area_olt, area_pon = excluded.area_pon,
+           online = excluded.online, changed_at = excluded.changed_at, checked_at = excluded.checked_at`,
+        [
+          snaps.map((s) => s.customerId), snaps.map((s) => s.area.pop), snaps.map((s) => s.area.olt), snaps.map((s) => s.area.pon),
+          snaps.map((s) => s.online), snaps.map((s) => s.changedAt), snaps.map(() => checkedAt),
+        ],
+      );
+      // cliente que sumiu do SGP (cancelado) sai da conta da área
+      await client.query(`delete from sgp_status_snapshots where checked_at < $1`, [checkedAt]);
+      await client.query("commit");
+    } catch (err) {
+      await client.query("rollback");
+      throw err;
+    } finally {
+      client.release();
+    }
+  }
+
+  async closeIdleConversations(before: Date) {
+    const { rowCount } = await this.pool.query(
+      `update conversations c set status = 'closed', closed_at = now(), updated_at = now(),
+         ai_finished_at = coalesce(ai_finished_at, now())
+       where status <> 'closed'
+         and coalesce((select max(sent_at) from messages m where m.conversation_id = c.id), c.created_at) < $1`,
+      [before],
+    );
+    return rowCount ?? 0;
+  }
+
+  async deleteMessagesBefore(before: Date) {
+    const { rowCount } = await this.pool.query(`delete from messages where sent_at < $1`, [before]);
+    return rowCount ?? 0;
   }
 }

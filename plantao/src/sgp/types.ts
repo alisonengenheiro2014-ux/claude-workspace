@@ -40,7 +40,15 @@ export interface CoverageResult {
   note?: string;
 }
 
+export interface ConnectionSnapshot {
+  customerId: string;
+  area: { pop: string; olt: string; pon: string };
+  online: boolean;
+}
+
 export interface SgpClient {
+  // todas as conexões de uma vez, para a varredura de massivo
+  listConnections(): Promise<ConnectionSnapshot[]>;
   findCustomer(query: { cpf?: string; phone?: string }): Promise<SgpCustomer | null>;
   connectionStatus(customerId: string): Promise<ConnectionStatus>;
   openInvoices(customerId: string): Promise<Invoice[]>;

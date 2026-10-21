@@ -87,7 +87,7 @@ export function dashboard(p: {
     ? p.incidents
         .map(
           (i) => `<div class="card"><div class="row"><div>
-            <span class="chip ${i.status === "suspeito" ? "p2" : "p1"}">${i.status}</span>
+            <span class="chip ${i.status === "suspeito" ? "p2" : "p1"}">${i.status}</span>${i.detectedBy === "varredura" ? `<span class="chip">detectado automaticamente</span>` : ""}
             <span class="chip">${i.areaId.toLowerCase().startsWith(i.areaType) ? esc(i.areaId) : `${i.areaType.toUpperCase()} ${esc(i.areaId)}`}</span>
             <span class="chip">${i.contactsCount} cliente(s) chamaram</span>
             <p>${esc(i.message)}</p><p class="muted">Desde ${dt(i.startedAt)} · previsão ${dt(i.eta)}</p></div></div>
@@ -95,7 +95,7 @@ export function dashboard(p: {
               <div style="flex:1;min-width:200px"><label>Nova previsão</label><input type="datetime-local" name="eta"></div>
               <div style="align-self:flex-end"><button>Atualizar e avisar clientes</button></div>
             </form>
-            <p><form class="inline" method="post" action="/incidentes/${i.id}/resolver"><button>Normalizou: avisar clientes</button></form>
+            <p>${i.status === "suspeito" ? `<form class="inline" method="post" action="/incidentes/${i.id}/confirmar"><button>Confirmar massivo</button></form> ` : ""}<form class="inline" method="post" action="/incidentes/${i.id}/resolver"><button>Normalizou: avisar clientes</button></form>
             <form class="inline" method="post" action="/incidentes/${i.id}/descartar"><button class="ghost">Descartar (alarme falso)</button></form></p>
           </div>`,
         )
