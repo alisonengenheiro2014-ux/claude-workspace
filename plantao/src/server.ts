@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { pathToFileURL } from "node:url";
 import { buildRouter } from "./app.js";
 import { parseMetaWebhook, verifyMetaSignature } from "./channels/meta.js";
+import { parseMaxChatWebhook } from "./channels/maxchat.js";
 import { loadConfig, type Config } from "./config.js";
 import { DETECTOR_PADRAO } from "./jobs/detector.js";
 import { despedidas, manutencao, normalizacao, startScheduler, varreduraSgp } from "./jobs/routines.js";
@@ -40,6 +41,22 @@ export function buildServer(cfg: Config, router: Router, panel?: PanelDeps) {
     // responde 200 na hora; o processamento segue em segundo plano
     for (const msg of parseMetaWebhook(json)) {
       router.handle(msg).catch((err) => req.log.error({ err, from: msg.from }, "falha ao processar mensagem"));
+    }
+    return reply.code(200).send();
+  });
+
+  // Webhook do MaxChat — o MaxChat chama este endpoint a cada nova mensagem recebida.
+  // Configure a URL de automação no MaxChat como: https://<seu-domínio>/webhooks/maxchat
+  app.post("/webhooks/maxchat", async (req, reply) => {
+    const { json } = req.body as { raw: Buffer; json: unknown };
+    // Se tiver segredo configurado, valida pelo header X-MaxChat-Secret
+    const secret = cfg.MAXCHAT_WEBHOOK_SECRET;
+    if (secret) {
+      const given = req.headers["x-maxchat-secret"] as string | undefined;
+      if (given !== secret) return reply.code(401).send();
+    }
+    for (const msg of parseMaxChatWebhook(json, cfg.MAXCHAT_CHANNEL_NUMBER)) {
+      router.handle(msg).catch((err) => req.log.error({ err, from: msg.from }, "falha ao processar mensagem maxchat"));
     }
     return reply.code(200).send();
   });

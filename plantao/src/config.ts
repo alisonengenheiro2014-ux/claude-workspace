@@ -16,6 +16,11 @@ const Env = z.object({
   META_APP_SECRET: z.string().default(""),
   META_VERIFY_TOKEN: z.string().default(""),
 
+  MAXCHAT_BASE_URL: z.string().default(""),
+  MAXCHAT_API_KEY: z.string().default(""),
+  MAXCHAT_CHANNEL_NUMBER: z.string().default(""),
+  MAXCHAT_WEBHOOK_SECRET: z.string().default(""),
+
   SGP_MODO: z.enum(["mock", "http"]).default("mock"),
   SGP_BASE_URL: z.string().default(""),
   SGP_APP: z.string().default(""),
