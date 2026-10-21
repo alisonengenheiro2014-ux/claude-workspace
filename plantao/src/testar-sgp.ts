@@ -23,11 +23,15 @@ const passo = async (nome: string, fn: () => Promise<unknown>) => {
   }
 };
 
+// diagnóstico: mostra o raw da rota consultacliente para ver campos de telefone
+await passo("raw /api/ura/consultacliente/", () => (sgp as any).post("/api/ura/consultacliente/", { cpfcnpj: cpf }));
+
 const cliente = (await passo("cliente pelo CPF", () => sgp.findCustomer({ cpf }))) as { id: string; phones: string[] } | null;
 if (cliente) {
   await passo("status da conexão", () => sgp.connectionStatus(cliente.id));
   await passo("faturas em aberto", () => sgp.openInvoices(cliente.id));
-  if (cliente.phones[0]) await passo("cliente pelo telefone", () => sgp.findCustomer({ phone: cliente.phones[0] }));
+  const phone = cliente.phones[0] ?? "61993004207";
+  await passo("cliente pelo telefone", () => sgp.findCustomer({ phone }));
 }
 await passo("leitura das ONUs (varredura de massivo)", async () => {
   const list = await sgp.listConnections();
