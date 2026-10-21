@@ -59,7 +59,6 @@ export class SgpError extends Error {}
 
 export class HttpSgp implements SgpClient {
   private fetchFn: typeof fetch;
-  private clientesCache: { at: number; rows: Json[] } | null = null;
 
   constructor(private opts: HttpSgpOptions) {
     if (!opts.baseUrl || !opts.app || !opts.token) throw new Error("SGP_BASE_URL, SGP_APP e SGP_TOKEN são obrigatórios no modo http");
@@ -148,40 +147,18 @@ export class HttpSgp implements SgpClient {
     };
   }
 
-  // a busca por telefone usa a listagem de clientes (SGP não filtra por telefone); guarda por 10 min
-  private async clientesListing(): Promise<Json[]> {
-    if (this.clientesCache && Date.now() - this.clientesCache.at < 10 * 60_000) return this.clientesCache.rows;
-    const rows: Json[] = [];
-    for (let offset = 0; offset < 50_000; offset += 100) {
-      const page = await this.post("/api/ura/clientes/", { offset, limit: 100 }, 90_000);
-      const items = firstArray(page, "clientes", "contratos", "dados", "data", "results", "items");
-      rows.push(...items);
-      if (items.length < 100) break;
+async findCustomer(q: { cpf?: string; phone?: string }): Promise<SgpCustomer | null> {
+    if (q.cpf) {
+      const found = await this.contractFor({ cpfcnpj: digits(q.cpf) });
+      return found ? this.customerFromContract(found.contrato, found.raw) : null;
     }
-    this.clientesCache = { at: Date.now(), rows };
-    return rows;
-  }
-
-  async findCustomer(q: { cpf?: string; phone?: string }): Promise<SgpCustomer | null> {
-    let cpf = digits(q.cpf);
-    if (!cpf && q.phone) {
+    if (q.phone) {
+      // /api/ura/consultacliente/ aceita busca por telefone diretamente (mais eficiente que varrer a listagem)
       const phone = digits(q.phone).replace(/^55/, "");
-      const phoneMatches = (entries: Json[]) => entries.some((t) => {
-        const p = digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t);
-        return p.length >= 10 && (phone.endsWith(p.slice(-10)) || p.endsWith(phone.slice(-10)));
-      });
-      // listagem /api/ura/clientes/ retorna contatos aninhados: { contatos: { telefones: [], celulares: [] } }
-      const match = (await this.clientesListing()).find((r) => {
-        const nested = r.contatos as Json | undefined;
-        return phoneMatches(firstArray(r, "telefones"))
-          || phoneMatches(firstArray(nested ?? {}, "telefones", "celulares"))
-          || firstArray(r, "contratos").some((c) => phoneMatches(firstArray(c, "telefones", "contatos")));
-      });
-      cpf = digits(pick(match, "cpfcnpj", "cpfCnpj"));
+      const found = await this.contractFor({ telefone: phone });
+      return found ? this.customerFromContract(found.contrato, found.raw) : null;
     }
-    if (!cpf) return null;
-    const found = await this.contractFor({ cpfcnpj: cpf });
-    return found ? this.customerFromContract(found.contrato, found.raw) : null;
+    return null;
   }
 
   async connectionStatus(customerId: string): Promise<ConnectionStatus> {
