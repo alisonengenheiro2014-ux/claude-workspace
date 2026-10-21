@@ -41,9 +41,10 @@ const Env = z.object({
   LIBERACAO_HORAS_INTERMEDIARIO: z.coerce.number().min(1).default(48),
   LIBERACAO_MESES_ANTIGO: z.coerce.number().min(0).default(6),
   LIBERACAO_DIAS_ANTIGO: z.coerce.number().min(1).default(5),
-  LIBERACAO_ATRASOS_TOLERADOS: z.coerce.number().min(0).default(1),
-  LIBERACAO_HORAS_SEGUNDA_NO_MES: z.coerce.number().min(1).default(24),
-  LIBERACAO_MAX_POR_MES: z.coerce.number().min(1).default(2),
+  LIBERACAO_DIAS_TOLERANCIA: z.coerce.number().min(0).default(2),
+  LIBERACAO_MIN_FATURAS_ANALISE: z.coerce.number().min(1).default(3),
+  LIBERACAO_HORAS_SEGUNDA_NO_CICLO: z.coerce.number().min(1).default(24),
+  LIBERACAO_MAX_POR_CICLO: z.coerce.number().min(1).default(2),
 });
 
 export type Config = z.infer<typeof Env>;

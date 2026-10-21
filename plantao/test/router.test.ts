@@ -176,3 +176,10 @@ describe("roteador", () => {
     expect(sent.at(-1)?.text).toBe("voltei");
   });
 });
+
+describe("registros", () => {
+  it("telefone aparece mascarado", async () => {
+    const { mascarar } = await import("../src/router.js");
+    expect(mascarar("5511900000003")).toBe("5511*****03");
+  });
+});

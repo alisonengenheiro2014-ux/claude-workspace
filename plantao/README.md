@@ -15,8 +15,9 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 - **Painel da equipe** (`/painel`): login com papéis (admin e atendente), fila da manhã por prioridade com "ver conversa" e "feito", números das últimas 24h, abrir massivo por área, atualizar a previsão e encerrar avisando automaticamente quem chamou nas últimas 24h, horários e feriados editáveis, base de conhecimento editável (o agente só usa o que estiver lá). Funciona no celular, com tema claro e escuro.
 - **Massivo automático:** a cada 2 minutos o sistema lê o status de todos os clientes no SGP. Se pelo menos 3 clientes da mesma PON caem em 10 minutos e 60% da área fica offline, abre um massivo "suspeito" sozinho (a equipe confirma ou descarta no painel). Sobe para OLT ou POP só quando duas ou mais áreas abaixo caíram. Quando 90% da área volta (e o massivo tem pelo menos 5 minutos), encerra, avisa quem chamou e cria chamado para quem continua offline. Tudo ajustável no `.env`.
 - **Manutenção:** conversa parada há 12h é encerrada (a próxima mensagem abre um atendimento novo); histórico com mais de 180 dias é apagado (LGPD).
-- **Liberação de confiança com a regra da Maxgiga:** quem decide o prazo é o sistema, não a IA. Nunca pagou ou menos de 3 meses: 24h; de 3 a 6 meses: 48h; 6 meses ou mais e em dia: até 5 dias; segunda liberação em 30 dias: no máximo 24h; terceira: não libera e vai para a equipe. A IA pergunta quantos dias o cliente precisa e informa o prazo liberado, sem citar o motivo. Regras ajustáveis no `.env` (`LIBERACAO_*`); `DESBLOQUEIO_CONFIANCA=false` desliga. Se o cliente já pagou, registra "conferir pagamento".
+- **Liberação de confiança com a regra da Maxgiga:** quem decide o prazo é o sistema, não a IA. Nunca pagou ou menos de 3 meses: 24h; de 3 a 6 meses: 48h; 6 meses ou mais e em dia (as últimas faturas, no mínimo 3, pagas até 2 dias depois do vencimento): até 5 dias; segunda liberação no mesmo ciclo de vencimento: no máximo 24h; terceira: não libera e vai para a equipe. Se o cliente pedir mais que o liberado, a IA oferece a análise da equipe e não encerra o atendimento. A IA pergunta quantos dias o cliente precisa e informa o prazo liberado, sem citar o motivo. Regras ajustáveis no `.env` (`LIBERACAO_*`); `DESBLOQUEIO_CONFIANCA=false` desliga. Se o cliente já pagou, registra "conferir pagamento".
 - **Fim do massivo:** ao normalizar, a assistente pergunta a quem chamou se a internet voltou. Quem confirma recebe um agradecimento e o atendimento é encerrado; quem não responde em 30 minutos (`DESPEDIDA_MINUTOS`) recebe uma despedida e o atendimento é encerrado.
+- **Ordens de serviço:** antes de abrir chamado técnico, confere se já existe OS aberta para o contrato (`/api/os/list/`) e, se existir, informa o cliente em vez de abrir outra.
 - **Robustez:** webhook repetido não gera resposta dupla, mensagens do mesmo cliente são atendidas em ordem, assinatura da Meta conferida, uma conversa aberta por cliente.
 
 ## Ainda falta
@@ -31,7 +32,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 95 testes (7 precisam de Postgres)
+npm test                 # 108 testes (7 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")
@@ -44,7 +45,7 @@ Teste com Postgres real: `TEST_DATABASE_URL=postgres://... npm test` (o teste ap
 ## Ligar o SGP real
 
 1. No SGP: Administração > Integrações > Tokens, crie um app (ex.: `plantao`) e copie o token.
-2. No `.env`: `SGP_MODO=http`, `SGP_BASE_URL`, `SGP_APP`, `SGP_TOKEN`.
+2. No `.env`: `SGP_MODO=http`, `SGP_BASE_URL=https://maxgiga.sgp.tsmx.com.br/api`, `SGP_APP`, `SGP_TOKEN`.
 3. Teste só com consultas: `npm run testar-sgp -- --cpf CPF_DE_UM_CLIENTE`.
 
 Rotas usadas (POST com `app` e `token` no corpo): `/api/ura/consultacliente/`, `/api/ura/clientes/` (busca por telefone), `/api/ura/titulos/`, `/api/ura/liberacaopromessa/`, `/api/ura/chamado/`; e `GET /api/fttx/onu/list/` para sinal da ONU, OLT e PON. O status online/offline vem do sinal da ONU (abaixo de `SGP_SINAL_MINIMO_DBM` = sem conexão). A viabilidade de endereço não tem rota conhecida: o agente registra como pré-venda e a equipe confirma.

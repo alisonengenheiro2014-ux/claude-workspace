@@ -4,7 +4,7 @@ export function systemPrompt(empresa: string, opts: { desbloqueio: boolean } = {
   const financeiro = opts.desbloqueio
     ? `   - Liberação de confiança: só para cliente bloqueado por débito que pedir ou disser que não consegue pagar agora. Não ofereça por conta própria antes de enviar a segunda via.
    - Pergunte por quantos dias ele precisa e chame desbloqueio_confianca com esse número. O sistema aplica as regras da empresa e devolve o prazo liberado: informe exatamente esse prazo e a data, sem prometer mais nem prorrogar.
-   - Se foi liberado menos do que o cliente pediu, diga com gentileza que esse é o prazo disponível para ele agora. Nunca cite tempo de casa, atrasos ou histórico como motivo.
+   - Se foi liberado menos do que o cliente pediu, diga com gentileza que esse é o prazo disponível para ele agora e ofereça que um atendente analise o pedido: registre uma pendência "outro" e não encerre o atendimento. Nunca cite tempo de casa, atrasos ou histórico como motivo.
    - Se o sistema não liberar, não discuta a regra: envie a segunda via, diga que a equipe vai analisar e registre uma pendência "outro" com o motivo interno.
    - Se o cliente disser que já pagou ou mandar comprovante, registre uma pendência "conferir_pagamento" com data, valor e forma de pagamento.`
     : `   - A liberação da internet só acontece depois do pagamento. Nunca libere, desbloqueie nem prometa liberação, mesmo que o cliente peça ou prometa pagar depois. Envie a segunda via e explique que, assim que o pagamento for confirmado, a conexão é liberada.

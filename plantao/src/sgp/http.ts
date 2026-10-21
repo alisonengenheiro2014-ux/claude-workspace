@@ -8,6 +8,7 @@ import type {
   CoverageResult,
   Invoice,
   InvoiceCopy,
+  OrdemServico,
   SgpClient,
   SgpCustomer,
   TrustUnlockResult,
@@ -63,6 +64,8 @@ export class HttpSgp implements SgpClient {
   constructor(private opts: HttpSgpOptions) {
     if (!opts.baseUrl || !opts.app || !opts.token) throw new Error("SGP_BASE_URL, SGP_APP e SGP_TOKEN são obrigatórios no modo http");
     this.fetchFn = opts.fetchFn ?? fetch;
+    // as rotas já começam com /api: aceita SGP_BASE_URL com ou sem /api no fim
+    this.opts = { ...opts, baseUrl: opts.baseUrl.replace(/\/api\/?$/, "").replace(/\/$/, "") };
   }
 
   private async post(path: string, body: Json, timeoutMs = 15_000): Promise<Json> {
@@ -176,22 +179,33 @@ export class HttpSgp implements SgpClient {
     return firstArray(raw, "titulos", "titulo", "faturas", "dados", "data");
   }
 
-  // tempo de casa e comportamento de pagamento, para a regra de liberação de confiança
+  // tempo de casa, datas de pagamento e dia de vencimento, para a regra de liberação de confiança
   async customerProfile(customerId: string): Promise<PerfilCliente> {
     const found = await this.contractFor({ contrato: customerId });
     const c = found?.contrato ?? {};
-    const desdeRaw = pick(c, "dataCadastro", "data_cadastro", "dataAtivacao", "data_ativacao", "dataInicio", "data_inicio", "dataContrato");
+    const desdeRaw = pick(c, "dataCadastro", "data_cadastro", "dataAtivacao", "data_ativacao", "dataInstalacao", "data_instalacao", "dataInicio", "data_inicio", "dataContrato");
     const desde = desdeRaw ? new Date(`${toIsoDate(desdeRaw)}T12:00:00-03:00`) : null;
+    const titulos = await this.titulos(customerId, false);
+    const pagamentos = titulos
+      .filter((t) => pick(t, "dataPagamento", "data_pagamento"))
+      .map((t) => ({ vencimento: toIsoDate(pick(t, "vencimento", "dataVencimento")), pagamento: toIsoDate(pick(t, "dataPagamento", "data_pagamento")) }));
+    const vencimentos = titulos.map((t) => toIsoDate(pick(t, "vencimento", "dataVencimento"))).filter(Boolean).sort();
+    const diaVencimento = vencimentos.length ? Number(vencimentos.at(-1)!.slice(8, 10)) || null : null;
+    return { clienteDesde: desde && !Number.isNaN(desde.getTime()) ? desde : null, pagamentos, diaVencimento };
+  }
+
+  // rota testada pela Maxgiga; devolve só OSs abertas, por isso não serve para histórico
+  async openOrders(customerId: string): Promise<OrdemServico[]> {
     const now = this.opts.now?.() ?? new Date();
-    const seisMeses = new Date(now.getTime() - 180 * 86_400_000).toISOString().slice(0, 10);
-    const pagas = (await this.titulos(customerId, false)).filter((t) => pick(t, "dataPagamento", "data_pagamento"));
-    const atrasos = pagas.filter((t) => {
-      const venc = toIsoDate(pick(t, "vencimento", "dataVencimento"));
-      const pago = toIsoDate(pick(t, "dataPagamento", "data_pagamento"));
-      // atraso = pago mais de 5 dias depois do vencimento, nos últimos 6 meses
-      return venc >= seisMeses && Date.parse(pago) - Date.parse(venc) > 5 * 86_400_000;
-    });
-    return { clienteDesde: desde && !Number.isNaN(desde.getTime()) ? desde : null, faturasPagas: pagas.length, atrasosRecentes: atrasos.length };
+    const raw = await this.post("/api/os/list/", { mes: String(now.getMonth() + 1), ano: String(now.getFullYear()) });
+    return firstArray(raw, "ordens", "os", "dados", "data", "results")
+      .filter((o) => String(pick(o, "contrato_id", "contrato")) === customerId && !pick(o, "os_data_finalizacao"))
+      .map((o) => ({
+        id: String(pick(o, "os_id", "id")),
+        status: String(pick(o, "os_status_txt", "os_status") ?? ""),
+        motivo: String(pick(o, "os_motivo_descricao") ?? ""),
+        agendamento: pick(o, "os_data_agendamento") ? String(pick(o, "os_data_agendamento")) : null,
+      }));
   }
 
   async openInvoices(customerId: string): Promise<Invoice[]> {

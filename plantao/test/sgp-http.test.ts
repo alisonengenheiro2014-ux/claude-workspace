@@ -114,11 +114,38 @@ describe("SGP via API", () => {
       ] }),
     });
     const p = await sgp.customerProfile("88");
-    expect(p.faturasPagas).toBe(3);
-    expect(p.atrasosRecentes).toBe(1);
+    expect(p.pagamentos).toEqual([
+      { vencimento: "2026-09-05", pagamento: "2026-09-20" },
+      { vencimento: "2026-08-05", pagamento: "2026-08-05" },
+      { vencimento: "2026-03-05", pagamento: "2026-03-30" },
+    ]);
+    expect(p.diaVencimento).toBe(5);
     expect(p.clienteDesde?.toISOString().slice(0, 10)).toBe("2026-02-15");
     // o histórico precisa das faturas pagas também, não só das em aberto
     expect(calls.find((c) => c.path === "/api/ura/titulos/")?.body.apenas_titulos_em_aberto).toBeUndefined();
+  });
+
+  it("ordens de serviço abertas do contrato (rota testada pela Maxgiga)", async () => {
+    const { sgp, calls } = fakeSgp({
+      "/api/os/list/": () => [
+        { os_id: 501, contrato_id: 88, os_status_txt: "Aberta", os_motivo_descricao: "Sem sinal", os_data_agendamento: "2026-10-22 09:00" },
+        { os_id: 502, contrato_id: 88, os_status_txt: "Finalizada", os_data_finalizacao: "2026-10-01" },
+        { os_id: 503, contrato_id: 99, os_status_txt: "Aberta" },
+      ],
+    });
+    expect(await sgp.openOrders("88")).toEqual([{ id: "501", status: "Aberta", motivo: "Sem sinal", agendamento: "2026-10-22 09:00" }]);
+    expect(calls[0].body).toMatchObject({ app: "plantao", token: "tok", mes: "10", ano: "2026" });
+  });
+
+  it("aceita SGP_BASE_URL com /api no fim, como a Maxgiga usa", async () => {
+    const calls: string[] = [];
+    const fetchFn = (async (input: URL | string) => {
+      calls.push(String(input));
+      return new Response(JSON.stringify({ status: 1, protocolo: "1" }), { status: 200 });
+    }) as typeof fetch;
+    const sgp = new HttpSgp({ baseUrl: "https://maxgiga.sgp.tsmx.com.br/api", app: "a", token: "t", fetchFn });
+    await sgp.openTicket("88", "x", "y");
+    expect(calls[0]).toBe("https://maxgiga.sgp.tsmx.com.br/api/ura/chamado/");
   });
 
   it("chamado devolve o protocolo", async () => {

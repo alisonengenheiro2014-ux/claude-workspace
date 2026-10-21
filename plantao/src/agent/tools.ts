@@ -4,7 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { SgpClient, SgpCustomer } from "../sgp/types.js";
 import type { Contact, Conversation, Store } from "../store/types.js";
-import { decidirLiberacao, REGRAS_PADRAO, type RegrasLiberacao } from "../policy/liberacao.js";
+import { decidirLiberacao, inicioDoCiclo, REGRAS_PADRAO, type RegrasLiberacao } from "../policy/liberacao.js";
 import { searchKnowledge, type KnowledgeItem } from "./knowledge.js";
 
 export interface ToolContext {
@@ -162,8 +162,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       if (!status.suspended) return { liberado: false, motivo: "o cliente não está bloqueado por débito" };
 
       const agora = ctx.now ?? new Date();
-      const recentes = await ctx.store.countUnlocksSince(c.id, new Date(agora.getTime() - 30 * 86_400_000));
-      const decisao = decidirLiberacao(await ctx.sgp.customerProfile(c.id), recentes, agora, dias_pedidos > 0 ? dias_pedidos * 24 : null, ctx.regras ?? REGRAS_PADRAO);
+      const perfil = await ctx.sgp.customerProfile(c.id);
+      // o "mês" é o ciclo de vencimento da fatura do cliente
+      const noCiclo = await ctx.store.countUnlocksSince(c.id, inicioDoCiclo(perfil.diaVencimento, agora));
+      const decisao = decidirLiberacao(perfil, noCiclo, agora, dias_pedidos > 0 ? dias_pedidos * 24 : null, ctx.regras ?? REGRAS_PADRAO);
       if (!decisao.permitido) {
         return {
           liberado: false,
@@ -174,11 +176,15 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       const r = await ctx.sgp.trustUnlock(c.id, decisao.horas);
       if (!r.ok) return { liberado: false, orientacao: "O sistema do provedor recusou a liberação. Envie a segunda via e registre uma pendência 'outro' para a equipe.", motivo_interno_para_a_pendencia: r.reason };
       await ctx.store.recordUnlock({ sgpCustomerId: c.id, conversationId: ctx.conversation.id, hours: decisao.horas, rule: decisao.regra });
+      const pediuMais = dias_pedidos * 24 > decisao.horas;
       return {
         liberado: true,
         prazo_liberado: decisao.horas % 24 === 0 ? `${decisao.horas / 24} dia(s)` : `${decisao.horas} horas`,
         valido_ate: r.validUntil ?? null,
-        pediu_mais_que_o_possivel: dias_pedidos * 24 > decisao.horas,
+        pediu_mais_que_o_possivel: pediuMais,
+        ...(pediuMais
+          ? { orientacao: "Informe o prazo liberado. Se o cliente precisar de mais tempo, ofereça que um atendente analise: registre uma pendência 'outro' (prioridade 2) com os dias pedidos e os liberados, diga quando a equipe volta e não encerre o atendimento." }
+          : {}),
       };
     }
     case "verificar_cobertura": {
@@ -192,8 +198,16 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     case "registrar_pendencia": {
       const p = Pendencia.parse(input);
       let ticketId: string | null = null;
+      let osExistente: { id: string; motivo: string; agendamento: string | null } | null = null;
       if (p.tipo === "chamado_tecnico" && ctx.customer) {
-        ticketId = (await ctx.sgp.openTicket(ctx.customer.id, p.resumo, p.detalhes)).ticketId;
+        // já existe OS aberta para o contrato? não abre outra
+        const abertas = await ctx.sgp.openOrders(ctx.customer.id).catch(() => []);
+        if (abertas.length) {
+          osExistente = abertas[0];
+          ticketId = abertas[0].id;
+        } else {
+          ticketId = (await ctx.sgp.openTicket(ctx.customer.id, p.resumo, p.detalhes)).ticketId;
+        }
       }
       await ctx.store.createPending({
         conversationId: ctx.conversation.id,
@@ -204,7 +218,9 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         sgpTicketId: ticketId,
       });
       await ctx.store.updateConversation(ctx.conversation.id, { status: "aguardando_equipe" });
-      return { registrado: true, protocolo_chamado: ticketId };
+      return osExistente
+        ? { registrado: true, os_ja_aberta: osExistente, orientacao: "Já existe uma ordem de serviço aberta: não abra outra. Informe o cliente (e o agendamento, se houver)." }
+        : { registrado: true, protocolo_chamado: ticketId };
     }
     case "finalizar_atendimento": {
       await ctx.store.updateConversation(ctx.conversation.id, { status: "closed" });

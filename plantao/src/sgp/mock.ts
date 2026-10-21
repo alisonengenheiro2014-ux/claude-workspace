@@ -6,6 +6,7 @@ import type {
   CoverageResult,
   Invoice,
   InvoiceCopy,
+  OrdemServico,
   SgpClient,
   SgpCustomer,
   TrustUnlockResult,
@@ -17,6 +18,7 @@ export interface MockRecord {
   invoices: Invoice[];
   unlockUsed: boolean;
   perfil?: { mesesDeCasa: number; faturasPagas: number; atrasosRecentes: number };
+  ordens?: OrdemServico[];
 }
 
 const area = (pon: string) => ({ pop: "POP-CENTRO", olt: "OLT-01", pon });
@@ -110,9 +112,20 @@ export class MockSgp implements SgpClient {
     };
   }
 
+  // faturas mensais vencendo dia 5; as "atrasosRecentes" mais recentes foram pagas 5 dias depois
   async customerProfile(customerId: string): Promise<PerfilCliente> {
     const p = this.rec(customerId).perfil ?? { mesesDeCasa: 12, faturasPagas: 12, atrasosRecentes: 0 };
-    return { clienteDesde: new Date(Date.now() - p.mesesDeCasa * 30 * 86_400_000), faturasPagas: p.faturasPagas, atrasosRecentes: p.atrasosRecentes };
+    const hoje = new Date();
+    const pagamentos = Array.from({ length: p.faturasPagas }, (_, i) => {
+      const venc = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth() - 1 - i, 5));
+      const pago = new Date(venc.getTime() + (i < p.atrasosRecentes ? 5 : 0) * 86_400_000);
+      return { vencimento: venc.toISOString().slice(0, 10), pagamento: pago.toISOString().slice(0, 10) };
+    });
+    return { clienteDesde: new Date(Date.now() - p.mesesDeCasa * 30 * 86_400_000), pagamentos, diaVencimento: 5 };
+  }
+
+  async openOrders(customerId: string): Promise<OrdemServico[]> {
+    return this.rec(customerId).ordens ?? [];
   }
 
   async trustUnlock(customerId: string, horas: number): Promise<TrustUnlockResult> {

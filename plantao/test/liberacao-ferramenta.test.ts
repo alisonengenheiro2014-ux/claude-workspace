@@ -18,6 +18,7 @@ describe("ferramenta de liberação de confiança", () => {
     const ctx = await ctxPara("5511900000002"); // Bruno: 8 meses, 7 faturas pagas, sem atraso
     const r: any = await runTool("desbloqueio_confianca", { dias_pedidos: 6 }, ctx);
     expect(r).toMatchObject({ liberado: true, prazo_liberado: "5 dia(s)", pediu_mais_que_o_possivel: true });
+    expect(r.orientacao).toContain("não encerre");
     expect((ctx.store as MemoryStore).unlocks).toMatchObject([{ sgpCustomerId: "1002", hours: 120, rule: "cliente_antigo_em_dia" }]);
   });
 
@@ -43,6 +44,12 @@ describe("ferramenta de liberação de confiança", () => {
     expect(store.unlocks).toHaveLength(2);
   });
 
+  it("pediu dentro do prazo: sem orientação extra", async () => {
+    const r: any = await runTool("desbloqueio_confianca", { dias_pedidos: 3 }, await ctxPara("5511900000002"));
+    expect(r).toMatchObject({ liberado: true, prazo_liberado: "3 dia(s)", pediu_mais_que_o_possivel: false });
+    expect(r.orientacao).toBeUndefined();
+  });
+
   it("cliente que não está bloqueado: nada a liberar", async () => {
     const ctx = await ctxPara("5511900000001");
     expect(await runTool("desbloqueio_confianca", { dias_pedidos: 2 }, ctx)).toMatchObject({ liberado: false });
@@ -51,5 +58,14 @@ describe("ferramenta de liberação de confiança", () => {
   it("desligada na configuração: recusa sem tocar no SGP", async () => {
     const ctx = { ...(await ctxPara("5511900000002")), desbloqueio: false };
     await expect(runTool("desbloqueio_confianca", { dias_pedidos: 2 }, ctx)).rejects.toThrow("após o pagamento");
+  });
+
+  it("chamado técnico com OS já aberta: não abre outra e informa o agendamento", async () => {
+    const sgp = new MockSgp();
+    (sgp as any).records.find((r: any) => r.customer.id === "1003").ordens = [{ id: "OS-77", status: "Aberta", motivo: "Sem sinal", agendamento: "2026-10-22 09:00" }];
+    const ctx = await ctxPara("5511900000003", new MemoryStore(), sgp);
+    const r: any = await runTool("registrar_pendencia", { tipo: "chamado_tecnico", prioridade: 1, resumo: "LOS", detalhes: "LOS vermelho" }, ctx);
+    expect(r.os_ja_aberta).toMatchObject({ id: "OS-77", agendamento: "2026-10-22 09:00" });
+    expect((await ctx.store.listPending())[0].sgpTicketId).toBe("OS-77");
   });
 });

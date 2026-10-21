@@ -23,6 +23,9 @@ export interface RouterDeps {
   log?: (msg: string, extra?: unknown) => void;
 }
 
+// nos registros, só o começo e o fim do telefone
+export const mascarar = (phone: string) => (phone.length > 6 ? `${phone.slice(0, 4)}*****${phone.slice(-2)}` : "***");
+
 const MEDIA_LABEL = { image: "[foto recebida]", audio: "[áudio recebido]", video: "[vídeo recebido]" } as const;
 
 export type Outcome = "duplicada" | "equipe_atendendo" | "humano_assumiu" | "massivo_sem_ia" | "agente";
@@ -119,7 +122,7 @@ export class Router {
       ctx,
       this.deps.agent,
     );
-    this.deps.log?.("agente respondeu", { de: msg.from, ferramentas: result.toolCalls, parada: result.stopReason });
+    this.deps.log?.("agente respondeu", { de: mascarar(msg.from), ferramentas: result.toolCalls, parada: result.stopReason });
     await gateway.sendText(msg.from, result.reply);
     await store.addMessage({ conversationId: conversation.id, author: "ia", body: result.reply });
     return "agente";

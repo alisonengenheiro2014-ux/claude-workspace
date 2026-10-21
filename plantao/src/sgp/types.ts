@@ -37,6 +37,13 @@ export interface TrustUnlockResult {
   validUntil?: string;
 }
 
+export interface OrdemServico {
+  id: string;
+  status: string;
+  motivo: string;
+  agendamento: string | null; // ISO, quando há visita marcada
+}
+
 export interface CoverageResult {
   covered: boolean | null; // null = não foi possível verificar
   note?: string;
@@ -60,4 +67,6 @@ export interface SgpClient {
   trustUnlock(customerId: string, horas: number): Promise<TrustUnlockResult>;
   checkCoverage(cep: string, number: string): Promise<CoverageResult>;
   openTicket(customerId: string, reason: string, details: string): Promise<{ ticketId: string }>;
+  // OSs ainda abertas do contrato (para não abrir chamado duplicado)
+  openOrders(customerId: string): Promise<OrdemServico[]>;
 }
