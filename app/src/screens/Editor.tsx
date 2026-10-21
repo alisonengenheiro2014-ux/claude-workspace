@@ -82,6 +82,7 @@ import {
   splitItem,
   addOverlay,
   layerToMain,
+  layerFreezeAt,
   setCover,
   clipDuration,
   freezeAt,
@@ -120,7 +121,8 @@ import { CoverSheet } from "./CoverSheet";
 import { exportTimeline } from "../export/exporter";
 import { shareFile } from "../data/backup";
 import { LayoutSheet } from "./LayoutSheet";
-import { LAYOUTS, layerInCell, mainInCell } from "../editor/layouts";
+import { cornerMask, insetCell, LAYOUTS, layerInCell, mainInCell } from "../editor/layouts";
+import type { LayoutLook } from "./LayoutSheet";
 import { overlaysAt } from "../editor/overlay";
 import type { ExportOptions } from "../export/exporter";
 import type { ImportProgress } from "../app/importFlow";
@@ -268,38 +270,41 @@ export function Editor({ projectId }: { projectId: Id }) {
   // in the others; when some are missing, the phone's picker asks for them
   // (opened straight from the tap, as iOS wants) and they come in as layers.
   const layoutPicker = useRef<HTMLInputElement>(null);
-  const pendingLayout = useRef<string | null>(null);
-  function arrangeLayout(doc: TimelineDoc, layoutId: string, layerIds: Id[]) {
+  const pendingLayout = useRef<{ id: string; look: LayoutLook } | null>(null);
+  function arrangeLayout(doc: TimelineDoc, layoutId: string, layerIds: Id[], look: LayoutLook) {
     const layout = LAYOUTS.find((l) => l.id === layoutId)!;
     const s = useEditor.getState();
     const { width: W, height: H } = frameSize(doc, s.assets, 1080);
+    const cells = layout.cells.map((c) => insetCell(c, look.gap / W, look.gap / H));
+    const mask = cornerMask(look.round / 100);
     const main = clipAt(doc, s.playheadUs)?.clip;
     if (!main) return null;
-    let next = setItem(doc, main.id, mainInCell(s.assets.get(main.assetId), main, W, H, layout.cells[0]));
-    layerIds.slice(0, layout.cells.length - 1).forEach((id, i) => {
+    let next = setItem(doc, main.id, { ...mainInCell(s.assets.get(main.assetId), main, W, H, cells[0]), mask });
+    layerIds.slice(0, cells.length - 1).forEach((id, i) => {
       const hit = findItem(next, id);
-      if (hit?.clip.type === "media") next = setItem(next, id, layerInCell(s.assets.get(hit.clip.assetId), W, H, layout.cells[i + 1]));
+      if (hit?.clip.type === "media") next = setItem(next, id, { ...layerInCell(s.assets.get(hit.clip.assetId), W, H, cells[i + 1]), mask });
     });
     return next;
   }
-  function onLayout(layoutId: string) {
+  function onLayout(layoutId: string, look: LayoutLook) {
     const s = useEditor.getState();
     if (!s.doc || !clipAt(s.doc, s.playheadUs)) return toast("Ponha o cursor sobre o vídeo principal.");
     const layout = LAYOUTS.find((l) => l.id === layoutId)!;
     const layers = overlaysAt(s.doc, s.playheadUs);
     if (layers.length < layout.cells.length - 1) {
-      pendingLayout.current = layoutId;
+      pendingLayout.current = { id: layoutId, look };
       layoutPicker.current?.click();
       return;
     }
-    const next = arrangeLayout(s.doc, layoutId, layers.map((c) => c.id));
+    const next = arrangeLayout(s.doc, layoutId, layers.map((c) => c.id), look);
     if (next) s.commit(next, "Tela dividida");
     setPanel(null);
   }
   async function onLayoutFiles(files: File[]) {
-    const layoutId = pendingLayout.current;
+    const pending = pendingLayout.current;
     pendingLayout.current = null;
-    if (!layoutId) return;
+    if (!pending) return;
+    const layoutId = pending.id;
     setPanel(null);
     const s0 = useEditor.getState();
     const need = LAYOUTS.find((l) => l.id === layoutId)!.cells.length - 1 - (s0.doc ? overlaysAt(s0.doc, s0.playheadUs).length : 0);
@@ -310,7 +315,7 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (!s.doc) return;
     let doc = s.doc;
     for (const a of added) doc = addOverlay(doc, a, s.playheadUs).doc;
-    const next = arrangeLayout(doc, layoutId, overlaysAt(doc, s.playheadUs).map((c) => c.id));
+    const next = arrangeLayout(doc, layoutId, overlaysAt(doc, s.playheadUs).map((c) => c.id), pending.look);
     if (next) s.commit(next, "Tela dividida");
     if (added.length < need) toast(`Faltou ${need - added.length === 1 ? "1 vídeo" : `${need - added.length} vídeos`} para completar o modelo.`);
   }
@@ -908,6 +913,16 @@ export function Editor({ projectId }: { projectId: Id }) {
     closeEditing("Recortar");
   }
 
+  function onLayerFreeze() {
+    stop();
+    const s = useEditor.getState();
+    if (!s.doc || !selectedOverlay) return;
+    const r = layerFreezeAt(s.doc, selectedOverlay.id, s.playheadUs);
+    if (!r) return toast("Esse trecho já é um quadro congelado.");
+    s.commit(r.doc, "Congelar");
+    s.select(r.id);
+  }
+
   function onFreeze() {
     stop();
     const s = useEditor.getState();
@@ -1294,6 +1309,9 @@ export function Editor({ projectId }: { projectId: Id }) {
               {overlayAsset?.hasAudio && <ToolbarItem icon={<Speech />} label="Efeito de voz" onClick={() => (stop(), setPanel({ name: "voice" }))} />}
               {overlayAsset?.kind === "video" && (
                 <ToolbarItem icon={<FlipHorizontal2 />} label={selectedOverlay.reverse ? "Desinverter" : "Reverso"} onClick={() => void onReverse()} />
+              )}
+              {overlayAsset?.kind === "video" && (
+                <ToolbarItem icon={<Snowflake />} label="Congelar" disabled={!!selectedOverlay.freeze} onClick={onLayerFreeze} />
               )}
               <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
               <ToolbarItem icon={<Pipette />} label="Chroma key" onClick={() => (stop(), setPanel({ name: "chroma" }))} />

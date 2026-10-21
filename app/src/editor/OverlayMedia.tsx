@@ -161,8 +161,8 @@ export function OverlayMedia({ width, height }: { width: number; height: number 
       place(wrap, at.box);
       wrap.style.opacity = String(at.alpha);
       if (!(el instanceof HTMLVideoElement) || el.readyState < 1) continue;
-      const target = sourceTimeUs(c, Math.max(0, t - c.startUs)) / 1e6;
-      if (s.playing) {
+      const target = (c.freeze ? c.inUs : sourceTimeUs(c, Math.max(0, t - c.startUs))) / 1e6; // a held frame stays on it
+      if (s.playing && !c.freeze) { // a held frame stays still
         el.playbackRate = Math.min(16, c.speed);
         if (el.paused) {
           el.currentTime = target;

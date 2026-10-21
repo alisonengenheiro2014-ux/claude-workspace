@@ -15,7 +15,8 @@ export const MASKS: { id: MaskShape; label: string }[] = [
   { id: "star", label: "Estrela" },
 ];
 
-// params: x, y (centre, 0..1 of the picture), size (0..1), angle (degrees)
+// params: x, y (centre, 0..1 of the picture), size (0..1), angle (degrees);
+// rect also takes round (corner radius, 0..1 of half the short side)
 export function newMask(shape: MaskShape): Mask {
   return { shape, params: { x: 0.5, y: 0.5, size: shape === "linear" ? 1 : 0.6, angle: 0 }, invert: false, feather: 0.1 };
 }
@@ -38,7 +39,7 @@ function shapePath(m: Mask, w: number, h: number): Path2D {
       p.ellipse(0, 0, (w / 2) * s, (h / 2) * s, 0, 0, Math.PI * 2);
       break;
     case "rect":
-      p.roundRect((-w / 2) * s, (-h / 2) * s, w * s, h * s, r * 0.08);
+      p.roundRect((-w / 2) * s, (-h / 2) * s, w * s, h * s, r * (m.params.round ?? 0.08)); // round: 0..1 of half the short side
       break;
     case "heart": {
       const k = r / 16;

@@ -86,3 +86,19 @@ export function layerInCell(asset: AssetRow | undefined, W: number, H: number, c
   const fit = Math.min(W / aw, H / ah);
   return { crop, flip: false, transform: { x: cell.x + cell.w / 2, y: cell.y + cell.h / 2, scale: (cell.w * W) / (aw * fit), rotation: 0 } };
 }
+
+// Borda: gap px (in a frame 1080 on its short side) between the cells and
+// around them, where the frame's background shows; inner edges give half.
+export function insetCell(c: Cell, gapX: number, gapY: number): Cell {
+  const e = 1e-6;
+  const x0 = c.x + (c.x < e ? gapX : gapX / 2);
+  const x1 = c.x + c.w - (c.x + c.w > 1 - e ? gapX : gapX / 2);
+  const y0 = c.y + (c.y < e ? gapY : gapY / 2);
+  const y1 = c.y + c.h - (c.y + c.h > 1 - e ? gapY : gapY / 2);
+  return { x: x0, y: y0, w: Math.max(0.01, x1 - x0), h: Math.max(0.01, y1 - y0) };
+}
+
+// Cantos: round corners as a full-size rectangle mask (0..1 of half the short side)
+export function cornerMask(round: number): MediaClip["mask"] {
+  return round > 0 ? { shape: "rect", params: { x: 0.5, y: 0.5, size: 1, angle: 0, round }, invert: false, feather: 0 } : null;
+}

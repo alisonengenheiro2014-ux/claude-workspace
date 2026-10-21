@@ -451,3 +451,23 @@ describe("tela dividida", () => {
     expect(b.cy).toBeCloseTo(1440);
   });
 });
+
+describe("Congelar on a layer", () => {
+  it("cuts a 3 s held frame in at the playhead and moves the rest of the lane later", async () => {
+    const { addOverlay, layerFreezeAt, overlayTracks, FREEZE_US } = await import("./timeline");
+    const CLIP: AssetRow = { ...A, id: "v2", durationUs: 30_000_000, width: 1920, height: 1080 };
+    const r = addOverlay(base(), CLIP, 1_000_000);
+    const before = findItem(r.doc, r.id)!.clip as MediaClip;
+    const f = layerFreezeAt(r.doc, r.id, 2_000_000)!;
+    const lane = overlayTracks(f.doc)[0].items as MediaClip[];
+    expect(lane.map((c) => [c.startUs, c.durationUs, !!c.freeze])).toEqual([
+      [1_000_000, 1_000_000, false],
+      [2_000_000, FREEZE_US, true],
+      [2_000_000 + FREEZE_US, before.durationUs - 1_000_000, false],
+    ]);
+    const still = lane[1];
+    expect([still.inUs, still.volume]).toEqual([before.inUs + 1_000_000, 0]); // the frame under the playhead, silent
+    expect(lane[2].inUs).toBe(still.inUs); // and the rest goes on from it
+    expect(validateDoc(f.doc, new Map([[A.id, A], [CLIP.id, CLIP]]))).toEqual([]);
+  });
+});

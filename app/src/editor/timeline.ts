@@ -541,6 +541,53 @@ export function setCover(doc: TimelineDoc, cover: TimelineDoc["cover"]): Timelin
   });
 }
 
+// Congelar on a layer: the frame under the playhead held for FREEZE_US,
+// cut in at the playhead; what follows in that lane moves later to make room.
+export function layerFreezeAt(doc: TimelineDoc, id: Id, atUs: Us): { doc: TimelineDoc; id: Id } | null {
+  const hit = findItem(doc, id);
+  if (!hit || hit.track.kind !== "overlay" || hit.clip.type !== "media" || hit.clip.freeze) return null;
+  const clip = hit.clip;
+  const offset = Math.max(0, Math.min(clip.durationUs - 1, atUs - clip.startUs));
+  const frameUs = Math.min(clip.outUs - 1000, sourceTimeUs(clip, offset));
+  const stillId = uid();
+  const next = edit(doc, (d) => {
+    const lane = d.tracks.find((t) => t.id === hit.track.id)!;
+    const end = clip.startUs + clip.durationUs;
+    for (const c of lane.items) if (c.id !== id && c.startUs >= end) c.startUs += FREEZE_US;
+    const left = lane.items.find((c) => c.id === id) as MediaClip;
+    let at = clip.startUs + offset;
+    if (offset >= MIN_CLIP_US && clip.durationUs - offset >= MIN_CLIP_US) {
+      const right: MediaClip = { ...structuredClone(left), id: uid(), inUs: frameUs, startUs: at + FREEZE_US, durationUs: clip.durationUs - offset, fadeInUs: 0, keyframes: [] };
+      left.outUs = frameUs;
+      left.durationUs = offset;
+      left.fadeOutUs = 0;
+      lane.items.push(right);
+    } else if (offset < MIN_CLIP_US) {
+      at = clip.startUs; // before the layer: it moves later
+      left.startUs += FREEZE_US;
+    } else at = end; // at its end: the still follows it
+    const a = animatedAt(clip, offset);
+    lane.items.push({
+      ...structuredClone(clip),
+      id: stillId,
+      freeze: true,
+      startUs: at,
+      durationUs: FREEZE_US,
+      inUs: frameUs,
+      outUs: frameUs + FREEZE_US,
+      speed: 1,
+      speedCurve: null,
+      volume: 0,
+      fadeInUs: 0,
+      fadeOutUs: 0,
+      transform: { ...a.transform },
+      opacity: a.opacity,
+      keyframes: [],
+    });
+  });
+  return { doc: next, id: stillId };
+}
+
 export function overlayTracks(doc: TimelineDoc) {
   return doc.tracks.filter((t) => t.kind === "overlay");
 }

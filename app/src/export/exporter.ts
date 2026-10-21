@@ -335,7 +335,7 @@ export async function exportTimeline(
             readers.set(c.id, r);
             r.next = await pullFrom(r);
           }
-          const srcS = Math.min(c.outUs / 1e6 - 1e-4, sourceTimeUs(c, tUs - c.startUs) / 1e6);
+          const srcS = Math.min(c.outUs / 1e6 - 1e-4, (c.freeze ? c.inUs : sourceTimeUs(c, tUs - c.startUs)) / 1e6); // a held frame stays on it
           while (r.next && r.next.timestamp <= srcS + 1e-6) {
             r.current?.close();
             r.current = r.next;
