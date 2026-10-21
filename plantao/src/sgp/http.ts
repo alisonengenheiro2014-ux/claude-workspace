@@ -208,7 +208,7 @@ async findCustomer(q: { cpf?: string; phone?: string }): Promise<SgpCustomer | n
   async openInvoices(customerId: string): Promise<Invoice[]> {
     const today = (this.opts.now?.() ?? new Date()).toISOString().slice(0, 10);
     return (await this.titulos(customerId))
-      .filter((t) => !pick(t, "dataPagamento"))
+      .filter((t) => !pick(t, "dataPagamento") && !["pago", "cancelado", "cancel", "baixado"].includes(String(pick(t, "status") ?? "").toLowerCase()))
       .map((t) => {
         const dueDate = toIsoDate(pick(t, "vencimento", "dataVencimento"));
         return {
