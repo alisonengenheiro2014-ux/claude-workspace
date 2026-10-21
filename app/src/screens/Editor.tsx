@@ -12,6 +12,7 @@ import {
   Crop,
   ImageIcon,
   ImagePlus,
+  Wand2,
   FlipHorizontal2,
   Gauge,
   Layers,
@@ -118,6 +119,7 @@ import { isZoomed, keyNear, mainZoom, volumeAt } from "../editor/keyframes";
 import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import { CoverSheet } from "./CoverSheet";
+import { autoAdjust } from "../editor/enhance";
 import { exportTimeline } from "../export/exporter";
 import { shareFile } from "../data/backup";
 import { LayoutSheet } from "./LayoutSheet";
@@ -913,6 +915,30 @@ export function Editor({ projectId }: { projectId: Id }) {
     closeEditing("Recortar");
   }
 
+  // Aprimorar: the Ajustar sliders set from the picture (a photo, or the
+  // video's frame on screen), in one undo step; Ajustar refines them
+  async function onEnhance(clip: MediaClip) {
+    stop();
+    const asset = assets.get(clip.assetId);
+    let src: CanvasImageSource | null = null;
+    if (asset?.kind === "image") {
+      const file = await assetFile(asset);
+      src = file ? await createImageBitmap(file) : null;
+    } else {
+      const v = document.querySelector<HTMLVideoElement>('video[aria-label="Prévia do vídeo"]');
+      src = v && v.readyState >= 2 ? v : null;
+    }
+    if (!src) return toast("Não deu para ler a imagem agora. Tente de novo.");
+    const c = new OffscreenCanvas(192, 192);
+    const ctx = c.getContext("2d", { willReadFrequently: true })!;
+    ctx.drawImage(src, 0, 0, 192, 192);
+    if (src instanceof ImageBitmap) src.close();
+    const s = useEditor.getState();
+    if (!s.doc) return;
+    s.commit(setItem(s.doc, clip.id, { adjust: autoAdjust(ctx.getImageData(0, 0, 192, 192).data) }), "Aprimorar");
+    toast("Aprimorado. Para ajustar fino, use Ajustar.");
+  }
+
   function onLayerFreeze() {
     stop();
     const s = useEditor.getState();
@@ -1236,6 +1262,7 @@ export function Editor({ projectId }: { projectId: Id }) {
           {photoMode && (!selectedItem || selected) ? (
             // Editar foto: the picture's tools, like CapCut's photo editor
             <Toolbar label="Ferramentas da foto">
+              <ToolbarItem icon={<Wand2 />} label="Aprimorar" disabled={!target} onClick={() => target && void onEnhance(target)} />
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
               <ToolbarItem icon={<Crop />} label="Recortar" disabled={!target} onClick={() => target && openCrop(target.id)} />
@@ -1377,6 +1404,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 disabled={!assets.get(selected!.assetId)?.hasAudio}
                 onClick={() => setPanel({ name: "fade" })}
               />
+              <ToolbarItem icon={<Wand2 />} label="Aprimorar" onClick={() => void onEnhance(selected!)} />
               <ToolbarItem icon={<Palette />} label="Filtros" onClick={() => openLook("filters")} />
               <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" onClick={() => openLook("adjust")} />
               <ToolbarItem
