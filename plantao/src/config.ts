@@ -18,7 +18,10 @@ const Env = z.object({
 
   SGP_MODO: z.enum(["mock", "http"]).default("mock"),
   SGP_BASE_URL: z.string().default(""),
+  SGP_APP: z.string().default(""),
   SGP_TOKEN: z.string().default(""),
+  SGP_OCORRENCIA_TIPO: z.coerce.number().default(5),
+  SGP_SINAL_MINIMO_DBM: z.coerce.number().default(-30),
 
   TRANSCRICAO_URL: z.string().default(""),
   TRANSCRICAO_MODELO: z.string().default("Systran/faster-whisper-small"),

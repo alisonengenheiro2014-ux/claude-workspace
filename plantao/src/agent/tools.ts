@@ -144,7 +144,9 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       const { cep, numero } = Cobertura.parse(input);
       await ctx.store.updateConversation(ctx.conversation.id, { topic: "pre_venda" });
       const r = await ctx.sgp.checkCoverage(cep, numero);
-      return { tem_cobertura: r.covered, observacao: r.note ?? null };
+      return r.covered === null
+        ? { tem_cobertura: "nao_verificado", observacao: "registre como pré-venda: a equipe confirma a cobertura" }
+        : { tem_cobertura: r.covered, observacao: r.note ?? null };
     }
     case "registrar_pendencia": {
       const p = Pendencia.parse(input);

@@ -36,7 +36,7 @@ export interface TrustUnlockResult {
 }
 
 export interface CoverageResult {
-  covered: boolean;
+  covered: boolean | null; // null = não foi possível verificar
   note?: string;
 }
 

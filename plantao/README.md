@@ -22,14 +22,14 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 | item | depende de |
 | --- | --- |
 | integração com o Chat Mix | documentação da API do Chat Mix |
-| SGP real (hoje usa dados simulados) | token e documentação da API do SGP |
+| SGP real: cliente já escrito, falta testar com o SGP da Maxgiga | `SGP_APP` e `SGP_TOKEN` (Administração > Integrações > Tokens) |
 | passagem da conversa para a equipe às 8h | integração com o Chat Mix |
 
 ## Rodar
 
 ```bash
 npm install
-npm test                 # 56 testes (5 precisam de Postgres)
+npm test                 # 66 testes (5 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")
@@ -38,6 +38,14 @@ ANTHROPIC_API_KEY=sk-ant-... npm run simular
 ```
 
 Teste com Postgres real: `TEST_DATABASE_URL=postgres://... npm test` (o teste apaga o schema `public` desse banco: use um banco descartável).
+
+## Ligar o SGP real
+
+1. No SGP: Administração > Integrações > Tokens, crie um app (ex.: `plantao`) e copie o token.
+2. No `.env`: `SGP_MODO=http`, `SGP_BASE_URL`, `SGP_APP`, `SGP_TOKEN`.
+3. Teste só com consultas: `npm run testar-sgp -- --cpf CPF_DE_UM_CLIENTE`.
+
+Rotas usadas (POST com `app` e `token` no corpo): `/api/ura/consultacliente/`, `/api/ura/clientes/` (busca por telefone), `/api/ura/titulos/`, `/api/ura/liberacaopromessa/`, `/api/ura/chamado/`; e `GET /api/fttx/onu/list/` para sinal da ONU, OLT e PON. O status online/offline vem do sinal da ONU (abaixo de `SGP_SINAL_MINIMO_DBM` = sem conexão). A viabilidade de endereço não tem rota conhecida: o agente registra como pré-venda e a equipe confirma.
 
 ## Subir na VPS
 

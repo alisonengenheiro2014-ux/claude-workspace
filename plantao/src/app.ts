@@ -19,7 +19,7 @@ import type { Store } from "./store/types.js";
 export function buildRouter(cfg: Config, opts: { gateway?: ChannelGateway; store?: Store; hours?: HoursConfig } = {}) {
   const client = new Anthropic();
   const store = opts.store ?? (cfg.DATABASE_URL ? new PgStore(new pg.Pool({ connectionString: cfg.DATABASE_URL })) : new MemoryStore());
-  const sgp = cfg.SGP_MODO === "http" ? new HttpSgp(cfg.SGP_BASE_URL, cfg.SGP_TOKEN) : new MockSgp();
+  const sgp = cfg.SGP_MODO === "http" ? new HttpSgp({ baseUrl: cfg.SGP_BASE_URL, app: cfg.SGP_APP, token: cfg.SGP_TOKEN, ocorrenciaTipo: cfg.SGP_OCORRENCIA_TIPO, sinalMinimoDbm: cfg.SGP_SINAL_MINIMO_DBM }) : new MockSgp();
   const gateway = opts.gateway ?? new MetaGateway(cfg.META_ACCESS_TOKEN, cfg.META_PHONE_NUMBER_ID);
   if (cfg.CANAL === "chatmix" && !opts.gateway) {
     throw new Error("canal Chat Mix ainda não implementado: aguardando a documentação da API do Chat Mix");

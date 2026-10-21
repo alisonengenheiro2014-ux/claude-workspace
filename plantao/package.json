@@ -12,7 +12,8 @@
     "test": "vitest run",
     "db:migrate": "tsx src/db/migrate.ts",
     "simular": "tsx src/simulate.ts",
-    "criar-usuario": "tsx src/criar-usuario.ts"
+    "criar-usuario": "tsx src/criar-usuario.ts",
+    "testar-sgp": "tsx src/testar-sgp.ts"
   },
   "engines": {
     "node": ">=22"
