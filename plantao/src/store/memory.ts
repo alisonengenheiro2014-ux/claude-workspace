@@ -13,6 +13,7 @@ export class MemoryStore implements Store {
   hours: { windows: { weekday: number; opensAt: string; closesAt: string }[]; holidays: string[] } = { windows: [], holidays: [] };
   pending: PendingItem[] = [];
   snapshots: StoredSnapshot[] = [];
+  unlocks: { sgpCustomerId: string; conversationId: string | null; hours: number; rule: string; at: Date }[] = [];
 
   async upsertContact(phone: string) {
     let c = this.contacts.find((x) => x.phone === phone);
@@ -180,6 +181,14 @@ export class MemoryStore implements Store {
     return this.conversations
       .filter((c) => c.status !== "closed" && c.closingAt && c.closingAt <= now)
       .map((conversation) => ({ conversation, contact: this.contacts.find((k) => k.id === conversation.contactId)! }));
+  }
+
+  async recordUnlock(u: { sgpCustomerId: string; conversationId: string | null; hours: number; rule: string }) {
+    this.unlocks.push({ ...u, at: new Date() });
+  }
+
+  async countUnlocksSince(sgpCustomerId: string, since: Date) {
+    return this.unlocks.filter((u) => u.sgpCustomerId === sgpCustomerId && u.at >= since).length;
   }
 
   async loadSnapshots() {

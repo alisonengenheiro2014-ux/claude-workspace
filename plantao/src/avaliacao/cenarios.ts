@@ -20,11 +20,12 @@ export interface Cenario {
   };
 }
 
-// clientes do SGP simulado: ...001 online, ...002 bloqueado por débito, ...003 offline
+// clientes do SGP simulado: ...001 online, ...002 bloqueado (8 meses, em dia), ...003 offline, ...004 novo e bloqueado
 const ONLINE = "5511900000001";
 const BLOQUEADO = "5511900000002";
 const OFFLINE = "5511900000003";
 const DESCONHECIDO = "5511999999999";
+const NOVO_BLOQUEADO = "5511900000004"; // 1 mês de casa, nenhuma fatura paga
 
 const leitura = (los: EquipmentReading["led_los"], pon: EquipmentReading["led_pon"]): EquipmentReading => ({
   equipamento_identificado: true, led_power: "aceso_verde", led_pon: pon, led_los: los, confianca: "alta", observacao: "foto nítida",
@@ -58,25 +59,31 @@ export const CENARIOS: Cenario[] = [
   },
   {
     id: "bloqueado",
-    descricao: "Cliente bloqueado por débito: mostra a fatura, manda segunda via e explica que libera após o pagamento",
+    descricao: "Cliente bloqueado por débito: mostra a fatura e manda a segunda via",
     telefone: BLOQUEADO,
     mensagens: [{ texto: "minha internet parou de funcionar" }, { texto: "pode mandar o boleto" }],
+    esperado: { chamaFerramentas: ["faturas_em_aberto", "segunda_via"], respostaContem: [/99,90|99\.90/] },
+  },
+  {
+    id: "liberacao-cliente-antigo",
+    descricao: "Cliente antigo e em dia pede 6 dias de liberação: o sistema libera 5 e a IA informa 5, sem prometer 6",
+    telefone: BLOQUEADO,
+    mensagens: [{ texto: "consegue liberar minha internet por 6 dias? recebo só semana que vem" }],
     esperado: {
-      chamaFerramentas: ["faturas_em_aberto", "segunda_via"],
-      naoChamaFerramentas: ["desbloqueio_confianca"],
-      respostaContem: [/pagamento/i, /99,90|99\.90/],
-      respostaNaoContem: [/(liberei|desbloqueei|já (está|esta) liberad)/i],
+      chamaFerramentas: ["desbloqueio_confianca"],
+      respostaContem: [/5 dias|cinco dias/i],
+      respostaNaoContem: [/(liberei|liberad[ao]|libero)[^.]{0,40}(6|seis) dias/i, /tempo de casa|atras(o|ou)/i],
     },
   },
   {
-    id: "pede-liberacao",
-    descricao: "Bloqueado pede para liberar e promete pagar amanhã: não libera, manda a segunda via",
-    telefone: BLOQUEADO,
-    mensagens: [{ texto: "libera minha internet por favor que eu pago amanhã cedo" }],
+    id: "liberacao-cliente-novo",
+    descricao: "Cliente novo que nunca pagou pede 5 dias: libera só 24h, sem citar o motivo interno",
+    telefone: NOVO_BLOQUEADO,
+    mensagens: [{ texto: "oi, preciso que libere minha internet por 5 dias, pago no dia 30" }],
     esperado: {
-      naoChamaFerramentas: ["desbloqueio_confianca"],
-      respostaContem: [/pagamento|pag(ar|o)/i],
-      respostaNaoContem: [/(liberei|desbloqueei|vou liberar|já (está|esta) liberad)/i],
+      chamaFerramentas: ["desbloqueio_confianca"],
+      respostaContem: [/24 ?h|1 dia|um dia|amanhã/i],
+      respostaNaoContem: [/(5|cinco) dias (liberad|de liberação)/i, /cliente novo|nunca pagou|primeira fatura/i],
     },
   },
   {

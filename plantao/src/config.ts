@@ -34,8 +34,16 @@ const Env = z.object({
   CONVERSA_INATIVA_HORAS: z.coerce.number().min(1).default(12),
   RETENCAO_DIAS: z.coerce.number().min(7).default(180),
   DESPEDIDA_MINUTOS: z.coerce.number().min(1).default(30),
-  // a Maxgiga só libera após o pagamento; "true" reativa o desbloqueio de confiança pela assistente
-  DESBLOQUEIO_CONFIANCA: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
+  // liberação de confiança pela assistente; o prazo segue as regras abaixo (decididas pelo sistema, não pela IA)
+  DESBLOQUEIO_CONFIANCA: z.enum(["true", "false"]).default("true").transform((v) => v === "true"),
+  LIBERACAO_HORAS_CLIENTE_NOVO: z.coerce.number().min(1).default(24),
+  LIBERACAO_MESES_INTERMEDIARIO: z.coerce.number().min(0).default(3),
+  LIBERACAO_HORAS_INTERMEDIARIO: z.coerce.number().min(1).default(48),
+  LIBERACAO_MESES_ANTIGO: z.coerce.number().min(0).default(6),
+  LIBERACAO_DIAS_ANTIGO: z.coerce.number().min(1).default(5),
+  LIBERACAO_ATRASOS_TOLERADOS: z.coerce.number().min(0).default(1),
+  LIBERACAO_HORAS_SEGUNDA_NO_MES: z.coerce.number().min(1).default(24),
+  LIBERACAO_MAX_POR_MES: z.coerce.number().min(1).default(2),
 });
 
 export type Config = z.infer<typeof Env>;

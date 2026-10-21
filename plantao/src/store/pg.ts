@@ -278,6 +278,21 @@ export class PgStore implements Store {
     return rows.map((r) => ({ conversation: toConversation(r), contact: toContact(r.contact) }));
   }
 
+  async recordUnlock(u: { sgpCustomerId: string; conversationId: string | null; hours: number; rule: string }) {
+    await this.pool.query(
+      `insert into trust_unlocks (sgp_customer_id, conversation_id, hours, rule) values ($1, $2, $3, $4)`,
+      [u.sgpCustomerId, u.conversationId, u.hours, u.rule],
+    );
+  }
+
+  async countUnlocksSince(sgpCustomerId: string, since: Date) {
+    const { rows } = await this.pool.query(
+      `select count(*)::int as n from trust_unlocks where sgp_customer_id = $1 and created_at >= $2`,
+      [sgpCustomerId, since],
+    );
+    return rows[0].n as number;
+  }
+
   async loadSnapshots() {
     const { rows } = await this.pool.query(`select * from sgp_status_snapshots`);
     return rows.map((r) => ({

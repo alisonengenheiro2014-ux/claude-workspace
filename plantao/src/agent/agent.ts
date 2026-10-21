@@ -1,6 +1,7 @@
 // Laço do agente: manda o histórico ao modelo, executa as ferramentas pedidas e devolve a resposta final.
 import Anthropic from "@anthropic-ai/sdk";
 import type { StoredMessage } from "../store/types.js";
+import type { RegrasLiberacao } from "../policy/liberacao.js";
 import { contextBlock, systemPrompt } from "./prompt.js";
 import { runTool, toolDefs, ToolError, type ToolContext } from "./tools.js";
 
@@ -11,6 +12,7 @@ export interface AgentDeps {
   model: string;
   empresa: string;
   desbloqueio?: boolean;
+  regrasLiberacao?: RegrasLiberacao;
   maxSteps?: number;
 }
 

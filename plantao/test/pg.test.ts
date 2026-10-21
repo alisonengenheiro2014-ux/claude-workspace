@@ -13,7 +13,7 @@ describe.skipIf(!url)("PgStore", () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
     await pool.query("drop schema public cascade; create schema public;");
-    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql"]);
+    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql", "004_liberacao_confianca.sql"]);
     expect(await migrate(pool)).toEqual([]);
     store = new PgStore(pool);
   });
@@ -65,7 +65,7 @@ describe.skipIf(!url)("PgStore", () => {
     expect(await store.getHours()).toEqual({ windows: [{ weekday: 2, opensAt: "09:00", closesAt: "17:30" }], holidays: ["2026-12-25"] });
 
     expect((await store.listKnowledge()).length).toBe(4);
-    expect((await store.listKnowledge()).some((k) => k.title === "Liberação após pagamento")).toBe(true);
+    expect((await store.listKnowledge()).some((k) => k.title === "Liberação de confiança")).toBe(true);
     const k = await store.saveKnowledge({ kind: "plano", title: "300 Mega", body: "R$ 89,90", active: true });
     await store.saveKnowledge({ ...k, active: false });
     expect((await store.listKnowledge()).some((x) => x.id === k.id)).toBe(false);
@@ -143,5 +143,12 @@ describe.skipIf(!url)("PgStore", () => {
     expect(due.map((d) => [d.conversation.id, d.contact.phone])).toEqual([[conv.id, "5511955554444"]]);
     await store.updateConversation(conv.id, { status: "closed" });
     expect(await store.dueClosings(new Date(Date.now() + 31 * 60_000))).toEqual([]);
+  });
+
+  it("histórico de liberações de confiança", async () => {
+    await store.recordUnlock({ sgpCustomerId: "1002", conversationId: null, hours: 120, rule: "cliente_antigo_em_dia" });
+    expect(await store.countUnlocksSince("1002", new Date(Date.now() - 30 * 86_400_000))).toBe(1);
+    expect(await store.countUnlocksSince("1002", new Date(Date.now() + 60_000))).toBe(0);
+    expect(await store.countUnlocksSince("9999", new Date(0))).toBe(0);
   });
 });

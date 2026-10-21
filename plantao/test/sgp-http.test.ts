@@ -97,10 +97,28 @@ describe("SGP via API", () => {
   it("desbloqueio de confiança: liberado e recusado", async () => {
     let resposta: any = { status: 1, liberado: true, liberado_dias: 3, protocolo: "123" };
     const { sgp, calls } = fakeSgp({ "/api/ura/liberacaopromessa/": () => resposta });
-    expect(await sgp.trustUnlock("88")).toEqual({ ok: true, validUntil: "2026-10-24" });
-    expect(calls[0].body).toEqual({ app: "plantao", token: "tok", contrato: "88" });
+    expect(await sgp.trustUnlock("88", 72)).toEqual({ ok: true, validUntil: "2026-10-24" });
+    expect(calls[0].body).toEqual({ app: "plantao", token: "tok", contrato: "88", dias: 3 });
     resposta = { status: 1, liberado: false, msg: "Promessa de pagamento já utilizada" };
-    expect(await sgp.trustUnlock("88")).toEqual({ ok: false, reason: "Promessa de pagamento já utilizada" });
+    expect(await sgp.trustUnlock("88", 24)).toEqual({ ok: false, reason: "Promessa de pagamento já utilizada" });
+  });
+
+  it("perfil para a regra de liberação: tempo de casa, faturas pagas e atrasos", async () => {
+    const { sgp, calls } = fakeSgp({
+      "/api/ura/consultacliente/": () => ({ contratos: [{ contratoId: 88, contratoStatus: 4, dataCadastro: "15/02/2026" }] }),
+      "/api/ura/titulos/": () => ({ titulos: [
+        { id: 1, vencimento: "05/09/2026", dataPagamento: "20/09/2026" }, // 15 dias de atraso
+        { id: 2, vencimento: "05/08/2026", dataPagamento: "05/08/2026" },
+        { id: 3, vencimento: "05/03/2026", dataPagamento: "30/03/2026" }, // atraso, mas há mais de 6 meses
+        { id: 4, vencimento: "05/10/2026" }, // em aberto
+      ] }),
+    });
+    const p = await sgp.customerProfile("88");
+    expect(p.faturasPagas).toBe(3);
+    expect(p.atrasosRecentes).toBe(1);
+    expect(p.clienteDesde?.toISOString().slice(0, 10)).toBe("2026-02-15");
+    // o histórico precisa das faturas pagas também, não só das em aberto
+    expect(calls.find((c) => c.path === "/api/ura/titulos/")?.body.apenas_titulos_em_aberto).toBeUndefined();
   });
 
   it("chamado devolve o protocolo", async () => {

@@ -105,6 +105,8 @@ export class Router {
       knowledge: await this.deps.knowledge(),
       customer: contact.sgpCustomerId ? customer : null,
       desbloqueio: this.deps.agent.desbloqueio,
+      regras: this.deps.agent.regrasLiberacao,
+      now,
     };
     const result = await runAgentTurn(
       {

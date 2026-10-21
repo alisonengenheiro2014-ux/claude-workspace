@@ -4,6 +4,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import type { SgpClient, SgpCustomer } from "../sgp/types.js";
 import type { Contact, Conversation, Store } from "../store/types.js";
+import { decidirLiberacao, REGRAS_PADRAO, type RegrasLiberacao } from "../policy/liberacao.js";
 import { searchKnowledge, type KnowledgeItem } from "./knowledge.js";
 
 export interface ToolContext {
@@ -13,7 +14,9 @@ export interface ToolContext {
   conversation: Conversation;
   knowledge: KnowledgeItem[];
   customer: SgpCustomer | null; // preenchido por identificar_cliente
-  desbloqueio?: boolean; // desbloqueio de confiança permitido? (padrão: não, só libera após pagamento)
+  desbloqueio?: boolean; // liberação de confiança ligada? (o prazo é decidido pela regra, não pela IA)
+  regras?: RegrasLiberacao;
+  now?: Date;
 }
 
 const obj = (properties: Record<string, unknown>, required: string[]) => ({
@@ -52,8 +55,12 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
   },
   {
     name: "desbloqueio_confianca",
-    description: "Solicita o desbloqueio de confiança para o cliente identificado que está bloqueado por débito.",
-    input_schema: obj({}, []),
+    description:
+      "Pede a liberação de confiança para o cliente identificado que está bloqueado por débito. O sistema aplica as regras da empresa e devolve o prazo liberado (pode ser menor que o pedido) ou a recusa.",
+    input_schema: obj(
+      { dias_pedidos: { type: "integer", description: "Quantos dias o cliente pediu; 0 se não disse" } },
+      ["dias_pedidos"],
+    ),
   },
   {
     name: "verificar_cobertura",
@@ -108,6 +115,7 @@ const Pendencia = z.object({
 });
 const Identificar = z.object({ cpf: z.string() });
 const Assunto = z.object({ assunto: z.string() });
+const DiasPedidos = z.object({ dias_pedidos: z.number().int().min(0).max(60) });
 
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<unknown> {
   switch (name) {
@@ -149,8 +157,29 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     case "desbloqueio_confianca": {
       if (!ctx.desbloqueio) throw new ToolError("desbloqueio não permitido: a liberação só acontece após o pagamento");
       const c = needCustomer(ctx);
-      const r = await ctx.sgp.trustUnlock(c.id);
-      return r.ok ? { liberado: true, valido_ate: r.validUntil } : { liberado: false, motivo: r.reason };
+      const { dias_pedidos } = DiasPedidos.parse(input);
+      const status = await ctx.sgp.connectionStatus(c.id);
+      if (!status.suspended) return { liberado: false, motivo: "o cliente não está bloqueado por débito" };
+
+      const agora = ctx.now ?? new Date();
+      const recentes = await ctx.store.countUnlocksSince(c.id, new Date(agora.getTime() - 30 * 86_400_000));
+      const decisao = decidirLiberacao(await ctx.sgp.customerProfile(c.id), recentes, agora, dias_pedidos > 0 ? dias_pedidos * 24 : null, ctx.regras ?? REGRAS_PADRAO);
+      if (!decisao.permitido) {
+        return {
+          liberado: false,
+          orientacao: "Não é possível liberar agora. Explique com gentileza, sem citar o motivo interno, envie a segunda via e registre uma pendência 'outro' (prioridade 2) para a equipe analisar.",
+          motivo_interno_para_a_pendencia: decisao.motivo,
+        };
+      }
+      const r = await ctx.sgp.trustUnlock(c.id, decisao.horas);
+      if (!r.ok) return { liberado: false, orientacao: "O sistema do provedor recusou a liberação. Envie a segunda via e registre uma pendência 'outro' para a equipe.", motivo_interno_para_a_pendencia: r.reason };
+      await ctx.store.recordUnlock({ sgpCustomerId: c.id, conversationId: ctx.conversation.id, hours: decisao.horas, rule: decisao.regra });
+      return {
+        liberado: true,
+        prazo_liberado: decisao.horas % 24 === 0 ? `${decisao.horas / 24} dia(s)` : `${decisao.horas} horas`,
+        valido_ate: r.validUntil ?? null,
+        pediu_mais_que_o_possivel: dias_pedidos * 24 > decisao.horas,
+      };
     }
     case "verificar_cobertura": {
       const { cep, numero } = Cobertura.parse(input);

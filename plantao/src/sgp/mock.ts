@@ -1,4 +1,5 @@
 // SGP simulado para desenvolvimento e testes. Dados fictícios: nenhum cliente real.
+import type { PerfilCliente } from "../policy/liberacao.js";
 import type {
   ConnectionSnapshot,
   ConnectionStatus,
@@ -15,6 +16,7 @@ export interface MockRecord {
   status: ConnectionStatus;
   invoices: Invoice[];
   unlockUsed: boolean;
+  perfil?: { mesesDeCasa: number; faturasPagas: number; atrasosRecentes: number };
 }
 
 const area = (pon: string) => ({ pop: "POP-CENTRO", olt: "OLT-01", pon });
@@ -42,12 +44,21 @@ export function defaultMockData(): MockRecord[] {
       status: { state: "offline", suspended: true, since: "2026-10-18T03:00:00Z" },
       invoices: [{ id: "F-2002", dueDate: "2026-10-05", amountCents: 9990, status: "vencida" }],
       unlockUsed: false,
+      perfil: { mesesDeCasa: 8, faturasPagas: 7, atrasosRecentes: 0 },
     },
     {
       customer: { id: "1003", name: "Carla Teste", cpf: "33333333333", phones: ["5511900000003"], plan: "700 Mega", area: area("PON-2/1") },
       status: { state: "offline", suspended: false, since: "2026-10-20T01:10:00Z" },
       invoices: [{ id: "F-3001", dueDate: "2026-10-25", amountCents: 12990, status: "aberta" }],
       unlockUsed: false,
+    },
+    {
+      // cliente novo, nunca pagou uma fatura
+      customer: { id: "1004", name: "Diego Teste", cpf: "44444444444", phones: ["5511900000004"], plan: "300 Mega", area: area("PON-1/2") },
+      status: { state: "offline", suspended: true, since: "2026-10-19T03:00:00Z" },
+      invoices: [{ id: "F-4001", dueDate: "2026-10-10", amountCents: 8990, status: "vencida" }],
+      unlockUsed: false,
+      perfil: { mesesDeCasa: 1, faturasPagas: 0, atrasosRecentes: 0 },
     },
   ];
 }
@@ -99,13 +110,17 @@ export class MockSgp implements SgpClient {
     };
   }
 
-  async trustUnlock(customerId: string): Promise<TrustUnlockResult> {
+  async customerProfile(customerId: string): Promise<PerfilCliente> {
+    const p = this.rec(customerId).perfil ?? { mesesDeCasa: 12, faturasPagas: 12, atrasosRecentes: 0 };
+    return { clienteDesde: new Date(Date.now() - p.mesesDeCasa * 30 * 86_400_000), faturasPagas: p.faturasPagas, atrasosRecentes: p.atrasosRecentes };
+  }
+
+  async trustUnlock(customerId: string, horas: number): Promise<TrustUnlockResult> {
     const r = this.rec(customerId);
     if (!r.status.suspended) return { ok: false, reason: "cliente não está bloqueado" };
-    if (r.unlockUsed) return { ok: false, reason: "desbloqueio de confiança já usado neste mês" };
     r.unlockUsed = true;
     r.status = { state: "online", suspended: false, since: new Date().toISOString() };
-    return { ok: true, validUntil: new Date(Date.now() + 3 * 86_400_000).toISOString().slice(0, 10) };
+    return { ok: true, validUntil: new Date(Date.now() + horas * 3_600_000).toISOString().slice(0, 10) };
   }
 
   async checkCoverage(cep: string): Promise<CoverageResult> {

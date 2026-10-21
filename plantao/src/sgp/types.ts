@@ -29,6 +29,8 @@ export interface InvoiceCopy {
   pixCopiaECola: string;
 }
 
+import type { PerfilCliente } from "../policy/liberacao.js";
+
 export interface TrustUnlockResult {
   ok: boolean;
   reason?: string; // ex.: "já usado este mês"
@@ -53,7 +55,9 @@ export interface SgpClient {
   connectionStatus(customerId: string): Promise<ConnectionStatus>;
   openInvoices(customerId: string): Promise<Invoice[]>;
   invoiceCopy(customerId: string, invoiceId: string): Promise<InvoiceCopy>;
-  trustUnlock(customerId: string): Promise<TrustUnlockResult>;
+  // histórico usado pela regra de liberação: tempo de casa, faturas pagas e atrasos
+  customerProfile(customerId: string): Promise<PerfilCliente>;
+  trustUnlock(customerId: string, horas: number): Promise<TrustUnlockResult>;
   checkCoverage(cep: string, number: string): Promise<CoverageResult>;
   openTicket(customerId: string, reason: string, details: string): Promise<{ ticketId: string }>;
 }

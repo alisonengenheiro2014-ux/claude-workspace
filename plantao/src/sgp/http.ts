@@ -1,6 +1,7 @@
 // Cliente da API do SGP (rotas "URA", POST com JSON e credenciais app + token no corpo).
 // As rotas e campos seguem integrações públicas que já usam o SGP em produção; as respostas variam
 // entre versões do SGP, por isso a leitura aceita nomes alternativos. Conferir com o SGP da Maxgiga.
+import type { PerfilCliente } from "../policy/liberacao.js";
 import type {
   ConnectionSnapshot,
   ConnectionStatus,
@@ -170,9 +171,27 @@ export class HttpSgp implements SgpClient {
     return { state: online ? "online" : "offline", suspended, since: String(pick(onu ?? {}, "info_date") ?? (this.opts.now?.() ?? new Date()).toISOString()) };
   }
 
-  private async titulos(customerId: string): Promise<Json[]> {
-    const raw = await this.post("/api/ura/titulos/", { contrato: customerId, apenas_titulos_em_aberto: 1, limit: 12 });
+  private async titulos(customerId: string, apenasEmAberto = true): Promise<Json[]> {
+    const raw = await this.post("/api/ura/titulos/", { contrato: customerId, ...(apenasEmAberto ? { apenas_titulos_em_aberto: 1 } : {}), limit: 24 });
     return firstArray(raw, "titulos", "titulo", "faturas", "dados", "data");
+  }
+
+  // tempo de casa e comportamento de pagamento, para a regra de liberação de confiança
+  async customerProfile(customerId: string): Promise<PerfilCliente> {
+    const found = await this.contractFor({ contrato: customerId });
+    const c = found?.contrato ?? {};
+    const desdeRaw = pick(c, "dataCadastro", "data_cadastro", "dataAtivacao", "data_ativacao", "dataInicio", "data_inicio", "dataContrato");
+    const desde = desdeRaw ? new Date(`${toIsoDate(desdeRaw)}T12:00:00-03:00`) : null;
+    const now = this.opts.now?.() ?? new Date();
+    const seisMeses = new Date(now.getTime() - 180 * 86_400_000).toISOString().slice(0, 10);
+    const pagas = (await this.titulos(customerId, false)).filter((t) => pick(t, "dataPagamento", "data_pagamento"));
+    const atrasos = pagas.filter((t) => {
+      const venc = toIsoDate(pick(t, "vencimento", "dataVencimento"));
+      const pago = toIsoDate(pick(t, "dataPagamento", "data_pagamento"));
+      // atraso = pago mais de 5 dias depois do vencimento, nos últimos 6 meses
+      return venc >= seisMeses && Date.parse(pago) - Date.parse(venc) > 5 * 86_400_000;
+    });
+    return { clienteDesde: desde && !Number.isNaN(desde.getTime()) ? desde : null, faturasPagas: pagas.length, atrasosRecentes: atrasos.length };
   }
 
   async openInvoices(customerId: string): Promise<Invoice[]> {
@@ -200,8 +219,9 @@ export class HttpSgp implements SgpClient {
     };
   }
 
-  async trustUnlock(customerId: string): Promise<TrustUnlockResult> {
-    const r = await this.post("/api/ura/liberacaopromessa/", { contrato: customerId });
+  async trustUnlock(customerId: string, horas: number): Promise<TrustUnlockResult> {
+    // "dias" informa o prazo decidido pela regra; confirmar no SGP da Maxgiga se a rota respeita esse campo
+    const r = await this.post("/api/ura/liberacaopromessa/", { contrato: customerId, dias: Math.max(1, Math.round(horas / 24)) });
     const liberado = pick(r, "liberado");
     const msg = pick(r, "msg", "mensagem", "message");
     if ((liberado !== undefined && isFalsy(liberado)) || isFalsy(r.status)) return { ok: false, reason: String(msg ?? "não liberado pelo sistema") };

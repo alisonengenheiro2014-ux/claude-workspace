@@ -15,7 +15,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 - **Painel da equipe** (`/painel`): login com papéis (admin e atendente), fila da manhã por prioridade com "ver conversa" e "feito", números das últimas 24h, abrir massivo por área, atualizar a previsão e encerrar avisando automaticamente quem chamou nas últimas 24h, horários e feriados editáveis, base de conhecimento editável (o agente só usa o que estiver lá). Funciona no celular, com tema claro e escuro.
 - **Massivo automático:** a cada 2 minutos o sistema lê o status de todos os clientes no SGP. Se pelo menos 3 clientes da mesma PON caem em 10 minutos e 60% da área fica offline, abre um massivo "suspeito" sozinho (a equipe confirma ou descarta no painel). Sobe para OLT ou POP só quando duas ou mais áreas abaixo caíram. Quando 90% da área volta (e o massivo tem pelo menos 5 minutos), encerra, avisa quem chamou e cria chamado para quem continua offline. Tudo ajustável no `.env`.
 - **Manutenção:** conversa parada há 12h é encerrada (a próxima mensagem abre um atendimento novo); histórico com mais de 180 dias é apagado (LGPD).
-- **Liberação só após o pagamento:** a assistente nunca libera nem promete liberar; manda a segunda via e, se o cliente já pagou ou mandou comprovante, registra "conferir pagamento" para a equipe. O desbloqueio de confiança fica desligado (`DESBLOQUEIO_CONFIANCA=false`).
+- **Liberação de confiança com a regra da Maxgiga:** quem decide o prazo é o sistema, não a IA. Nunca pagou ou menos de 3 meses: 24h; de 3 a 6 meses: 48h; 6 meses ou mais e em dia: até 5 dias; segunda liberação em 30 dias: no máximo 24h; terceira: não libera e vai para a equipe. A IA pergunta quantos dias o cliente precisa e informa o prazo liberado, sem citar o motivo. Regras ajustáveis no `.env` (`LIBERACAO_*`); `DESBLOQUEIO_CONFIANCA=false` desliga. Se o cliente já pagou, registra "conferir pagamento".
 - **Fim do massivo:** ao normalizar, a assistente pergunta a quem chamou se a internet voltou. Quem confirma recebe um agradecimento e o atendimento é encerrado; quem não responde em 30 minutos (`DESPEDIDA_MINUTOS`) recebe uma despedida e o atendimento é encerrado.
 - **Robustez:** webhook repetido não gera resposta dupla, mensagens do mesmo cliente são atendidas em ordem, assinatura da Meta conferida, uma conversa aberta por cliente.
 
@@ -31,7 +31,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 78 testes (6 precisam de Postgres)
+npm test                 # 95 testes (7 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")

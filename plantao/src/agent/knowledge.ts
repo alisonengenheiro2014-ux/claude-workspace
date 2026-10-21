@@ -31,10 +31,10 @@ export const BASE_INICIAL: KnowledgeItem[] = [
   },
   {
     kind: "politica",
-    title: "Liberação após pagamento",
+    title: "Liberação de confiança",
     body:
-      "Internet bloqueada por débito só é liberada depois que o pagamento é confirmado. A assistente envia a segunda via (boleto e PIX); " +
-      "se o cliente já pagou ou mandou comprovante, registra para a equipe conferir.",
+      "Cliente bloqueado por débito pode pedir liberação de confiança. O prazo depende do cadastro e é calculado pelo sistema; " +
+      "a assistente informa o prazo liberado. Quando não é possível liberar, envia a segunda via e registra para a equipe analisar.",
   },
 ];
 

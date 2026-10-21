@@ -91,6 +91,9 @@ export interface Store {
   setClosingAt(conversationId: string, at: Date | null): Promise<void>;
   // conversas abertas cujo prazo de confirmação já passou
   dueClosings(now: Date): Promise<{ conversation: Conversation; contact: Contact }[]>;
+  // --- liberação de confiança ---
+  recordUnlock(u: { sgpCustomerId: string; conversationId: string | null; hours: number; rule: string }): Promise<void>;
+  countUnlocksSince(sgpCustomerId: string, since: Date): Promise<number>;
   // --- rotinas ---
   loadSnapshots(): Promise<StoredSnapshot[]>;
   saveSnapshots(snaps: StoredSnapshot[], checkedAt: Date): Promise<void>;
