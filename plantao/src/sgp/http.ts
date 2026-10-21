@@ -142,7 +142,7 @@ export class HttpSgp implements SgpClient {
       name: String(pick(c, "razaoSocial", "nome") ?? pick(raw, "razaoSocial", "nome") ?? ""),
       cpf: digits(pick(c, "cpfCnpj", "cpfcnpj") ?? pick(raw, "cpfCnpj", "cpfcnpj")),
       phones,
-      plan: String(pick(c, "planoInternet", "plano", "servicoPlano") ?? ""),
+      plan: String(pick(c, "servico_plano", "planoInternet", "plano", "servicoPlano") ?? ""),
       area: this.areaFrom(await this.onu(id)),
     };
   }
