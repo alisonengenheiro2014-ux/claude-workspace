@@ -13,6 +13,7 @@ export interface ToolContext {
   conversation: Conversation;
   knowledge: KnowledgeItem[];
   customer: SgpCustomer | null; // preenchido por identificar_cliente
+  desbloqueio?: boolean; // desbloqueio de confiança permitido? (padrão: não, só libera após pagamento)
 }
 
 const obj = (properties: Record<string, unknown>, required: string[]) => ({
@@ -74,11 +75,21 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
     ),
   },
   {
+    name: "finalizar_atendimento",
+    description: "Encerra o atendimento depois que o cliente confirmou que está tudo resolvido. Chame junto com a mensagem de despedida.",
+    input_schema: obj({ resumo: { type: "string", description: "Uma frase sobre como terminou" } }, ["resumo"]),
+  },
+  {
     name: "consultar_base",
     description: "Busca na base de conhecimento do provedor: planos, preços, cobertura, perguntas frequentes, luzes da ONU.",
     input_schema: obj({ assunto: { type: "string" } }, ["assunto"]),
   },
 ].map((t) => ({ ...t, strict: true }));
+
+// sem desbloqueio de confiança, a ferramenta nem é oferecida ao modelo
+export function toolDefs(opts: { desbloqueio: boolean }): Anthropic.Tool[] {
+  return TOOL_DEFS.filter((t) => opts.desbloqueio || t.name !== "desbloqueio_confianca");
+}
 
 const needCustomer = (ctx: ToolContext) => {
   if (!ctx.customer) throw new ToolError("cliente ainda não identificado: chame identificar_cliente antes");
@@ -136,6 +147,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       return { boleto: copy.boletoUrl, pix_copia_e_cola: copy.pixCopiaECola };
     }
     case "desbloqueio_confianca": {
+      if (!ctx.desbloqueio) throw new ToolError("desbloqueio não permitido: a liberação só acontece após o pagamento");
       const c = needCustomer(ctx);
       const r = await ctx.sgp.trustUnlock(c.id);
       return r.ok ? { liberado: true, valido_ate: r.validUntil } : { liberado: false, motivo: r.reason };
@@ -164,6 +176,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       });
       await ctx.store.updateConversation(ctx.conversation.id, { status: "aguardando_equipe" });
       return { registrado: true, protocolo_chamado: ticketId };
+    }
+    case "finalizar_atendimento": {
+      await ctx.store.updateConversation(ctx.conversation.id, { status: "closed" });
+      return { encerrado: true };
     }
     case "consultar_base": {
       const { assunto } = Assunto.parse(input);

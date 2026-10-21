@@ -24,6 +24,7 @@ export interface Conversation {
   status: ConversationStatus;
   topic: Topic | null;
   incidentId: string | null;
+  closingAt: Date | null; // aguardando confirmação do cliente até essa hora (pós-massivo)
   createdAt: Date;
 }
 
@@ -86,6 +87,10 @@ export interface Store {
   setHours(windows: { weekday: number; opensAt: string; closesAt: string }[], holidays: string[]): Promise<void>;
   listKnowledge(includeInactive?: boolean): Promise<KnowledgeRow[]>;
   saveKnowledge(k: Omit<KnowledgeRow, "id"> & { id?: string }): Promise<KnowledgeRow>;
+  // --- encerramento ---
+  setClosingAt(conversationId: string, at: Date | null): Promise<void>;
+  // conversas abertas cujo prazo de confirmação já passou
+  dueClosings(now: Date): Promise<{ conversation: Conversation; contact: Contact }[]>;
   // --- rotinas ---
   loadSnapshots(): Promise<StoredSnapshot[]>;
   saveSnapshots(snaps: StoredSnapshot[], checkedAt: Date): Promise<void>;

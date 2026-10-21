@@ -33,6 +33,9 @@ const Env = z.object({
   MASSIVO_PERCENTUAL: z.coerce.number().min(1).max(100).default(60),
   CONVERSA_INATIVA_HORAS: z.coerce.number().min(1).default(12),
   RETENCAO_DIAS: z.coerce.number().min(7).default(180),
+  DESPEDIDA_MINUTOS: z.coerce.number().min(1).default(30),
+  // a Maxgiga só libera após o pagamento; "true" reativa o desbloqueio de confiança pela assistente
+  DESBLOQUEIO_CONFIANCA: z.enum(["true", "false"]).default("false").transform((v) => v === "true"),
 });
 
 export type Config = z.infer<typeof Env>;

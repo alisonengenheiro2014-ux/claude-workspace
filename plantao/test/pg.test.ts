@@ -13,7 +13,7 @@ describe.skipIf(!url)("PgStore", () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
     await pool.query("drop schema public cascade; create schema public;");
-    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql"]);
+    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql"]);
     expect(await migrate(pool)).toEqual([]);
     store = new PgStore(pool);
   });
@@ -65,6 +65,7 @@ describe.skipIf(!url)("PgStore", () => {
     expect(await store.getHours()).toEqual({ windows: [{ weekday: 2, opensAt: "09:00", closesAt: "17:30" }], holidays: ["2026-12-25"] });
 
     expect((await store.listKnowledge()).length).toBe(4);
+    expect((await store.listKnowledge()).some((k) => k.title === "Liberação após pagamento")).toBe(true);
     const k = await store.saveKnowledge({ kind: "plano", title: "300 Mega", body: "R$ 89,90", active: true });
     await store.saveKnowledge({ ...k, active: false });
     expect((await store.listKnowledge()).some((x) => x.id === k.id)).toBe(false);
@@ -129,5 +130,18 @@ describe.skipIf(!url)("PgStore", () => {
     expect((await store.getConversation(conv.id))?.status).toBe("closed");
     expect(await store.deleteMessagesBefore(new Date(Date.now() - 180 * 86_400_000))).toBe(1);
     expect(await store.history(conv.id)).toEqual([]);
+  });
+
+  it("prazo de despedida pós-massivo", async () => {
+    const c = await store.upsertContact("5511955554444");
+    const conv = await store.openConversation(c.id, "meta", "n");
+    expect(conv.closingAt).toBeNull();
+    const at = new Date(Date.now() + 30 * 60_000);
+    await store.setClosingAt(conv.id, at);
+    expect(await store.dueClosings(new Date())).toEqual([]);
+    const due = await store.dueClosings(new Date(Date.now() + 31 * 60_000));
+    expect(due.map((d) => [d.conversation.id, d.contact.phone])).toEqual([[conv.id, "5511955554444"]]);
+    await store.updateConversation(conv.id, { status: "closed" });
+    expect(await store.dueClosings(new Date(Date.now() + 31 * 60_000))).toEqual([]);
   });
 });

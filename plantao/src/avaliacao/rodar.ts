@@ -6,6 +6,7 @@ import { anthropicCreate, type CreateMessage } from "../agent/agent.js";
 import { BASE_INICIAL } from "../agent/knowledge.js";
 import type { ChannelGateway } from "../channels/types.js";
 import { HORARIO_PADRAO } from "../hours.js";
+import { MENSAGEM_NORMALIZOU } from "../incidents.js";
 import type { CreateBetaMessage } from "../media/vision.js";
 import { Router } from "../router.js";
 import { MockSgp } from "../sgp/mock.js";
@@ -61,6 +62,14 @@ export async function rodarCenario(c: Cenario, create: CreateMessage, model: str
     knowledge: () => BASE_INICIAL,
     now: () => NOITE,
   });
+
+  if (c.posMassivo) {
+    // reproduz o fim de um massivo: a IA já perguntou se a internet voltou
+    const contato = await store.upsertContact(c.telefone);
+    const conv = await store.openConversation(contato.id, "meta", "teste");
+    await store.addMessage({ conversationId: conv.id, author: "sistema", body: MENSAGEM_NORMALIZOU });
+    await store.setClosingAt(conv.id, new Date(NOITE.getTime() + 30 * 60_000));
+  }
 
   let n = 0;
   for (const m of c.mensagens) {

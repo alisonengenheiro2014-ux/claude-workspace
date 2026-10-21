@@ -8,13 +8,15 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 - **Quando atende:** fora do horário humano (seg–sex 8h–21h, sáb 8h–12h; domingo e feriado sem equipe) e, **em massivo, 24h**.
 - **Massivo:** cliente de área com incidente aberto recebe na hora a mensagem do incidente, **sem chamar a IA**, e fica vinculado à ocorrência.
-- **Agente (Claude) com ferramentas:** identificar cliente (telefone ou CPF), status online/offline, massivo na região, faturas, segunda via (boleto e PIX), desbloqueio de confiança, cobertura, registrar pendência/chamado e base de conhecimento.
+- **Agente (Claude) com ferramentas:** identificar cliente (telefone ou CPF), status online/offline, massivo na região, faturas, segunda via (boleto e PIX), cobertura, registrar pendência/chamado e base de conhecimento.
 - **Roteiro de "sem internet":** online = problema de Wi-Fi; offline = pede foto/vídeo da ONU; LOS vermelho = chamado prioritário sem mandar reiniciar; senão, reinício guiado e conferência no SGP.
 - **Áudio:** transcrito (servidor Whisper local) e respondido como texto.
 - **Foto e vídeo da ONU:** leitura das luzes POWER/PON/LOS com resposta estruturada; vídeo vira até 8 quadros para pegar luz piscando. Arquivos não ficam guardados.
 - **Painel da equipe** (`/painel`): login com papéis (admin e atendente), fila da manhã por prioridade com "ver conversa" e "feito", números das últimas 24h, abrir massivo por área, atualizar a previsão e encerrar avisando automaticamente quem chamou nas últimas 24h, horários e feriados editáveis, base de conhecimento editável (o agente só usa o que estiver lá). Funciona no celular, com tema claro e escuro.
 - **Massivo automático:** a cada 2 minutos o sistema lê o status de todos os clientes no SGP. Se pelo menos 3 clientes da mesma PON caem em 10 minutos e 60% da área fica offline, abre um massivo "suspeito" sozinho (a equipe confirma ou descarta no painel). Sobe para OLT ou POP só quando duas ou mais áreas abaixo caíram. Quando 90% da área volta (e o massivo tem pelo menos 5 minutos), encerra, avisa quem chamou e cria chamado para quem continua offline. Tudo ajustável no `.env`.
 - **Manutenção:** conversa parada há 12h é encerrada (a próxima mensagem abre um atendimento novo); histórico com mais de 180 dias é apagado (LGPD).
+- **Liberação só após o pagamento:** a assistente nunca libera nem promete liberar; manda a segunda via e, se o cliente já pagou ou mandou comprovante, registra "conferir pagamento" para a equipe. O desbloqueio de confiança fica desligado (`DESBLOQUEIO_CONFIANCA=false`).
+- **Fim do massivo:** ao normalizar, a assistente pergunta a quem chamou se a internet voltou. Quem confirma recebe um agradecimento e o atendimento é encerrado; quem não responde em 30 minutos (`DESPEDIDA_MINUTOS`) recebe uma despedida e o atendimento é encerrado.
 - **Robustez:** webhook repetido não gera resposta dupla, mensagens do mesmo cliente são atendidas em ordem, assinatura da Meta conferida, uma conversa aberta por cliente.
 
 ## Ainda falta
@@ -29,7 +31,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 71 testes (5 precisam de Postgres)
+npm test                 # 78 testes (6 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")
@@ -61,7 +63,7 @@ O instalador pergunta o subdomínio, a chave da Anthropic, o SGP e a Meta (o que
 ## Avaliar a IA antes de ligar
 
 ```bash
-ANTHROPIC_API_KEY=sk-ant-... npm run avaliar               # 13 situações reais de atendimento
+ANTHROPIC_API_KEY=sk-ant-... npm run avaliar               # 15 situações reais de atendimento
 npm run avaliar -- --modelo claude-sonnet-5-5               # comparar com outro modelo
 npm run avaliar -- --cenario los-vermelho --detalhes        # um cenário, mostrando as respostas
 ```

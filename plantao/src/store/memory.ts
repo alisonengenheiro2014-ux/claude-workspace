@@ -33,7 +33,7 @@ export class MemoryStore implements Store {
     const open = this.conversations.find((x) => x.contactId === contactId && x.status !== "closed");
     if (open) return open;
     const conv: Conversation = {
-      id: randomUUID(), contactId, channel, channelNumber, status: "ia", topic: null, incidentId: null, createdAt: new Date(),
+      id: randomUUID(), contactId, channel, channelNumber, status: "ia", topic: null, incidentId: null, closingAt: null, createdAt: new Date(),
     };
     this.conversations.push(conv);
     return conv;
@@ -169,6 +169,17 @@ export class MemoryStore implements Store {
       pendentes: this.pending.filter((p) => p.status === "aberto").length,
       massivo: convs.filter((c) => c.topic === "massivo").length,
     };
+  }
+
+  async setClosingAt(conversationId: string, at: Date | null) {
+    const c = this.conversations.find((x) => x.id === conversationId);
+    if (c) c.closingAt = at;
+  }
+
+  async dueClosings(now: Date) {
+    return this.conversations
+      .filter((c) => c.status !== "closed" && c.closingAt && c.closingAt <= now)
+      .map((conversation) => ({ conversation, contact: this.contacts.find((k) => k.id === conversation.contactId)! }));
   }
 
   async loadSnapshots() {

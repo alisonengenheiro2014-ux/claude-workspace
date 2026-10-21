@@ -29,7 +29,7 @@ export function buildRouter(cfg: Config, opts: { gateway?: ChannelGateway; store
     store,
     sgp,
     gateway,
-    agent: { create: anthropicCreate(client), model: cfg.MODEL_CONVERSA, empresa: cfg.EMPRESA_NOME },
+    agent: { create: anthropicCreate(client), model: cfg.MODEL_CONVERSA, empresa: cfg.EMPRESA_NOME, desbloqueio: cfg.DESBLOQUEIO_CONFIANCA },
     vision: { create: (p) => client.beta.messages.create(p), model: cfg.MODEL_VISAO },
     transcribe: cfg.TRANSCRICAO_URL ? httpTranscriber(cfg.TRANSCRICAO_URL, cfg.TRANSCRICAO_MODELO) : null,
     extractFrames: (video) => extractFrames(video),

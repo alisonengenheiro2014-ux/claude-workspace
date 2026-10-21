@@ -31,8 +31,10 @@ export const BASE_INICIAL: KnowledgeItem[] = [
   },
   {
     kind: "politica",
-    title: "Desbloqueio de confiança",
-    body: "Libera a conexão por alguns dias enquanto o pagamento é feito. O prazo e o limite de uso seguem a regra do sistema.",
+    title: "Liberação após pagamento",
+    body:
+      "Internet bloqueada por débito só é liberada depois que o pagamento é confirmado. A assistente envia a segunda via (boleto e PIX); " +
+      "se o cliente já pagou ou mandou comprovante, registra para a equipe conferir.",
   },
 ];
 

@@ -4,7 +4,7 @@ import { buildRouter } from "./app.js";
 import { parseMetaWebhook, verifyMetaSignature } from "./channels/meta.js";
 import { loadConfig, type Config } from "./config.js";
 import { DETECTOR_PADRAO } from "./jobs/detector.js";
-import { manutencao, normalizacao, startScheduler, varreduraSgp } from "./jobs/routines.js";
+import { despedidas, manutencao, normalizacao, startScheduler, varreduraSgp } from "./jobs/routines.js";
 import { registerPanel, type PanelDeps } from "./panel/routes.js";
 import type { Router } from "./router.js";
 
@@ -56,10 +56,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     gateway,
     sessionSecret: cfg.SESSION_SECRET,
     secureCookie: cfg.PUBLIC_BASE_URL.startsWith("https://"),
+    despedidaMinutos: cfg.DESPEDIDA_MINUTOS,
   });
   const log = (msg: string, extra?: unknown) => app.log.info({ extra }, msg);
   const routineDeps = {
-    store, sgp, gateway, log,
+    store, sgp, gateway, log, despedidaMinutos: cfg.DESPEDIDA_MINUTOS,
     detector: { ...DETECTOR_PADRAO, minClients: cfg.MASSIVO_MIN_CLIENTES, minRatio: cfg.MASSIVO_PERCENTUAL / 100 },
   };
   startScheduler(
@@ -69,6 +70,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
         await varreduraSgp(routineDeps, new Date());
         await normalizacao(routineDeps, new Date());
       } },
+      { name: "despedidas", everyMs: 60_000, run: () => despedidas(routineDeps, new Date()) },
       { name: "manutencao", everyMs: 60 * 60_000, run: () =>
         manutencao(store, new Date(), { inativaHoras: cfg.CONVERSA_INATIVA_HORAS, retencaoDias: cfg.RETENCAO_DIAS }) },
     ],

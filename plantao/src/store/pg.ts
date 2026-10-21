@@ -7,7 +7,7 @@ const toContact = (r: any): Contact => ({
 });
 const toConversation = (r: any): Conversation => ({
   id: r.id, contactId: r.contact_id, channel: r.channel, channelNumber: r.channel_number,
-  status: r.status, topic: r.topic, incidentId: r.incident_id, createdAt: r.created_at,
+  status: r.status, topic: r.topic, incidentId: r.incident_id, closingAt: r.closing_at ?? null, createdAt: r.created_at,
 });
 const toIncident = (r: any): Incident => ({
   id: r.id, areaType: r.area_type, areaId: r.area_id, status: r.status, message: r.message, eta: r.eta, detectedBy: r.detected_by,
@@ -263,6 +263,19 @@ export class PgStore implements Store {
     );
     const r = rows[0];
     return { conversas: r.conversas, resolvidasIa: r.resolvidas_ia, pendentes: r.pendentes, massivo: r.massivo };
+  }
+
+  async setClosingAt(conversationId: string, at: Date | null) {
+    await this.pool.query(`update conversations set closing_at = $2, updated_at = now() where id = $1`, [conversationId, at]);
+  }
+
+  async dueClosings(now: Date) {
+    const { rows } = await this.pool.query(
+      `select c.*, row_to_json(k.*) as contact from conversations c join contacts k on k.id = c.contact_id
+       where c.status <> 'closed' and c.closing_at is not null and c.closing_at <= $1`,
+      [now],
+    );
+    return rows.map((r) => ({ conversation: toConversation(r), contact: toContact(r.contact) }));
   }
 
   async loadSnapshots() {

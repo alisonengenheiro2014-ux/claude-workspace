@@ -8,6 +8,7 @@ export interface IncidentDeps {
   store: Store;
   gateway: ChannelGateway;
   now?: () => Date;
+  despedidaMinutos?: number; // depois de normalizar, quanto esperar a resposta do cliente antes da despedida
 }
 
 export function formatEta(eta: Date, timeZone = "America/Sao_Paulo"): string {
@@ -15,7 +16,7 @@ export function formatEta(eta: Date, timeZone = "America/Sao_Paulo"): string {
 }
 
 // Avisa todos que falaram com a gente nas últimas 24h (dentro da janela gratuita da Meta).
-async function broadcast(deps: IncidentDeps, incidentId: string, text: string): Promise<number> {
+async function broadcast(deps: IncidentDeps, incidentId: string, text: string, closingAt?: Date): Promise<number> {
   const now = deps.now?.() ?? new Date();
   const contacts = await deps.store.incidentContactsInWindow(incidentId, new Date(now.getTime() - DAY));
   let sent = 0;
@@ -24,6 +25,7 @@ async function broadcast(deps: IncidentDeps, incidentId: string, text: string): 
       await deps.gateway.sendText(c.phone, text);
       const conv = await deps.store.openConversation(c.id, "meta", "");
       await deps.store.addMessage({ conversationId: conv.id, author: "sistema", body: text });
+      if (closingAt) await deps.store.setClosingAt(conv.id, closingAt);
       sent++;
     } catch {
       // um envio que falha não impede os outros
@@ -47,13 +49,15 @@ export async function updateIncidentEta(deps: IncidentDeps, id: string, eta: Dat
   return broadcast(deps, id, text);
 }
 
+export const MENSAGEM_NORMALIZOU =
+  "Boa notícia: a conexão na sua região foi normalizada! Sua internet já voltou por aí? Me responde aqui pra eu confirmar. Se ainda estiver sem, desligue o aparelho da fibra da tomada por 30 segundos e ligue de novo.";
+
+// Encerra o massivo, pergunta a quem chamou se a internet voltou e abre o prazo para a despedida automática.
 export async function resolveIncident(deps: IncidentDeps, id: string) {
   await deps.store.updateIncident(id, { status: "resolvido" });
-  return broadcast(
-    deps,
-    id,
-    "Boa notícia: a conexão na sua região foi normalizada. Se a sua internet ainda não voltou, desligue a ONU da tomada por 30 segundos e ligue de novo. Se continuar sem funcionar, é só responder aqui.",
-  );
+  const now = deps.now?.() ?? new Date();
+  const closingAt = new Date(now.getTime() + (deps.despedidaMinutos ?? 30) * 60_000);
+  return broadcast(deps, id, MENSAGEM_NORMALIZOU, closingAt);
 }
 
 export async function discardIncident(deps: IncidentDeps, id: string) {

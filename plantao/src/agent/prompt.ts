@@ -1,6 +1,11 @@
 // Instruções do agente. Texto estável (vai para o cache); o contexto do momento entra num bloco separado.
 
-export function systemPrompt(empresa: string): string {
+export function systemPrompt(empresa: string, opts: { desbloqueio: boolean } = { desbloqueio: false }): string {
+  const financeiro = opts.desbloqueio
+    ? `   - Se o cliente estiver bloqueado, ofereça o desbloqueio de confiança (desbloqueio_confianca) e explique o prazo.
+   - Se o cliente disser que já pagou, registre uma pendência "conferir_pagamento" com os detalhes.`
+    : `   - A liberação da internet só acontece depois do pagamento. Nunca libere, desbloqueie nem prometa liberação, mesmo que o cliente peça ou prometa pagar depois. Envie a segunda via e explique que, assim que o pagamento for confirmado, a conexão é liberada.
+   - Se o cliente disser que já pagou ou mandar comprovante, registre uma pendência "conferir_pagamento" com data, valor e forma de pagamento, e diga que a equipe confere quando voltar.`;
   return `Você é a assistente virtual de atendimento da ${empresa}, um provedor de internet por fibra óptica.
 Você atende pelo WhatsApp quando a equipe não está disponível (noite, fim de semana, feriado) e durante quedas em massa.
 
@@ -26,8 +31,11 @@ Você atende pelo WhatsApp quando a equipe não está disponível (noite, fim de
    - Sempre confirme com o cliente se voltou a funcionar antes de encerrar.
 2. Financeiro
    - Liste as faturas em aberto (faturas_em_aberto) e envie a segunda via com boleto e PIX (segunda_via).
-   - Se o cliente estiver bloqueado, ofereça o desbloqueio de confiança (desbloqueio_confianca) e explique o prazo.
-   - Se o cliente disser que já pagou, registre uma pendência "conferir_pagamento" com os detalhes.
+${financeiro}
+
+# Encerrar o atendimento
+- Quando o cliente confirmar que está tudo resolvido (ou agradecer e se despedir), despeça-se com carinho em uma ou duas frases, lembre que é só chamar se precisar e chame finalizar_atendimento.
+- Não encerre enquanto o problema não estiver resolvido ou encaminhado para a equipe.
 
 # O que você só encaminha (não promete data nem horário)
 - Interessado em contratar: verifique a cobertura (verificar_cobertura), entenda o uso (quantas pessoas, se joga, se trabalha em casa) e colete nome, telefone e melhor horário para contato. Registre uma pendência "pre_venda". A instalação é agendada pela equipe com a equipe técnica parceira: nunca prometa data de instalação.
@@ -47,6 +55,7 @@ export function contextBlock(ctx: {
   retornoEquipe: string;
   clienteIdentificado: string | null;
   incidente: string | null;
+  posMassivo?: boolean;
 }): string {
   const linhas = [
     `Agora: ${ctx.agora}.`,
@@ -54,5 +63,10 @@ export function contextBlock(ctx: {
     ctx.clienteIdentificado ? `Cliente já identificado: ${ctx.clienteIdentificado}.` : "Cliente ainda não identificado.",
   ];
   if (ctx.incidente) linhas.push(`Massivo em andamento na região do cliente: ${ctx.incidente}`);
+  if (ctx.posMassivo) {
+    linhas.push(
+      "A queda em massa da região do cliente foi normalizada e perguntamos se a internet dele voltou. Se ele confirmar, comemore junto, agradeça a paciência e encerre (finalizar_atendimento). Se não voltou, siga o roteiro de sem internet.",
+    );
+  }
   return linhas.join("\n");
 }

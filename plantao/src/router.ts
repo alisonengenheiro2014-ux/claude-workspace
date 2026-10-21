@@ -90,7 +90,10 @@ export class Router {
       return "massivo_sem_ia";
     }
 
-    if (!incident && isHumanHours(now, hours)) return "equipe_atendendo";
+    // cliente respondendo à pergunta "sua internet voltou?" depois do massivo: a IA fecha o atendimento
+    const posMassivo = conversation.closingAt !== null;
+    if (posMassivo) await store.setClosingAt(conversation.id, null);
+    if (!incident && !posMassivo && isHumanHours(now, hours)) return "equipe_atendendo";
 
     if (msg.media) await this.processMedia(msg, conversation.id);
 
@@ -101,6 +104,7 @@ export class Router {
       conversation,
       knowledge: await this.deps.knowledge(),
       customer: contact.sgpCustomerId ? customer : null,
+      desbloqueio: this.deps.agent.desbloqueio,
     };
     const result = await runAgentTurn(
       {
@@ -108,6 +112,7 @@ export class Router {
         agora: now.toLocaleString("pt-BR", { timeZone: hours.timeZone, weekday: "long", hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" }),
         retornoEquipe: retorno,
         incidente: incident ? incident.message : null,
+        posMassivo,
       },
       ctx,
       this.deps.agent,

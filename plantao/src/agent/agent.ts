@@ -2,7 +2,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { StoredMessage } from "../store/types.js";
 import { contextBlock, systemPrompt } from "./prompt.js";
-import { runTool, TOOL_DEFS, ToolError, type ToolContext } from "./tools.js";
+import { runTool, toolDefs, ToolError, type ToolContext } from "./tools.js";
 
 export type CreateMessage = (params: Anthropic.MessageCreateParamsNonStreaming) => Promise<Anthropic.Message>;
 
@@ -10,6 +10,7 @@ export interface AgentDeps {
   create: CreateMessage;
   model: string;
   empresa: string;
+  desbloqueio?: boolean;
   maxSteps?: number;
 }
 
@@ -18,6 +19,7 @@ export interface AgentTurnInput {
   agora: string;
   retornoEquipe: string;
   incidente: string | null;
+  posMassivo?: boolean;
 }
 
 export interface AgentResult {
@@ -55,7 +57,7 @@ export async function runAgentTurn(input: AgentTurnInput, ctx: ToolContext, deps
       output_config: { effort: "low" },
       system: [
         // bloco estável primeiro: entra no cache junto com as ferramentas
-        { type: "text", text: systemPrompt(deps.empresa), cache_control: { type: "ephemeral" } },
+        { type: "text", text: systemPrompt(deps.empresa, { desbloqueio: !!deps.desbloqueio }), cache_control: { type: "ephemeral" } },
         {
           type: "text",
           text: contextBlock({
@@ -63,10 +65,11 @@ export async function runAgentTurn(input: AgentTurnInput, ctx: ToolContext, deps
             retornoEquipe: input.retornoEquipe,
             clienteIdentificado: ctx.customer ? `${ctx.customer.name} (plano ${ctx.customer.plan})` : null,
             incidente: input.incidente,
+            posMassivo: input.posMassivo,
           }),
         },
       ],
-      tools: TOOL_DEFS,
+      tools: toolDefs({ desbloqueio: !!deps.desbloqueio }),
       messages,
     });
 

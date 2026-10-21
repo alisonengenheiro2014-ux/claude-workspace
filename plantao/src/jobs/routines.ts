@@ -10,6 +10,7 @@ export interface RoutineDeps {
   sgp: SgpClient;
   gateway: ChannelGateway;
   detector?: DetectorConfig;
+  despedidaMinutos?: number;
   log?: (msg: string, extra?: unknown) => void;
 }
 
@@ -57,7 +58,7 @@ export async function normalizacao(deps: RoutineDeps, now: Date): Promise<string
 
     // antes de avisar, separa quem ainda está sem conexão
     const contatos = await deps.store.incidentContactsInWindow(inc.id, new Date(now.getTime() - DAY));
-    await resolveIncident({ store: deps.store, gateway: deps.gateway, now: () => now }, inc.id);
+    await resolveIncident({ store: deps.store, gateway: deps.gateway, now: () => now, despedidaMinutos: deps.despedidaMinutos }, inc.id);
     for (const c of contatos) {
       const snap = c.sgpCustomerId ? byCustomer.get(c.sgpCustomerId) : undefined;
       if (!snap || snap.online) continue;
@@ -75,6 +76,26 @@ export async function normalizacao(deps: RoutineDeps, now: Date): Promise<string
     deps.log?.("massivo normalizado", { id: inc.id, area: `${inc.areaType}:${inc.areaId}` });
   }
   return encerrados;
+}
+
+export const MENSAGEM_DESPEDIDA =
+  "Como não tive retorno, vou encerrar este atendimento por aqui. A conexão da sua região já está normalizada. Se tiver qualquer dúvida ou a internet não estiver funcionando, é só mandar uma mensagem que a gente te ajuda. Obrigado pela paciência!";
+
+// Quem não respondeu à pergunta "sua internet voltou?" dentro do prazo recebe a despedida e o atendimento é encerrado.
+export async function despedidas(deps: Pick<RoutineDeps, "store" | "gateway" | "log">, now: Date): Promise<number> {
+  let n = 0;
+  for (const { conversation, contact } of await deps.store.dueClosings(now)) {
+    try {
+      await deps.gateway.sendText(contact.phone, MENSAGEM_DESPEDIDA);
+      await deps.store.addMessage({ conversationId: conversation.id, author: "ia", body: MENSAGEM_DESPEDIDA });
+      await deps.store.setClosingAt(conversation.id, null);
+      await deps.store.updateConversation(conversation.id, { status: "closed" });
+      n++;
+    } catch (err) {
+      deps.log?.("falha ao enviar despedida", { conversa: conversation.id, err: (err as Error).message });
+    }
+  }
+  return n;
 }
 
 // Fecha conversas paradas (a próxima mensagem abre um atendimento novo) e apaga histórico antigo (LGPD).

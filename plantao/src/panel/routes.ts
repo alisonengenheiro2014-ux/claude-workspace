@@ -12,6 +12,7 @@ export interface PanelDeps {
   sessionSecret: string;
   secureCookie: boolean;
   now?: () => Date;
+  despedidaMinutos?: number;
 }
 
 const COOKIE = "plantao_sessao";
@@ -105,7 +106,7 @@ export function registerPanel(app: FastifyInstance, deps: PanelDeps) {
   });
 
   // --- massivo ---
-  const incidentDeps = { store, gateway: deps.gateway, now: deps.now };
+  const incidentDeps = { store, gateway: deps.gateway, now: deps.now, despedidaMinutos: deps.despedidaMinutos };
   const AREAS = ["pon", "olt", "pop"] as const;
 
   app.post("/incidentes", async (req, reply) => {
