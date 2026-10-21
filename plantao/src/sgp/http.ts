@@ -166,12 +166,17 @@ export class HttpSgp implements SgpClient {
     let cpf = digits(q.cpf);
     if (!cpf && q.phone) {
       const phone = digits(q.phone).replace(/^55/, "");
-      const match = (await this.clientesListing()).find((r) =>
-        firstArray(r, "telefones", "contatos").some((t) => {
-          const p = digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t);
-          return p.length >= 10 && (phone.endsWith(p.slice(-10)) || p.endsWith(phone.slice(-10)));
-        }),
-      );
+      const phoneMatches = (entries: Json[]) => entries.some((t) => {
+        const p = digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t);
+        return p.length >= 10 && (phone.endsWith(p.slice(-10)) || p.endsWith(phone.slice(-10)));
+      });
+      // listagem /api/ura/clientes/ retorna contatos aninhados: { contatos: { telefones: [], celulares: [] } }
+      const match = (await this.clientesListing()).find((r) => {
+        const nested = r.contatos as Json | undefined;
+        return phoneMatches(firstArray(r, "telefones"))
+          || phoneMatches(firstArray(nested ?? {}, "telefones", "celulares"))
+          || firstArray(r, "contratos").some((c) => phoneMatches(firstArray(c, "telefones", "contatos")));
+      });
       cpf = digits(pick(match, "cpfcnpj", "cpfCnpj"));
     }
     if (!cpf) return null;
