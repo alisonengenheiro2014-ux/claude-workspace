@@ -145,11 +145,11 @@ export class HttpSgp implements SgpClient {
   private async clientesListing(): Promise<Json[]> {
     if (this.clientesCache && Date.now() - this.clientesCache.at < 10 * 60_000) return this.clientesCache.rows;
     const rows: Json[] = [];
-    for (let offset = 0; offset < 50_000; offset += 500) {
-      const page = await this.post("/api/ura/clientes/", { offset, limit: 500 }, 90_000);
+    for (let offset = 0; offset < 50_000; offset += 100) {
+      const page = await this.post("/api/ura/clientes/", { offset, limit: 100 }, 90_000);
       const items = firstArray(page, "clientes", "contratos", "dados", "data", "results", "items");
       rows.push(...items);
-      if (items.length < 500) break;
+      if (items.length < 100) break;
     }
     this.clientesCache = { at: Date.now(), rows };
     return rows;
