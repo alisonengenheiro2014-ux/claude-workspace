@@ -76,7 +76,11 @@ export class HttpSgp implements SgpClient {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
-    if (!res.ok) throw new SgpError(`SGP ${path} respondeu ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = ` — ${(JSON.parse(text) as Json).detail ?? text.slice(0, 120)}`; } catch {}
+      throw new SgpError(`SGP ${path} respondeu ${res.status}${detail}`);
+    }
     const json = text ? (JSON.parse(text) as Json) : {};
     if (isFalsy(json.status) && json.erro) throw new SgpError(String(json.erro));
     return json;
@@ -87,7 +91,11 @@ export class HttpSgp implements SgpClient {
     url.searchParams.set("app", this.opts.app);
     url.searchParams.set("token", this.opts.token);
     const res = await this.fetchFn(url, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new SgpError(`SGP ${path} respondeu ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try { const t = await res.text(); detail = ` — ${(JSON.parse(t) as Json).detail ?? t.slice(0, 120)}`; } catch {}
+      throw new SgpError(`SGP ${path} respondeu ${res.status}${detail}`);
+    }
     return (await res.json()) as Json;
   }
 
