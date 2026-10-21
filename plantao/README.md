@@ -29,7 +29,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 66 testes (5 precisam de Postgres)
+npm test                 # 71 testes (5 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")
@@ -49,11 +49,24 @@ Rotas usadas (POST com `app` e `token` no corpo): `/api/ura/consultacliente/`, `
 
 ## Subir na VPS
 
-1. Copie `.env.example` para `.env` e preencha (senha do banco, chave da Anthropic, dados do app da Meta).
-2. Aponte um subdomínio para a VPS e coloque-o no `Caddyfile`.
-3. `docker compose up -d --build` (as migrations rodam sozinhas ao iniciar).
-4. Crie o primeiro usuário: `docker compose exec app node dist/criar-usuario.js --nome "Seu Nome" --email voce@maxgiga.com.br --papel admin` e acesse `https://SEU-SUBDOMINIO/painel`.
-5. No app da Meta, configure o webhook `https://SEU-SUBDOMINIO/webhooks/meta` com o `META_VERIFY_TOKEN`, de preferência num **número de teste**, enquanto o Chat Mix não está integrado.
+Pré-requisitos: Docker na VPS e um subdomínio (ex.: `plantao.maxgiga.com.br`) apontado para o IP dela.
+
+```bash
+git clone <este repositório> && cd claude-workspace/plantao
+bash instalar.sh
+```
+
+O instalador pergunta o subdomínio, a chave da Anthropic, o SGP e a Meta (o que não tiver, pule com Enter), gera as senhas, sobe tudo com HTTPS e cria o seu usuário de administrador. No fim, mostra o endereço do painel e o que colar na configuração do webhook da Meta. Use **um número de teste** enquanto o Chat Mix não estiver integrado.
+
+## Avaliar a IA antes de ligar
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-... npm run avaliar               # 13 situações reais de atendimento
+npm run avaliar -- --modelo claude-sonnet-5-5               # comparar com outro modelo
+npm run avaliar -- --cenario los-vermelho --detalhes        # um cenário, mostrando as respostas
+```
+
+Cada cenário (LOS vermelho, Wi-Fi lento, bloqueado, "já paguei", quer contratar, preço sem cadastro, Procon, tentativa de enganar a IA, áudio...) é conferido por regras objetivas: quais ferramentas a IA usou, que pendência registrou e o que disse ou deixou de dizer. Mostra também o custo médio por conversa.
 
 ## Modelos de IA
 

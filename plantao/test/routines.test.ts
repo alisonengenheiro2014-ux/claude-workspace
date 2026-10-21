@@ -7,7 +7,8 @@ import { Router } from "../src/router.js";
 import { MockSgp, mockRecord } from "../src/sgp/mock.js";
 import { MemoryStore } from "../src/store/memory.js";
 
-const t0 = new Date("2026-10-21T02:00:00Z");
+// relativo ao relógio real: o massivo é criado com a hora atual
+const t0 = new Date();
 const at = (min: number) => new Date(t0.getTime() + min * 60_000);
 
 function setup() {
