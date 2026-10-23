@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import { pathToFileURL } from "node:url";
 import { buildRouter } from "./app.js";
+import { parseMaxChatWebhook, verifyMaxChatSignature } from "./channels/maxchat.js";
 import { parseMetaWebhook, verifyMetaSignature } from "./channels/meta.js";
 import { loadConfig, type Config } from "./config.js";
 import { DETECTOR_PADRAO } from "./jobs/detector.js";
@@ -41,6 +42,22 @@ export function buildServer(cfg: Config, router: Router, panel?: PanelDeps) {
     for (const msg of parseMetaWebhook(json)) {
       router.handle(msg).catch((err) => req.log.error({ err, from: msg.from }, "falha ao processar mensagem"));
     }
+    return reply.code(200).send();
+  });
+
+  app.post("/webhooks/maxchat", async (req, reply) => {
+    const { raw, json } = req.body as { raw: Buffer; json: unknown };
+    if (!verifyMaxChatSignature(raw, req.headers["x-maxchat-signature"] as string | undefined, cfg.MAXCHAT_WEBHOOK_SECRET)) {
+      return reply.code(401).send();
+    }
+    const ev = parseMaxChatWebhook(json);
+    // responde na hora; o processamento segue em segundo plano
+    const work =
+      ev.kind === "message" ? router.handle(ev.message)
+      : ev.kind === "humano" ? router.humanoAssumiu(ev.phone)
+      : ev.kind === "encerrado" ? router.atendimentoEncerrado(ev.phone)
+      : Promise.resolve();
+    work.catch((err) => req.log.error({ err }, "falha ao processar evento do MaxChat"));
     return reply.code(200).send();
   });
 

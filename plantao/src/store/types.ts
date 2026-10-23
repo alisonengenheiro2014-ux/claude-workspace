@@ -19,7 +19,7 @@ export interface Contact {
 export interface Conversation {
   id: string;
   contactId: string;
-  channel: "chatmix" | "meta";
+  channel: "chatmix" | "meta" | "maxchat";
   channelNumber: string;
   status: ConversationStatus;
   topic: Topic | null;

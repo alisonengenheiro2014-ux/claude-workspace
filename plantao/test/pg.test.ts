@@ -13,7 +13,7 @@ describe.skipIf(!url)("PgStore", () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
     await pool.query("drop schema public cascade; create schema public;");
-    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql", "004_liberacao_confianca.sql"]);
+    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql", "004_liberacao_confianca.sql", "005_canal_maxchat.sql"]);
     expect(await migrate(pool)).toEqual([]);
     store = new PgStore(pool);
   });
@@ -150,5 +150,11 @@ describe.skipIf(!url)("PgStore", () => {
     expect(await store.countUnlocksSince("1002", new Date(Date.now() - 30 * 86_400_000))).toBe(1);
     expect(await store.countUnlocksSince("1002", new Date(Date.now() + 60_000))).toBe(0);
     expect(await store.countUnlocksSince("9999", new Date(0))).toBe(0);
+  });
+
+  it("conversa pelo canal MaxChat", async () => {
+    const c = await store.upsertContact("5511933332222");
+    const conv = await store.openConversation(c.id, "maxchat", "whatsapp-suporte");
+    expect(conv.channel).toBe("maxchat");
   });
 });

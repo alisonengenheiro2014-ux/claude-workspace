@@ -24,7 +24,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 | item | depende de |
 | --- | --- |
-| integração com o Chat Mix | documentação da API do Chat Mix |
+| integração com o MaxChat: lado do Plantão pronto (`CANAL=maxchat`) | MaxChat implementar o contrato em `docs/integracao-maxchat.md` |
 | SGP real: cliente já escrito, falta testar com o SGP da Maxgiga | `SGP_APP` e `SGP_TOKEN` (Administração > Integrações > Tokens) |
 | passagem da conversa para a equipe às 8h | integração com o Chat Mix |
 
@@ -32,7 +32,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 108 testes (7 precisam de Postgres)
+npm test                 # 118 testes (8 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")

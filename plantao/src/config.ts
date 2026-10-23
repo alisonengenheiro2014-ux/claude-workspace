@@ -10,7 +10,14 @@ const Env = z.object({
   MODEL_CONVERSA: z.string().default("claude-haiku-5-5"),
   MODEL_VISAO: z.string().default("claude-sonnet-5-5"),
 
-  CANAL: z.enum(["meta", "chatmix"]).default("meta"),
+  CANAL: z.enum(["meta", "chatmix", "maxchat"]).default("meta"),
+  MAXCHAT_API_URL: z.string().default(""),
+  MAXCHAT_API_TOKEN: z.string().default(""),
+  MAXCHAT_WEBHOOK_SECRET: z.string().default(""),
+  // fila do MaxChat para cada tipo de pendência
+  MAXCHAT_FILA_SUPORTE: z.string().default("suporte"),
+  MAXCHAT_FILA_FINANCEIRO: z.string().default("financeiro"),
+  MAXCHAT_FILA_COMERCIAL: z.string().default("comercial"),
   META_ACCESS_TOKEN: z.string().default(""),
   META_PHONE_NUMBER_ID: z.string().default(""),
   META_APP_SECRET: z.string().default(""),

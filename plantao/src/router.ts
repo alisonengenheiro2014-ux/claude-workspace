@@ -7,7 +7,7 @@ import { isHumanHours, nextOpeningText, type HoursConfig } from "./hours.js";
 import type { Transcriber } from "./media/audio.js";
 import { describeReading, readEquipment, type CreateBetaMessage } from "./media/vision.js";
 import type { SgpClient, SgpCustomer } from "./sgp/types.js";
-import type { Incident, Store } from "./store/types.js";
+import type { Incident, PendingKind, Store } from "./store/types.js";
 
 export interface RouterDeps {
   store: Store;
@@ -21,6 +21,8 @@ export interface RouterDeps {
   knowledge: () => Promise<KnowledgeItem[]> | KnowledgeItem[];
   now?: () => Date;
   log?: (msg: string, extra?: unknown) => void;
+  // fila humana por tipo de pendência, para canais com filas (MaxChat)
+  filas?: Partial<Record<PendingKind, string>>;
 }
 
 // nos registros, só o começo e o fim do telefone
@@ -125,7 +127,38 @@ export class Router {
     this.deps.log?.("agente respondeu", { de: mascarar(msg.from), ferramentas: result.toolCalls, parada: result.stopReason });
     await gateway.sendText(msg.from, result.reply);
     await store.addMessage({ conversationId: conversation.id, author: "ia", body: result.reply });
+    if (result.toolCalls.includes("registrar_pendencia")) await this.transferir(msg.from, conversation.id);
     return "agente";
+  }
+
+  // com fila humana no canal, a pendência vira atendimento na fila certa, já com o resumo
+  private async transferir(phone: string, conversationId: string) {
+    if (!this.deps.gateway.transfer) return;
+    const pend = (await this.deps.store.listPending("aberto")).filter((p) => p.conversationId === conversationId).at(-1);
+    if (!pend) return;
+    try {
+      await this.deps.gateway.transfer(phone, {
+        department: this.deps.filas?.[pend.kind] ?? "suporte",
+        reason: [pend.summary, (pend.data as { detalhes?: string })?.detalhes].filter(Boolean).join(" | "),
+        priority: pend.priority === 1 ? "alta" : pend.priority === 3 ? "baixa" : "normal",
+      });
+    } catch (err) {
+      // a pendência continua no painel mesmo se a transferência falhar
+      this.deps.log?.("falha ao transferir para a fila", err);
+    }
+  }
+
+  // um atendente assumiu no canal: a IA para de responder nesse atendimento
+  async humanoAssumiu(phone: string) {
+    const contact = await this.deps.store.upsertContact(phone);
+    const conv = await this.deps.store.openConversation(contact.id, "maxchat", "");
+    await this.deps.store.updateConversation(conv.id, { status: "humano" });
+  }
+
+  async atendimentoEncerrado(phone: string) {
+    const contact = await this.deps.store.upsertContact(phone);
+    const conv = await this.deps.store.openConversation(contact.id, "maxchat", "");
+    await this.deps.store.updateConversation(conv.id, { status: "closed" });
   }
 
   // transforma áudio em texto e foto/vídeo em leitura das luzes; tudo entra no histórico
