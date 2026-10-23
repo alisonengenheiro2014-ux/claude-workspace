@@ -32,7 +32,7 @@ Planejamento completo em `../replica/` (`recon.md`, `architecture.md`, `features
 
 ```bash
 npm install
-npm test                 # 126 testes (9 precisam de Postgres)
+npm test                 # 128 testes (9 precisam de Postgres)
 npm run typecheck
 
 # conversar com o agente no terminal (SGP simulado, sempre "fora do horário")

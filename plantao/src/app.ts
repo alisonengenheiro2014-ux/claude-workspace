@@ -59,6 +59,7 @@ export function buildRouter(cfg: Config, opts: { gateway?: ChannelGateway; store
       const items = await store.listKnowledge();
       return items.length ? items : BASE_INICIAL;
     },
+    telefonesLiberados: cfg.HOMOLOGACAO_TELEFONES,
     filas: { chamado_tecnico: cfg.MAXCHAT_FILA_SUPORTE, outro: cfg.MAXCHAT_FILA_SUPORTE, conferir_pagamento: cfg.MAXCHAT_FILA_FINANCEIRO, pre_venda: cfg.MAXCHAT_FILA_COMERCIAL, cancelamento: cfg.MAXCHAT_FILA_CANCELAMENTOS },
     log: (msg, extra) => console.log(JSON.stringify({ t: new Date().toISOString(), msg, extra: extra instanceof Error ? extra.message : extra })),
   });

@@ -130,6 +130,24 @@ describe("roteador com fila humana", () => {
     expect(sent).toEqual(["Oi! Posso ajudar?"]);
   });
 
+  it("homologação: só os telefones liberados são atendidos, e os outros nem são gravados", async () => {
+    const store = new MemoryStore();
+    const sent: string[] = [];
+    const router = new Router({
+      store, sgp: new MockSgp(),
+      gateway: { sendText: async (_t, x) => void sent.push(x), downloadMedia: async () => { throw new Error(); } },
+      agent: { create: scripted([{ text: "Oi, equipe de teste!" }]), model: "f", empresa: "Maxgiga" },
+      vision: { create: async () => { throw new Error(); }, model: "f" }, transcribe: null, extractFrames: async () => [],
+      hours: () => ({ windows: [], holidays: [], timeZone: "America/Sao_Paulo" }), knowledge: () => [],
+      telefonesLiberados: ["5561999990003"],
+    });
+    const base = { channel: "maxchat" as const, channelNumber: "c", text: "oi", receivedAt: new Date() };
+    expect(await router.handle({ ...base, channelMessageId: "h1", from: "5511900000001" })).toBe("fora_da_homologacao");
+    expect(store.contacts).toEqual([]);
+    expect(await router.handle({ ...base, channelMessageId: "h2", from: "5561999990003" })).toBe("agente");
+    expect(sent).toEqual(["Oi, equipe de teste!"]);
+  });
+
   it("sem pendência, não transfere", async () => {
     const { transfers, router } = montar(scripted([{ text: "Oi!" }]));
     await router.handle({ channel: "maxchat", channelNumber: "c", channelMessageId: "x2", from: "5511900000001", text: "oi", receivedAt: new Date() });
@@ -158,5 +176,13 @@ describe("rota /webhooks/maxchat", () => {
     expect(recebidas).toEqual(["to sem internet"]);
     const bad = await app.inject({ method: "POST", url: "/webhooks/maxchat", payload: body, headers: { "content-type": "application/json" } });
     expect(bad.statusCode).toBe(401);
+  });
+});
+
+describe("configuração de homologação", () => {
+  it("lê a lista de telefones", async () => {
+    const { loadConfig } = await import("../src/config.js");
+    expect(loadConfig({ HOMOLOGACAO_TELEFONES: "+55 61 99999-0003, 5561988887777" }).HOMOLOGACAO_TELEFONES).toEqual(["5561999990003", "5561988887777"]);
+    expect(loadConfig({}).HOMOLOGACAO_TELEFONES).toEqual([]);
   });
 });

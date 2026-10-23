@@ -20,6 +20,8 @@ const Env = z.object({
   MAXCHAT_FILA_COMERCIAL: z.string().default("comercial"),
   MAXCHAT_FILA_CANCELAMENTOS: z.string().default("cancelamentos"),
   // pausa entre mensagens em massa (avisos de massivo, despedidas), para não parecer disparo em lote
+  // homologação: telefones (só dígitos, com 55) separados por vírgula; vazio = atende todo mundo
+  HOMOLOGACAO_TELEFONES: z.string().default("").transform((v) => v.split(",").map((x) => x.replace(/\D/g, "")).filter(Boolean)),
   ENVIO_MASSA_INTERVALO_MS: z.coerce.number().min(0).default(4000),
   META_ACCESS_TOKEN: z.string().default(""),
   META_PHONE_NUMBER_ID: z.string().default(""),

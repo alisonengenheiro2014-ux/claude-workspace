@@ -101,4 +101,6 @@ MAXCHAT_FILA_FINANCEIRO=financeiro
 MAXCHAT_FILA_COMERCIAL=comercial
 MAXCHAT_FILA_CANCELAMENTOS=cancelamentos
 ENVIO_MASSA_INTERVALO_MS=4000
+# durante a homologação, só estes telefones são atendidos
+HOMOLOGACAO_TELEFONES=5561999990003
 ```

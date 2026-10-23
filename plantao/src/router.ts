@@ -23,6 +23,8 @@ export interface RouterDeps {
   log?: (msg: string, extra?: unknown) => void;
   // fila humana por tipo de pendência, para canais com filas (MaxChat)
   filas?: Partial<Record<PendingKind, string>>;
+  // homologação: se preenchida, só estes telefones são atendidos (os demais nem são gravados)
+  telefonesLiberados?: string[];
 }
 
 // nos registros, só o começo e o fim do telefone
@@ -30,7 +32,7 @@ export const mascarar = (phone: string) => (phone.length > 6 ? `${phone.slice(0,
 
 const MEDIA_LABEL = { image: "[foto recebida]", audio: "[áudio recebido]", video: "[vídeo recebido]" } as const;
 
-export type Outcome = "duplicada" | "equipe_atendendo" | "humano_assumiu" | "massivo_sem_ia" | "agente";
+export type Outcome = "fora_da_homologacao" | "duplicada" | "equipe_atendendo" | "humano_assumiu" | "massivo_sem_ia" | "agente";
 
 export function incidentMessage(inc: Incident, retorno: string): string {
   const previsao = inc.eta
@@ -64,6 +66,8 @@ export class Router {
   }
 
   private async process(msg: IncomingMessage): Promise<Outcome> {
+    const liberados = this.deps.telefonesLiberados;
+    if (liberados?.length && !liberados.includes(msg.from)) return "fora_da_homologacao";
     const { store, gateway } = this.deps;
     const now = this.deps.now?.() ?? new Date();
     const hours = await this.deps.hours();
