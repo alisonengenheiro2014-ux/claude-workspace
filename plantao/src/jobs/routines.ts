@@ -1,5 +1,5 @@
 // Rotinas automáticas: varredura do SGP (abre massivo), normalização (encerra e avisa) e manutenção.
-import type { ChannelGateway } from "../channels/types.js";
+import { AtendimentoComHumano, type ChannelGateway } from "../channels/types.js";
 import { resolveIncident } from "../incidents.js";
 import type { SgpClient } from "../sgp/types.js";
 import type { Store } from "../store/types.js";
@@ -11,6 +11,7 @@ export interface RoutineDeps {
   gateway: ChannelGateway;
   detector?: DetectorConfig;
   despedidaMinutos?: number;
+  intervaloEnvioMs?: number;
   log?: (msg: string, extra?: unknown) => void;
 }
 
@@ -58,7 +59,7 @@ export async function normalizacao(deps: RoutineDeps, now: Date): Promise<string
 
     // antes de avisar, separa quem ainda está sem conexão
     const contatos = await deps.store.incidentContactsInWindow(inc.id, new Date(now.getTime() - DAY));
-    await resolveIncident({ store: deps.store, gateway: deps.gateway, now: () => now, despedidaMinutos: deps.despedidaMinutos }, inc.id);
+    await resolveIncident({ store: deps.store, gateway: deps.gateway, now: () => now, despedidaMinutos: deps.despedidaMinutos, intervaloEnvioMs: deps.intervaloEnvioMs }, inc.id);
     for (const c of contatos) {
       const snap = c.sgpCustomerId ? byCustomer.get(c.sgpCustomerId) : undefined;
       if (!snap || snap.online) continue;
@@ -82,9 +83,14 @@ export const MENSAGEM_DESPEDIDA =
   "Como não tive retorno, vou encerrar este atendimento por aqui. A conexão da sua região já está normalizada. Se tiver qualquer dúvida ou a internet não estiver funcionando, é só mandar uma mensagem que a gente te ajuda. Obrigado pela paciência!";
 
 // Quem não respondeu à pergunta "sua internet voltou?" dentro do prazo recebe a despedida e o atendimento é encerrado.
-export async function despedidas(deps: Pick<RoutineDeps, "store" | "gateway" | "log">, now: Date): Promise<number> {
+export async function despedidas(deps: Pick<RoutineDeps, "store" | "gateway" | "log" | "intervaloEnvioMs">, now: Date): Promise<number> {
   let n = 0;
   for (const { conversation, contact } of await deps.store.dueClosings(now)) {
+    if (conversation.status === "humano") {
+      await deps.store.setClosingAt(conversation.id, null);
+      continue;
+    }
+    if (n > 0 && deps.intervaloEnvioMs) await new Promise((r) => setTimeout(r, deps.intervaloEnvioMs));
     try {
       await deps.gateway.sendText(contact.phone, MENSAGEM_DESPEDIDA);
       await deps.store.addMessage({ conversationId: conversation.id, author: "ia", body: MENSAGEM_DESPEDIDA });
@@ -92,6 +98,11 @@ export async function despedidas(deps: Pick<RoutineDeps, "store" | "gateway" | "
       await deps.store.updateConversation(conversation.id, { status: "closed" });
       n++;
     } catch (err) {
+      if (err instanceof AtendimentoComHumano) {
+        await deps.store.setClosingAt(conversation.id, null);
+        await deps.store.updateConversation(conversation.id, { status: "humano" });
+        continue;
+      }
       deps.log?.("falha ao enviar despedida", { conversa: conversation.id, err: (err as Error).message });
     }
   }

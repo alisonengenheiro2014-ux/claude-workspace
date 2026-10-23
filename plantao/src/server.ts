@@ -74,10 +74,11 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     sessionSecret: cfg.SESSION_SECRET,
     secureCookie: cfg.PUBLIC_BASE_URL.startsWith("https://"),
     despedidaMinutos: cfg.DESPEDIDA_MINUTOS,
+    intervaloEnvioMs: cfg.ENVIO_MASSA_INTERVALO_MS,
   });
   const log = (msg: string, extra?: unknown) => app.log.info({ extra }, msg);
   const routineDeps = {
-    store, sgp, gateway, log, despedidaMinutos: cfg.DESPEDIDA_MINUTOS,
+    store, sgp, gateway, log, despedidaMinutos: cfg.DESPEDIDA_MINUTOS, intervaloEnvioMs: cfg.ENVIO_MASSA_INTERVALO_MS,
     detector: { ...DETECTOR_PADRAO, minClients: cfg.MASSIVO_MIN_CLIENTES, minRatio: cfg.MASSIVO_PERCENTUAL / 100 },
   };
   startScheduler(

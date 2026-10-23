@@ -64,26 +64,32 @@ Autenticação: `Authorization: Bearer <token do robô>`. O token só pode usar 
 { "phone": "5511900000003", "text": "Boa noite, Carla! ..." }
 ```
 
-O MaxChat envia **no atendimento aberto desse telefone e pelo mesmo canal em que ele chegou**. Se não houver atendimento aberto (aviso de normalização de massivo, despedida), usa o último canal em que o cliente falou. A mensagem aparece no histórico como enviada pelo robô. Resposta `200` com `{ "message_id": "..." }`; `404` se o telefone nunca falou com a empresa.
+Se o atendimento estiver com um atendente (`bot_enabled = false`), o MaxChat **não envia** e responde `409`: o Plantão sai desse atendimento. Caso contrário, o MaxChat envia **no atendimento aberto desse telefone e pelo mesmo canal em que ele chegou**. Se não houver atendimento aberto (aviso de normalização de massivo, despedida), usa o último canal em que o cliente falou. A mensagem aparece no histórico como enviada pelo robô. Resposta `200` com `{ "message_id": "..." }`; `404` se o telefone nunca falou com a empresa.
 
 ### Transferir para a fila
 
 `POST {MAXCHAT_URL}/api/v1/bot/transfer`
 
 ```json
-{ "phone": "5511900000003", "department": "suporte | financeiro | comercial", "reason": "Cliente offline com LOS vermelho na ONU (foto). Chamado CH-1001", "priority": "alta | normal | baixa" }
+{ "phone": "5511900000003", "department": "suporte | financeiro | comercial | cancelamentos", "reason": "Cliente offline com LOS vermelho na ONU (foto). Chamado CH-1001", "priority": "alta | normal | baixa" }
 ```
 
 O MaxChat coloca o atendimento na fila do departamento, grava o `reason` como nota interna visível ao atendente, **desliga o robô nesse atendimento** (`bot_enabled = false`) e preserva o histórico.
 
-## 3. Segurança
+Mapeamento no MaxChat: `suporte` → SUPORTE TÉCNICO, `financeiro` → FINANCEIRO, `comercial` → COMERCIAL, `cancelamentos` → CANCELAMENTOS.
+
+## 3. Envios em massa e WhatsApp por QR code
+
+Avisos de massivo e despedidas saem um por vez, com pausa de cerca de 4 segundos (`ENVIO_MASSA_INTERVALO_MS`), e só para quem falou com a empresa nas últimas 24h e não está com um atendente. Com a Evolution conectada por QR code (WhatsApp Web, não oficial), o risco de bloqueio do número continua existindo; nos números principais, o recomendado é a API oficial da Meta.
+
+## 4. Segurança
 
 - Segredo do webhook e token do robô diferentes, guardados só no backend dos dois sistemas.
 - HMAC conferido em todo webhook; corpo bruto, sem reformatar o JSON.
 - Rate limit nas rotas do robô.
 - Registros sem token e com telefone mascarado.
 
-## 4. Configuração no Plantão
+## 5. Configuração no Plantão
 
 ```
 CANAL=maxchat
@@ -93,4 +99,6 @@ MAXCHAT_WEBHOOK_SECRET=<segredo compartilhado>
 MAXCHAT_FILA_SUPORTE=suporte
 MAXCHAT_FILA_FINANCEIRO=financeiro
 MAXCHAT_FILA_COMERCIAL=comercial
+MAXCHAT_FILA_CANCELAMENTOS=cancelamentos
+ENVIO_MASSA_INTERVALO_MS=4000
 ```

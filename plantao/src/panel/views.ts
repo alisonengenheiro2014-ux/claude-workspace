@@ -57,6 +57,7 @@ const KIND_LABEL: Record<PendingItem["kind"], string> = {
   chamado_tecnico: "Chamado técnico",
   pre_venda: "Pré-venda",
   conferir_pagamento: "Conferir pagamento",
+  cancelamento: "Cancelamento",
   outro: "Outro",
 };
 

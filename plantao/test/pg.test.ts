@@ -13,7 +13,7 @@ describe.skipIf(!url)("PgStore", () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: url });
     await pool.query("drop schema public cascade; create schema public;");
-    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql", "004_liberacao_confianca.sql", "005_canal_maxchat.sql"]);
+    expect(await migrate(pool)).toEqual(["001_init.sql", "002_seed.sql", "003_despedida_e_liberacao.sql", "004_liberacao_confianca.sql", "005_canal_maxchat.sql", "006_cancelamento.sql"]);
     expect(await migrate(pool)).toEqual([]);
     store = new PgStore(pool);
   });
@@ -156,5 +156,12 @@ describe.skipIf(!url)("PgStore", () => {
     const c = await store.upsertContact("5511933332222");
     const conv = await store.openConversation(c.id, "maxchat", "whatsapp-suporte");
     expect(conv.channel).toBe("maxchat");
+  });
+
+  it("pendência de cancelamento", async () => {
+    const c = await store.upsertContact("5511922221111");
+    const conv = await store.openConversation(c.id, "maxchat", "c");
+    const p = await store.createPending({ conversationId: conv.id, kind: "cancelamento", priority: 2, summary: "quer cancelar", data: {}, sgpTicketId: null });
+    expect(p.kind).toBe("cancelamento");
   });
 });

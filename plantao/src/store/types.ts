@@ -5,7 +5,7 @@ import type { StoredSnapshot } from "../jobs/detector.js";
 export type Author = "cliente" | "ia" | "humano" | "sistema";
 export type ConversationStatus = "ia" | "aguardando_equipe" | "humano" | "closed";
 export type Topic = "sem_internet" | "financeiro" | "pre_venda" | "visita_tecnica" | "massivo" | "outro";
-export type PendingKind = "chamado_tecnico" | "pre_venda" | "conferir_pagamento" | "outro";
+export type PendingKind = "chamado_tecnico" | "pre_venda" | "conferir_pagamento" | "cancelamento" | "outro";
 
 export interface Contact {
   id: string;

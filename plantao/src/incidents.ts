@@ -1,14 +1,19 @@
 // Ações da equipe sobre um massivo: abrir, atualizar previsão (avisa quem chamou) e encerrar.
 import type { ChannelGateway } from "./channels/types.js";
+import { AtendimentoComHumano } from "./channels/types.js";
 import type { Incident, Store } from "./store/types.js";
 
 const DAY = 24 * 3_600_000;
+
+// pausa com uma pequena variação, para os envios em massa não saírem em rajada
+const pausa = (ms: number) => new Promise((r) => setTimeout(r, ms + Math.floor(Math.random() * ms * 0.25)));
 
 export interface IncidentDeps {
   store: Store;
   gateway: ChannelGateway;
   now?: () => Date;
   despedidaMinutos?: number; // depois de normalizar, quanto esperar a resposta do cliente antes da despedida
+  intervaloEnvioMs?: number; // pausa entre uma mensagem e outra nos avisos em massa
 }
 
 export function formatEta(eta: Date, timeZone = "America/Sao_Paulo"): string {
@@ -21,13 +26,17 @@ async function broadcast(deps: IncidentDeps, incidentId: string, text: string, c
   const contacts = await deps.store.incidentContactsInWindow(incidentId, new Date(now.getTime() - DAY));
   let sent = 0;
   for (const c of contacts) {
+    const conv = await deps.store.openConversation(c.id, "meta", "");
+    // quem está falando com um atendente não recebe mensagem automática
+    if (conv.status === "humano") continue;
+    if (sent > 0 && deps.intervaloEnvioMs) await pausa(deps.intervaloEnvioMs);
     try {
       await deps.gateway.sendText(c.phone, text);
-      const conv = await deps.store.openConversation(c.id, "meta", "");
       await deps.store.addMessage({ conversationId: conv.id, author: "sistema", body: text });
       if (closingAt) await deps.store.setClosingAt(conv.id, closingAt);
       sent++;
-    } catch {
+    } catch (err) {
+      if (err instanceof AtendimentoComHumano) await deps.store.updateConversation(conv.id, { status: "humano" });
       // um envio que falha não impede os outros
     }
   }

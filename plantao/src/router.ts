@@ -2,7 +2,7 @@
 import { runAgentTurn, type AgentDeps } from "./agent/agent.js";
 import type { KnowledgeItem } from "./agent/knowledge.js";
 import type { ToolContext } from "./agent/tools.js";
-import type { ChannelGateway, IncomingMessage } from "./channels/types.js";
+import { AtendimentoComHumano, type ChannelGateway, type IncomingMessage } from "./channels/types.js";
 import { isHumanHours, nextOpeningText, type HoursConfig } from "./hours.js";
 import type { Transcriber } from "./media/audio.js";
 import { describeReading, readEquipment, type CreateBetaMessage } from "./media/vision.js";
@@ -90,8 +90,7 @@ export class Router {
       await store.linkIncidentContact(incident.id, contact.id);
       await store.updateConversation(conversation.id, { topic: "massivo", incidentId: incident.id });
       const text = incidentMessage(incident, retorno);
-      await gateway.sendText(msg.from, text);
-      await store.addMessage({ conversationId: conversation.id, author: "ia", body: text });
+      if (!(await this.enviar(msg.from, text, conversation.id))) return "humano_assumiu";
       return "massivo_sem_ia";
     }
 
@@ -126,10 +125,22 @@ export class Router {
       this.deps.agent,
     );
     this.deps.log?.("agente respondeu", { de: mascarar(msg.from), ferramentas: result.toolCalls, parada: result.stopReason });
-    await gateway.sendText(msg.from, result.reply);
-    await store.addMessage({ conversationId: conversation.id, author: "ia", body: result.reply });
+    if (!(await this.enviar(msg.from, result.reply, conversation.id))) return "humano_assumiu";
     if (result.toolCalls.includes("registrar_pendencia")) await this.transferir(msg.from, conversation.id);
     return "agente";
+  }
+
+  // envia e grava; se o canal avisar que um atendente assumiu, a IA sai do atendimento
+  private async enviar(phone: string, text: string, conversationId: string): Promise<boolean> {
+    try {
+      await this.deps.gateway.sendText(phone, text);
+    } catch (err) {
+      if (!(err instanceof AtendimentoComHumano)) throw err;
+      await this.deps.store.updateConversation(conversationId, { status: "humano" });
+      return false;
+    }
+    await this.deps.store.addMessage({ conversationId, author: "ia", body: text });
+    return true;
   }
 
   // com fila humana no canal, a pendência vira atendimento na fila certa, já com o resumo

@@ -12,6 +12,13 @@ export interface IncomingMessage {
   agentsOnline?: boolean;
 }
 
+// O canal recusou o envio porque um atendente assumiu o atendimento (MaxChat responde 409).
+export class AtendimentoComHumano extends Error {
+  constructor(public phone: string) {
+    super("atendimento está com um atendente");
+  }
+}
+
 export interface TransferInfo {
   department: string;
   reason: string;

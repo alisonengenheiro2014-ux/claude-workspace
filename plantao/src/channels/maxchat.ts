@@ -1,7 +1,7 @@
 // Canal MaxChat: o MaxChat recebe o WhatsApp (Evolution API), avisa o Plantão por webhook e envia
 // as respostas pelo mesmo número. Contrato em docs/integracao-maxchat.md.
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { ChannelGateway, IncomingMessage, TransferInfo } from "./types.js";
+import { AtendimentoComHumano, type ChannelGateway, type IncomingMessage, type TransferInfo } from "./types.js";
 
 export class MaxChatGateway implements ChannelGateway {
   private fetchFn: typeof fetch;
@@ -22,6 +22,7 @@ export class MaxChatGateway implements ChannelGateway {
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
+    if (res.status === 409) throw new AtendimentoComHumano(String((body as { phone?: string }).phone ?? ""));
     if (!res.ok) throw new Error(`MaxChat ${path} respondeu ${res.status}`);
   }
 

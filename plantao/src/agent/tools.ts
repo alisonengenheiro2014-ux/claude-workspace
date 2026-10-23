@@ -73,7 +73,7 @@ export const TOOL_DEFS: Anthropic.Tool[] = [
       "Registra um item para a equipe tratar quando voltar. Para chamado técnico, também abre o chamado no sistema. Prioridade 1 = urgente (LOS, cliente muito irritado), 2 = normal, 3 = pode esperar.",
     input_schema: obj(
       {
-        tipo: { type: "string", enum: ["chamado_tecnico", "pre_venda", "conferir_pagamento", "outro"] },
+        tipo: { type: "string", enum: ["chamado_tecnico", "pre_venda", "conferir_pagamento", "cancelamento", "outro"] },
         prioridade: { type: "integer", enum: [1, 2, 3] },
         resumo: { type: "string", description: "Uma ou duas frases para a equipe entender sem ler a conversa toda" },
         detalhes: { type: "string", description: "Dados coletados: nome, endereço, melhor horário, luzes da ONU, etc." },
@@ -108,7 +108,7 @@ export class ToolError extends Error {}
 const SegundaVia = z.object({ fatura_id: z.string().min(1) });
 const Cobertura = z.object({ cep: z.string().min(5), numero: z.string() });
 const Pendencia = z.object({
-  tipo: z.enum(["chamado_tecnico", "pre_venda", "conferir_pagamento", "outro"]),
+  tipo: z.enum(["chamado_tecnico", "pre_venda", "conferir_pagamento", "cancelamento", "outro"]),
   prioridade: z.union([z.literal(1), z.literal(2), z.literal(3)]),
   resumo: z.string().min(1),
   detalhes: z.string(),
