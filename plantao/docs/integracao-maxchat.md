@@ -32,6 +32,7 @@ O Plantão responde `200` na hora e processa em segundo plano. Reenvios do mesmo
     "mime_type": "image/jpeg"
   },
   "ticket": { "status": "open", "assigned_user_id": null, "bot_enabled": true },
+  "agents_online": true,
   "timestamp": "2026-10-23T02:10:00Z"
 }
 ```
@@ -40,6 +41,7 @@ Regras:
 - Enviar **todas** as mensagens recebidas de clientes (o Plantão decide se responde pelo horário e pelo massivo).
 - `bot_enabled: false` ou `assigned_user_id` preenchido = o Plantão **não responde**.
 - Não enviar mensagens enviadas pelos atendentes nem pelo próprio robô.
+- `agents_online`: `true` se algum atendente está com o MaxChat aberto agora (por exemplo, sinal de presença nos últimos 10 minutos). Com `false`, o Plantão atende mesmo dentro do horário da equipe (almoço, falta, plantão). Se o campo não vier, vale só o horário configurado no Plantão.
 
 ### ticket.assigned e ticket.closed
 

@@ -47,15 +47,14 @@ describe("SGP via API", () => {
     expect(calls[0]).toEqual({ path: "/api/ura/consultacliente/", body: { app: "plantao", token: "tok", cpfcnpj: "33333333333" } });
   });
 
-  it("busca por telefone usa a listagem de clientes (com cache)", async () => {
+  it("busca por telefone usa /api/ura/consultacliente/ com campo telefone", async () => {
+    const semResultado = { msg: "CPF/CNPJ ou Contrato ID Não informados", contratos: [] };
     const { sgp, calls } = fakeSgp({
-      "/api/ura/clientes/": () => ({ clientes: [{ nome: "Outro", cpfcnpj: "111", telefones: ["11999990000"] }, { nome: "Carla", cpfcnpj: "333.333.333-33", telefones: [{ contato: "11 90000-0003" }] }] }),
-      "/api/ura/consultacliente/": () => consulta,
+      "/api/ura/consultacliente/": (body) => body.telefone === "11900000003" ? consulta : semResultado,
       "/api/fttx/onu/list/": () => onu,
     });
     expect((await sgp.findCustomer({ phone: "5511900000003" }))?.id).toBe("88");
-    await sgp.findCustomer({ phone: "5511900000003" });
-    expect(calls.filter((c) => c.path === "/api/ura/clientes/")).toHaveLength(1);
+    expect(calls[0]).toMatchObject({ path: "/api/ura/consultacliente/", body: expect.objectContaining({ telefone: "11900000003" }) });
     expect(await sgp.findCustomer({ phone: "5521988887777" })).toBeNull();
   });
 

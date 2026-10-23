@@ -98,7 +98,8 @@ export class Router {
     // cliente respondendo à pergunta "sua internet voltou?" depois do massivo: a IA fecha o atendimento
     const posMassivo = conversation.closingAt !== null;
     if (posMassivo) await store.setClosingAt(conversation.id, null);
-    if (!incident && !posMassivo && isHumanHours(now, hours)) return "equipe_atendendo";
+    // no horário da equipe a IA fica quieta, a menos que o canal avise que não há ninguém logado
+    if (!incident && !posMassivo && isHumanHours(now, hours) && msg.agentsOnline !== false) return "equipe_atendendo";
 
     if (msg.media) await this.processMedia(msg, conversation.id);
 

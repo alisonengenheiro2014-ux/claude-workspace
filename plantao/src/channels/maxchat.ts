@@ -76,6 +76,7 @@ export function parseMaxChatWebhook(body: any): MaxChatEvent {
     profileName: body.contact?.name ?? undefined,
     text: m.text ?? m.caption ?? undefined,
     receivedAt: body.timestamp ? new Date(body.timestamp) : new Date(),
+    agentsOnline: typeof body.agents_online === "boolean" ? body.agents_online : undefined,
   };
   if (mediaKind && m.media_url) message.media = { kind: mediaKind, mediaId: String(m.media_url), mimeType: String(m.mime_type ?? "") };
   else if (!m.text && m.type && m.type !== "text") message.text = `[mensagem do tipo ${m.type}]`;

@@ -43,6 +43,11 @@ describe("webhook do MaxChat", () => {
     expect(parseMaxChatWebhook({ event: "message.received" })).toEqual({ kind: "ignorar" });
   });
 
+  it("lê se há atendente online", () => {
+    expect(parseMaxChatWebhook(evento({ agents_online: false }))).toMatchObject({ kind: "message", message: { agentsOnline: false } });
+    expect(parseMaxChatWebhook(evento())).toMatchObject({ kind: "message", message: { agentsOnline: undefined } });
+  });
+
   it("assinatura HMAC", () => {
     const raw = Buffer.from(JSON.stringify(evento()));
     const sig = "sha256=" + createHmac("sha256", "segredo").update(raw).digest("hex");
@@ -106,6 +111,23 @@ describe("roteador com fila humana", () => {
     ]));
     await router.handle({ channel: "maxchat", channelNumber: "c", channelMessageId: "x1", from: "5511900000002", text: "já paguei", receivedAt: new Date() });
     expect(transfers).toEqual([{ to: "5511900000002", info: { department: "financeiro", reason: "Pagou por PIX | R$ 99,90 às 22h", priority: "normal" } }]);
+  });
+
+  it("no horário da equipe, sem ninguém logado no MaxChat, a IA atende", async () => {
+    const store = new MemoryStore();
+    const sent: string[] = [];
+    const router = new Router({
+      store, sgp: new MockSgp(),
+      gateway: { sendText: async (_t, x) => void sent.push(x), downloadMedia: async () => { throw new Error(); } },
+      agent: { create: scripted([{ text: "Oi! Posso ajudar?" }, { text: "Oi de novo" }]), model: "f", empresa: "Maxgiga" },
+      vision: { create: async () => { throw new Error(); }, model: "f" }, transcribe: null, extractFrames: async () => [],
+      hours: () => ({ windows: [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({ weekday, opensAt: "00:00", closesAt: "23:59" })), holidays: [], timeZone: "America/Sao_Paulo" }),
+      knowledge: () => [],
+    });
+    const base = { channel: "maxchat" as const, channelNumber: "c", from: "5511900000001", text: "oi", receivedAt: new Date() };
+    expect(await router.handle({ ...base, channelMessageId: "o1", agentsOnline: true })).toBe("equipe_atendendo");
+    expect(await router.handle({ ...base, channelMessageId: "o2", agentsOnline: false })).toBe("agente");
+    expect(sent).toEqual(["Oi! Posso ajudar?"]);
   });
 
   it("sem pendência, não transfere", async () => {

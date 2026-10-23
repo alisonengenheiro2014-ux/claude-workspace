@@ -8,6 +8,8 @@ export interface IncomingMessage {
   text?: string;
   media?: { kind: "image" | "audio" | "video"; mediaId: string; mimeType: string };
   receivedAt: Date;
+  // o canal informa se há atendente logado agora (MaxChat); false = a IA atende mesmo no horário da equipe
+  agentsOnline?: boolean;
 }
 
 export interface TransferInfo {

@@ -59,7 +59,6 @@ export class SgpError extends Error {}
 
 export class HttpSgp implements SgpClient {
   private fetchFn: typeof fetch;
-  private clientesCache: { at: number; rows: Json[] } | null = null;
 
   constructor(private opts: HttpSgpOptions) {
     if (!opts.baseUrl || !opts.app || !opts.token) throw new Error("SGP_BASE_URL, SGP_APP e SGP_TOKEN são obrigatórios no modo http");
@@ -76,7 +75,11 @@ export class HttpSgp implements SgpClient {
       signal: AbortSignal.timeout(timeoutMs),
     });
     const text = await res.text();
-    if (!res.ok) throw new SgpError(`SGP ${path} respondeu ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try { detail = ` — ${(JSON.parse(text) as Json).detail ?? text.slice(0, 120)}`; } catch {}
+      throw new SgpError(`SGP ${path} respondeu ${res.status}${detail}`);
+    }
     const json = text ? (JSON.parse(text) as Json) : {};
     if (isFalsy(json.status) && json.erro) throw new SgpError(String(json.erro));
     return json;
@@ -87,7 +90,11 @@ export class HttpSgp implements SgpClient {
     url.searchParams.set("app", this.opts.app);
     url.searchParams.set("token", this.opts.token);
     const res = await this.fetchFn(url, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) throw new SgpError(`SGP ${path} respondeu ${res.status}`);
+    if (!res.ok) {
+      let detail = "";
+      try { const t = await res.text(); detail = ` — ${(JSON.parse(t) as Json).detail ?? t.slice(0, 120)}`; } catch {}
+      throw new SgpError(`SGP ${path} respondeu ${res.status}${detail}`);
+    }
     return (await res.json()) as Json;
   }
 
@@ -119,49 +126,39 @@ export class HttpSgp implements SgpClient {
 
   private async customerFromContract(c: Json, raw: Json): Promise<SgpCustomer> {
     const id = String(pick(c, "contratoId", "contrato", "idContrato", "id"));
-    const phones = firstArray(c, "telefones", "contatos").concat(firstArray(raw, "telefones", "contatos"))
-      .map((t) => digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t))
-      .filter((p) => p.length >= 10)
-      .map((p) => (p.startsWith("55") ? p : `55${p}`));
+    // coleta telefones do contrato ativo e de todos os contratos da resposta (SGP pode ter o telefone em qualquer um)
+    const allContratos = firstArray(raw, "contratos", "dados", "data", "clientes");
+    const allPhoneEntries = firstArray(c, "telefones", "contatos")
+      .concat(firstArray(raw, "telefones", "contatos"))
+      .concat(allContratos.flatMap((ct) => firstArray(ct, "telefones", "contatos")));
+    const phones = [...new Set(
+      allPhoneEntries
+        .map((t) => digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t))
+        .filter((p) => p.length >= 10)
+        .map((p) => (p.startsWith("55") ? p : `55${p}`))
+    )];
     return {
       id,
       name: String(pick(c, "razaoSocial", "nome") ?? pick(raw, "razaoSocial", "nome") ?? ""),
       cpf: digits(pick(c, "cpfCnpj", "cpfcnpj") ?? pick(raw, "cpfCnpj", "cpfcnpj")),
       phones,
-      plan: String(pick(c, "planoInternet", "plano", "servicoPlano") ?? ""),
+      plan: String(pick(c, "servico_plano", "planoInternet", "plano", "servicoPlano") ?? ""),
       area: this.areaFrom(await this.onu(id)),
     };
   }
 
-  // a busca por telefone usa a listagem de clientes (SGP não filtra por telefone); guarda por 10 min
-  private async clientesListing(): Promise<Json[]> {
-    if (this.clientesCache && Date.now() - this.clientesCache.at < 10 * 60_000) return this.clientesCache.rows;
-    const rows: Json[] = [];
-    for (let offset = 0; offset < 50_000; offset += 500) {
-      const page = await this.post("/api/ura/clientes/", { offset, limit: 500 }, 90_000);
-      const items = firstArray(page, "clientes", "contratos", "dados", "data", "results", "items");
-      rows.push(...items);
-      if (items.length < 500) break;
+async findCustomer(q: { cpf?: string; phone?: string }): Promise<SgpCustomer | null> {
+    if (q.cpf) {
+      const found = await this.contractFor({ cpfcnpj: digits(q.cpf) });
+      return found ? this.customerFromContract(found.contrato, found.raw) : null;
     }
-    this.clientesCache = { at: Date.now(), rows };
-    return rows;
-  }
-
-  async findCustomer(q: { cpf?: string; phone?: string }): Promise<SgpCustomer | null> {
-    let cpf = digits(q.cpf);
-    if (!cpf && q.phone) {
+    if (q.phone) {
+      // /api/ura/consultacliente/ aceita busca por telefone diretamente (mais eficiente que varrer a listagem)
       const phone = digits(q.phone).replace(/^55/, "");
-      const match = (await this.clientesListing()).find((r) =>
-        firstArray(r, "telefones", "contatos").some((t) => {
-          const p = digits(typeof t === "object" ? pick(t, "contato", "numero", "telefone") : t);
-          return p.length >= 10 && (phone.endsWith(p.slice(-10)) || p.endsWith(phone.slice(-10)));
-        }),
-      );
-      cpf = digits(pick(match, "cpfcnpj", "cpfCnpj"));
+      const found = await this.contractFor({ telefone: phone });
+      return found ? this.customerFromContract(found.contrato, found.raw) : null;
     }
-    if (!cpf) return null;
-    const found = await this.contractFor({ cpfcnpj: cpf });
-    return found ? this.customerFromContract(found.contrato, found.raw) : null;
+    return null;
   }
 
   async connectionStatus(customerId: string): Promise<ConnectionStatus> {
@@ -211,7 +208,7 @@ export class HttpSgp implements SgpClient {
   async openInvoices(customerId: string): Promise<Invoice[]> {
     const today = (this.opts.now?.() ?? new Date()).toISOString().slice(0, 10);
     return (await this.titulos(customerId))
-      .filter((t) => !pick(t, "dataPagamento"))
+      .filter((t) => !pick(t, "dataPagamento") && !["pago", "cancelado", "cancel", "baixado"].includes(String(pick(t, "status") ?? "").toLowerCase()))
       .map((t) => {
         const dueDate = toIsoDate(pick(t, "vencimento", "dataVencimento"));
         return {
