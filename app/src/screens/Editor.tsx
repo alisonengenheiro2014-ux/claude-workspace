@@ -13,6 +13,7 @@ import {
   ImageIcon,
   ImagePlus,
   Wand2,
+  SunMedium,
   FlipHorizontal2,
   Gauge,
   Layers,
@@ -120,6 +121,8 @@ import { AdjustSheet, FilterSheet } from "./LookSheets";
 import { CropPan, CropSheet } from "./CropSheet";
 import { CoverSheet } from "./CoverSheet";
 import { autoAdjust } from "../editor/enhance";
+import { PhotoTools } from "./PhotoTools";
+import { EMPTY_ADJUST } from "../editor/look";
 import { exportTimeline } from "../export/exporter";
 import { shareFile } from "../data/backup";
 import { LayoutSheet } from "./LayoutSheet";
@@ -240,6 +243,7 @@ export function Editor({ projectId }: { projectId: Id }) {
 
   const doc = useEditor((s) => s.draft ?? s.doc);
   const assets = useEditor((s) => s.assets);
+  const thumbs = useEditor((s) => s.thumbs);
   const selectedId = useEditor((s) => s.selectedId);
   const playheadUs = useEditor((s) => s.playheadUs);
   const playing = useEditor((s) => s.playing);
@@ -917,7 +921,7 @@ export function Editor({ projectId }: { projectId: Id }) {
 
   // Aprimorar: the Ajustar sliders set from the picture (a photo, or the
   // video's frame on screen), in one undo step; Ajustar refines them
-  async function onEnhance(clip: MediaClip) {
+  async function onEnhance(clip: MediaClip, only?: "light") {
     stop();
     const asset = assets.get(clip.assetId);
     let src: CanvasImageSource | null = null;
@@ -935,8 +939,11 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (src instanceof ImageBitmap) src.close();
     const s = useEditor.getState();
     if (!s.doc) return;
-    s.commit(setItem(s.doc, clip.id, { adjust: autoAdjust(ctx.getImageData(0, 0, 192, 192).data) }), "Aprimorar");
-    toast("Aprimorado. Para ajustar fino, use Ajustar.");
+    const auto = autoAdjust(ctx.getImageData(0, 0, 192, 192).data);
+    // Iluminação inteligente: only the light (exposure, shadows, highlights), the rest kept
+    const adjust = only === "light" ? { ...(clip.adjust ?? EMPTY_ADJUST), exposure: auto.exposure, shadows: auto.shadows, highlights: auto.highlights } : auto;
+    s.commit(setItem(s.doc, clip.id, { adjust }), only === "light" ? "Iluminação inteligente" : "Aprimorar");
+    toast(only === "light" ? "Luz ajustada. Para ajustar fino, use Ajustar." : "Aprimorado. Para ajustar fino, use Ajustar.");
   }
 
   function onLayerFreeze() {
@@ -1260,20 +1267,32 @@ export function Editor({ projectId }: { projectId: Id }) {
           />}
 
           {photoMode && (!selectedItem || selected) ? (
-            // Editar foto: the picture's tools, like CapCut's photo editor
-            <Toolbar label="Ferramentas da foto">
-              <ToolbarItem icon={<Wand2 />} label="Aprimorar" disabled={!target} onClick={() => target && void onEnhance(target)} />
-              <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />
-              <ToolbarItem icon={<SlidersHorizontal />} label="Ajustar" disabled={!target} onClick={() => openLook("adjust")} />
-              <ToolbarItem icon={<Crop />} label="Recortar" disabled={!target} onClick={() => target && openCrop(target.id)} />
-              <ToolbarItem icon={<ScissorsSquare />} label="Remover fundo" disabled={!target} onClick={() => target && void onCutout(target)} />
-              <ToolbarItem icon={<Type />} label="Texto" onClick={onAddText} />
-              <ToolbarItem icon={<Smile />} label="Stickers" onClick={() => setPanel({ name: "stickers" })} />
-              <ToolbarItem icon={<ImagePlus />} label="Adicionar foto" onClick={() => photoPicker.current?.click()} />
-              <ToolbarItem icon={<Sparkles />} label="Efeitos" onClick={() => setPanel({ name: "effects" })} />
-              <ToolbarItem icon={<ImageIcon />} label="Plano de fundo" onClick={() => setPanel({ name: "format" })} />
-              <ToolbarItem icon={<RectangleHorizontal />} label="Formato" onClick={() => setPanel({ name: "format" })} />
-            </Toolbar>
+            // Editar foto: the picture's tools, laid out like CapCut's photo editor
+            <PhotoTools
+              thumb={target ? thumbs.get(target.assetId)?.urls[0] : undefined}
+              filter={target?.filter ?? null}
+              onFilter={(id) => {
+                const d = useEditor.getState().doc;
+                if (d && target) ed.commit(setItem(d, target.id, { filter: id ? { id, intensity: target.filter?.intensity ?? 100 } : null }), "Filtro");
+              }}
+              onFilterMore={() => openLook("filters")}
+              adjust={[
+                { icon: <ImagePlus />, label: "Adicionar foto", onClick: () => photoPicker.current?.click() },
+                { icon: <Wand2 />, label: "Aprimorar", disabled: !target, onClick: () => target && void onEnhance(target) },
+                { icon: <Crop />, label: "Recortar", disabled: !target, onClick: () => target && openCrop(target.id) },
+                { icon: <SlidersHorizontal />, label: "Ajustar", disabled: !target, onClick: () => openLook("adjust") },
+                { icon: <SunMedium />, label: "Iluminação inteligente", disabled: !target, onClick: () => target && void onEnhance(target, "light") },
+                { icon: <ScissorsSquare />, label: "Remover plano de fundo", disabled: !target, onClick: () => target && void onCutout(target) },
+                { icon: <ImageIcon />, label: "Plano de fundo", onClick: () => setPanel({ name: "format" }) },
+                { icon: <RectangleHorizontal />, label: "Formato", onClick: () => setPanel({ name: "format" }) },
+              ]}
+              elements={[
+                { icon: <Type />, label: "Texto", onClick: onAddText },
+                { icon: <Smile />, label: "Stickers", onClick: () => setPanel({ name: "stickers" }) },
+                { icon: <Sparkles />, label: "Efeitos", onClick: () => setPanel({ name: "effects" }) },
+                { icon: <Layers />, label: "Adicionar foto", onClick: () => photoPicker.current?.click() },
+              ]}
+            />
           ) : selectedCaption ? (
             <Toolbar
               label="Ferramentas das legendas"

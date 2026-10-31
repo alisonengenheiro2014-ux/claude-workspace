@@ -9,7 +9,7 @@ import { OptionGrid } from "../ui/OptionGrid";
 import { Sheet } from "../ui/Sheet";
 import { Slider } from "../ui/Slider";
 
-function Swatch({ thumb, filter }: { thumb: string | undefined; filter: MediaClip["filter"] }) {
+export function Swatch({ thumb, filter }: { thumb: string | undefined; filter: MediaClip["filter"] }) {
   const look = lookOf({ filter, adjust: null });
   return (
     <span className="relative block size-full">

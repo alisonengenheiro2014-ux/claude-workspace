@@ -3,7 +3,9 @@
 // move, drag the corner handle (or pinch with two fingers) to scale and
 // rotate, double-tap to edit a text. Each gesture is one undo step. A
 // selected layer or text also has CapCut's corner buttons: X deletes it
-// (top left), the other duplicates it (bottom left).
+// (top left), the other duplicates it (bottom left). Dragged items snap to
+// the frame's centre lines: a guide line shows and the phone taps once, as
+// in CapCut.
 import { useEffect, useRef, type PointerEvent } from "react";
 import type { Id, Transform } from "../data/db";
 import { useEditor } from "./store";
@@ -13,8 +15,10 @@ import { containRect, shapedSize, shapeOf } from "./frame";
 import { animatedAt, mainZoom } from "./keyframes";
 import { displaySize, overlayAt, overlaysAt } from "./overlay";
 import { findItem, mainClips, setAnimated, setCaptionTransform } from "./timeline";
+import { haptic } from "../ui/haptic";
 
 const HANDLE = 14; // css px radius of the corner handle
+const SNAP = 8; // css px from the centre line where a dragged item snaps to it
 const CORNER_OUT = 12; // css px the delete/duplicate buttons sit past the corners, clear of short text
 
 type Gesture =
@@ -40,6 +44,9 @@ export function TextOverlay({
   const gesture = useRef<Gesture | null>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const lastTap = useRef<{ id: Id; at: number } | null>(null);
+  // centre guides while a drag sits on them (vertical line, horizontal line)
+  const guides = useRef({ x: false, y: false });
+  const redraw = useRef<() => void>(() => {});
   const dpr = Math.min(3, window.devicePixelRatio || 1);
 
   // redraw whenever anything visible changes
@@ -77,8 +84,10 @@ export function TextOverlay({
         }
         const sel = s.selectedId && boxes.current.get(s.selectedId);
         if (sel && !s.playing) drawSelection(ctx, sel, dpr, hasCorners(s.selectedId!));
+        if (guides.current.x || guides.current.y) drawGuides(ctx, W, H, dpr, guides.current);
       });
     };
+    redraw.current = draw;
     draw();
     void loadFonts().then(draw);
     const unsub = useEditor.subscribe((s, p) => {
@@ -214,8 +223,15 @@ export function TextOverlay({
     const W = canvas.current!.width;
     const H = canvas.current!.height;
     if (g.kind === "move") {
-      const x = Math.min(1, Math.max(0, g.t0.x + p.x / W - g.x0));
-      const y = Math.min(1, Math.max(0, g.t0.y + p.y / H - g.y0));
+      let x = Math.min(1, Math.max(0, g.t0.x + p.x / W - g.x0));
+      let y = Math.min(1, Math.max(0, g.t0.y + p.y / H - g.y0));
+      // the centre lines hold it: snap, show the guide, tap once on arrival
+      const onX = Math.abs(x - 0.5) * W <= SNAP * dpr;
+      const onY = Math.abs(y - 0.5) * H <= SNAP * dpr;
+      if (onX) x = 0.5;
+      if (onY) y = 0.5;
+      if ((onX && !guides.current.x) || (onY && !guides.current.y)) haptic();
+      guides.current = { x: onX, y: onY };
       apply(g.id, { ...g.t0, x, y });
     } else if (g.kind === "handle") {
       const d = Math.hypot(p.x - g.box.cx, p.y - g.box.cy);
@@ -236,6 +252,10 @@ export function TextOverlay({
     if (pointers.current.size > 0) return;
     const g = gesture.current;
     gesture.current = null;
+    if (guides.current.x || guides.current.y) {
+      guides.current = { x: false, y: false };
+      redraw.current();
+    }
     const s = useEditor.getState();
     if (g && s.draft) s.commit(s.draft, g.kind === "move" ? "Mover" : "Ajustar tamanho");
   }
@@ -259,6 +279,29 @@ function snapAngle(deg: number) {
   const r = ((deg % 360) + 360) % 360;
   for (const s of [0, 90, 180, 270, 360]) if (Math.abs(r - s) < 4) return s % 360;
   return Math.round(r * 10) / 10;
+}
+
+// The centre guides: thin lines across the frame, with a dark edge to show on any video
+function drawGuides(ctx: CanvasRenderingContext2D, W: number, H: number, dpr: number, on: { x: boolean; y: boolean }) {
+  ctx.save();
+  for (const [colour, width] of [
+    ["rgba(0,0,0,.45)", 3],
+    ["#ffd400", 1.5],
+  ] as const) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = width * dpr;
+    ctx.beginPath();
+    if (on.x) {
+      ctx.moveTo(W / 2, 0);
+      ctx.lineTo(W / 2, H);
+    }
+    if (on.y) {
+      ctx.moveTo(0, H / 2);
+      ctx.lineTo(W, H / 2);
+    }
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // a corner of the (turned) box: sx, sy are -1 (left/top) or 1 (right/bottom);
