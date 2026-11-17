@@ -27,6 +27,7 @@ import {
 } from "../editor/prompter";
 import { durationOf, insertMedia } from "../editor/timeline";
 import { rotateTake } from "../media/rotate";
+import { VERSION } from "../app/version";
 import type { Rotation } from "mediabunny";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
@@ -49,7 +50,28 @@ function qualityLabel(real: { w: number; h: number; fps: number }, horizontal: b
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
 
+// One camera for the whole visit to the teleprompter: the iPhone asks for
+// camera and microphone every time they are opened anew, so they stay open
+// across scripts, edits and takes, and are closed when the teleprompter is
+// left. A change of side, quality or frame rate opens the new camera before
+// closing the old one (with a capture running, the phone does not ask again).
+let shared: { stream: MediaStream; key: string } | null = null;
+async function openCamera(key: string, constraints: MediaStreamConstraints) {
+  const live = shared && shared.stream.getTracks().every((t) => t.readyState === "live");
+  if (shared && live && shared.key === key) return shared.stream;
+  const got = await navigator.mediaDevices.getUserMedia(constraints);
+  const old = shared;
+  shared = { stream: got, key };
+  old?.stream.getTracks().forEach((t) => t.stop());
+  return got;
+}
+function closeCamera() {
+  shared?.stream.getTracks().forEach((t) => t.stop());
+  shared = null;
+}
+
 export function Teleprompter({ projectId }: { projectId?: string }) {
+  useEffect(() => closeCamera, []); // leaving the teleprompter turns the camera off
   const toast = useToast();
   const [step, setStep] = useState<Step>("scripts");
   const [scripts, setScripts] = useState<Script[]>(loadScripts);
@@ -96,6 +118,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
             Novo roteiro
           </Button>
           {scripts.length === 0 && <p className="py-8 text-center text-sm text-text-muted">Escreva ou cole o texto que você vai falar. Não tem limite de tamanho.</p>}
+          <p className="order-last pt-4 text-center text-[11px] text-text-subtle">Versão {VERSION}</p>
           <ul className="flex flex-col gap-2">
             {scripts.map((s) => (
               <li key={s.id} className="flex items-center gap-2 rounded-md bg-surface-2 p-3">
@@ -399,18 +422,19 @@ function CameraPrompter({
   // the camera, again whenever the side, the quality or the frame rate changes
   useEffect(() => {
     let alive = true;
-    let s: MediaStream | null = null;
     const long = settings.quality === 2160 ? 3840 : settings.quality === 1080 ? 1920 : 1280;
     const short = settings.quality;
-    void navigator.mediaDevices
-      ?.getUserMedia({
-        // the best the phone's camera has up to the chosen size: nothing upscaled
-        video: { facingMode: settings.facing, width: { ideal: long }, height: { ideal: short }, frameRate: { ideal: settings.fps } },
-        audio: { echoCancellation: true, noiseSuppression: true },
-      })
+    if (!navigator.mediaDevices) {
+      setError("Este navegador não dá acesso à câmera.");
+      return;
+    }
+    void openCamera(`${settings.facing}-${settings.quality}-${settings.fps}`, {
+      // the best the phone's camera has up to the chosen size: nothing upscaled
+      video: { facingMode: settings.facing, width: { ideal: long }, height: { ideal: short }, frameRate: { ideal: settings.fps } },
+      audio: { echoCancellation: true, noiseSuppression: true },
+    })
       .then((got) => {
-        if (!alive) return got.getTracks().forEach((t) => t.stop());
-        s = got;
+        if (!alive) return; // the shared camera stays open for the next screen
         setStream(got);
         setError(null);
         const track = got.getVideoTracks()[0];
@@ -430,10 +454,8 @@ function CameraPrompter({
             : "Não foi possível abrir a câmera.",
         );
       });
-    if (!navigator.mediaDevices) setError("Este navegador não dá acesso à câmera.");
     return () => {
       alive = false;
-      s?.getTracks().forEach((t) => t.stop());
     };
   }, [settings.facing, settings.quality, settings.fps]);
 

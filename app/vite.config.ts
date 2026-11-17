@@ -14,6 +14,8 @@ const dropOrtWasm: Plugin = {
 };
 
 export default defineConfig({
+  // when this build was made, shown in the app so a phone can tell it has the latest
+  define: { __BUILD__: JSON.stringify(new Date().toISOString()) },
   plugins: [
     react(),
     tailwindcss(),

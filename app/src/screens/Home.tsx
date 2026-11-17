@@ -6,6 +6,7 @@ import { ImportOverlay } from "../app/ImportOverlay";
 import { markImport, runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
 import { applyUpdate, useUpdateReady } from "../app/updates";
+import { VERSION } from "../app/version";
 import type { Id, ProjectRow } from "../data/db";
 import { requestPersistence, storageInfo } from "../data/opfs";
 import {
@@ -393,6 +394,8 @@ export function Home() {
         danger
         onConfirm={() => void onDelete()}
       />
+
+      <p className="pb-4 pt-6 text-center text-[11px] text-text-subtle">Versão {VERSION}</p>
 
       {working && (
         <div role="dialog" aria-modal aria-label={working} className="fixed inset-0 z-40 flex items-center justify-center bg-scrim/70 px-8">
