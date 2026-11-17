@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronLeft, Delete, RectangleHorizontal, RectangleVertical, RotateCcwSquare, RotateCw, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, RectangleHorizontal, RectangleVertical, RotateCcwSquare, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
@@ -713,31 +713,28 @@ function CameraPrompter({
       </div>
 
       {/* top-right tools */}
-      <div className="absolute flex flex-col gap-3" style={horizontal ? { top: 8, [far]: clearFar } : { right: 16, top: `calc(${boxH} + 16px)` }}>
-        <RoundButton label="Ajustes do teleprompter" onClick={() => setSettingsOpen(true)} disabled={recording}>
+      <div className="absolute flex flex-col gap-2" style={horizontal ? { top: 8, [far]: clearFar } : { right: 12, top: `calc(${boxH} + 16px)` }}>
+        <RoundButton label="Ajustes do teleprompter" caption="Ajustes" onClick={() => setSettingsOpen(true)} disabled={recording}>
           <Settings2 className="size-5" />
         </RoundButton>
-        <RoundButton label="Editar roteiro" onClick={onEdit} disabled={recording}>
+        <RoundButton label="Editar roteiro" caption="Roteiro" onClick={onEdit} disabled={recording}>
           <Pencil className="size-5" />
         </RoundButton>
         <RoundButton
           label={horizontal ? "Mudar para vertical" : "Mudar para horizontal"}
+          caption={horizontal ? "Horizontal" : "Vertical"}
           onClick={() => setSettings({ orientation: horizontal ? "vertical" : "horizontal" })}
           disabled={recording || segments.length > 0}
         >
           {horizontal ? <RectangleVertical className="size-5" /> : <RectangleHorizontal className="size-5" />}
         </RoundButton>
-        <RoundButton label="Girar imagem" onClick={turnPicture} disabled={recording}>
+        <RoundButton label="Girar imagem" caption="Girar imagem" onClick={turnPicture} disabled={recording}>
           <RotateCcwSquare className="size-5" />
         </RoundButton>
-        {horizontal && (
-          <RoundButton label="Inverter lado (gimbal)" onClick={() => setSettings({ side: settings.side === "left" ? "right" : "left" })} disabled={recording || segments.length > 0}>
-            <RotateCw className="size-5" />
-          </RoundButton>
-        )}
         {caps.torch && (
           <RoundButton
             label={torch ? "Desligar flash" : "Ligar flash"}
+            caption="Flash"
             onClick={() => {
               applyTrack({ torch: !torch });
               setTorch(!torch);
@@ -799,11 +796,12 @@ function CameraPrompter({
         </span>
         {arm && <span className="text-xs text-[#fff]">Toque de novo para apagar o último trecho (o texto volta para onde ele começou)</span>}
         <div className="flex w-full items-center justify-between">
-          <RoundButton label="Fechar teleprompter" onClick={onClose} disabled={recording}>
+          <RoundButton label="Fechar teleprompter" caption="Fechar" onClick={onClose} disabled={recording}>
             <X className="size-6" />
           </RoundButton>
           <RoundButton
             label={arm ? "Confirmar: apagar último trecho" : "Apagar último trecho"}
+            caption="Apagar trecho"
             onClick={() => {
               if (!arm) return setArm(true);
               setArm(false);
@@ -823,10 +821,10 @@ function CameraPrompter({
           >
             <span className={cn("block transition-all", recording ? "size-8 rounded-md" : "size-16 rounded-full")} style={{ background: REC }} />
           </button>
-          <RoundButton label="Concluir" onClick={onDone} disabled={recording || !segments.length} accent>
+          <RoundButton label="Concluir" caption="Concluir" onClick={onDone} disabled={recording || !segments.length} accent>
             <Check className="size-6" />
           </RoundButton>
-          <RoundButton label="Virar câmera" onClick={flip}>
+          <RoundButton label="Virar câmera" caption="Virar câmera" onClick={flip}>
             <SwitchCamera className="size-6" />
           </RoundButton>
         </div>
@@ -895,6 +893,17 @@ function CameraPrompter({
             ]}
             onChange={(v) => setSettings({ orientation: v as PrompterSettings["orientation"] })}
           />
+          {horizontal && (
+            <Choice
+              label="Câmera no gimbal (onde fica o topo do celular)"
+              value={settings.side}
+              options={[
+                ["left", "À esquerda"],
+                ["right", "À direita"],
+              ]}
+              onChange={(v) => setSettings({ side: v as PrompterSettings["side"] })}
+            />
+          )}
           <Button variant="secondary" icon={<FlipHorizontal2 aria-hidden className="size-4" />} onClick={() => setSettings({ mirror: !settings.mirror })}>
             {settings.mirror ? "Texto espelhado (para vidro de teleprompter)" : "Espelhar texto"}
           </Button>
@@ -910,6 +919,7 @@ function RoundButton({
   disabled,
   danger,
   accent,
+  caption,
   children,
 }: {
   label: string;
@@ -917,9 +927,10 @@ function RoundButton({
   disabled?: boolean;
   danger?: boolean;
   accent?: boolean;
+  caption?: string; // a short name under it, so look-alike icons are not mixed up
   children: React.ReactNode;
 }) {
-  return (
+  const button = (
     <button
       type="button"
       aria-label={label}
@@ -930,6 +941,15 @@ function RoundButton({
     >
       {children}
     </button>
+  );
+  if (!caption) return button;
+  return (
+    <span className={cn("flex w-16 flex-col items-center gap-0.5", disabled && "opacity-60")}>
+      {button}
+      <span aria-hidden className="text-center text-[10px] leading-tight text-[#fff]" style={{ textShadow: "0 1px 3px rgba(0,0,0,.9)" }}>
+        {caption}
+      </span>
+    </span>
   );
 }
 
