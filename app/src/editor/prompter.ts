@@ -16,7 +16,10 @@ export interface PrompterSettings {
   color: string;
   mirror: boolean; // text mirrored, for a teleprompter glass
   countdown: 0 | 3 | 5; // seconds before recording starts
-  quality: 720 | 1080 | 2160;
+  quality: 720 | 1080 | 2160; // asked of the camera; it gives the closest it really has
+  fps: 30 | 60;
+  orientation: "vertical" | "horizontal"; // horizontal: the phone on its side (a gimbal)
+  side: "left" | "right"; // horizontal: where the top of the phone points
   boxHeight: number; // 0.25..0.7 of the screen
   boxOpacity: number; // 0.2..0.95, the dark box behind the text
   facing: "user" | "environment";
@@ -28,7 +31,10 @@ export const DEFAULT_SETTINGS: PrompterSettings = {
   color: "#ffffff",
   mirror: false,
   countdown: 3,
-  quality: 1080,
+  quality: 2160, // the camera's best (4K on an iPhone Pro, front and back)
+  fps: 30,
+  orientation: "vertical",
+  side: "left",
   boxHeight: 0.38,
   boxOpacity: 0.55,
   facing: "user",
@@ -92,4 +98,12 @@ export function recorderType() {
 
 export function videoBitrate(quality: PrompterSettings["quality"]) {
   return quality === 2160 ? 35_000_000 : quality === 1080 ? 12_000_000 : 6_000_000;
+}
+
+// Horizontal with the app upright: the screen turns the controls to face the
+// reader, and a take whose frames came out upright-shaped is marked with the
+// turn (top of the phone to the left: the phone turned anticlockwise, so its
+// picture plays turned 270° clockwise; to the right, 90°).
+export function horizontalTurn(side: PrompterSettings["side"]) {
+  return { ui: side === "left" ? 90 : -90, take: side === "left" ? (270 as const) : (90 as const) };
 }
