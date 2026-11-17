@@ -557,11 +557,26 @@ function CameraPrompter({
     if (!v || !c) return;
     let stop = false;
     let raf = 0;
-    const draw = () => {
+    // Drawn only when the camera has a new picture (30 or 60 a second), not
+    // on every screen refresh (120 on an iPhone Pro): a 4K draw each time
+    // left the phone too busy to move the text smoothly.
+    const vf = v as HTMLVideoElement & { requestVideoFrameCallback?: (cb: () => void) => number };
+    const byFrame = "requestVideoFrameCallback" in v;
+    let fresh = true;
+    let drawn = 0;
+    const onFrame = () => {
+      fresh = true;
+      if (!stop) vf.requestVideoFrameCallback?.(onFrame);
+    };
+    vf.requestVideoFrameCallback?.(onFrame);
+    const draw = (now: number) => {
       if (stop) return;
       raf = requestAnimationFrame(draw);
+      if (byFrame && !fresh && now - drawn < 250) return;
       const { horizontal: hz, side: sd, size: sz } = live.current;
       if (!sz || v.readyState < 2 || !v.videoWidth) return;
+      fresh = false;
+      drawn = now;
       // the old camera already stopped, the new one not here yet: the last picture stays
       if ((v.srcObject as MediaStream | null)?.getVideoTracks()[0]?.readyState !== "live") return;
       const t = pictureTurn(hz, v.videoWidth > v.videoHeight, sd, shownRef.current);
@@ -604,7 +619,7 @@ function CameraPrompter({
   );
 
   const place = () => {
-    if (textEl.current) textEl.current.style.transform = `translateY(${-scroll.current}px)`;
+    if (textEl.current) textEl.current.style.transform = `translate3d(0, ${-scroll.current}px, 0)`;
   };
   // the text where it was left (after editing the script, or a take deleted)
   useEffect(place, [segments.length]);
@@ -713,25 +728,54 @@ function CameraPrompter({
   // (horizontal), the reader's up and down run across the glass.
   const ui = uiTurn(side);
   const along = (e: PointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
-  const drag = useRef<{ y: number; s: number; moved: boolean } | null>(null);
+  // The text follows the finger and, let go with a flick, glides on and
+  // slows down like a phone's own scrolling, so any part is quickly reached.
+  const drag = useRef<{ y: number; s: number; moved: boolean; v: number; at: number; last: number } | null>(null);
+  const glide = useRef(0);
+  const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
   function down(e: PointerEvent) {
-    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    drag.current = { y: along(e), s: scroll.current, moved: false };
+    try {
+      (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    } catch {
+      // a pointer already gone: the drag still follows it over the box
+    }
+    cancelAnimationFrame(glide.current);
+    const y = along(e);
+    drag.current = { y, s: scroll.current, moved: false, v: 0, at: performance.now(), last: y };
   }
   function move(e: PointerEvent) {
     const d = drag.current;
     if (!d) return;
-    const dy = along(e) - d.y;
+    const y = along(e);
+    const dy = y - d.y;
     if (Math.abs(dy) > 6) d.moved = true;
     if (!d.moved) return;
-    scroll.current = Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, d.s - dy));
+    const now = performance.now();
+    const dt = now - d.at;
+    if (dt > 0) d.v = 0.7 * ((d.last - y) / dt) + 0.3 * d.v; // px per ms, smoothed
+    d.at = now;
+    d.last = y;
+    scroll.current = clampScroll(d.s - dy);
     place();
   }
   function up() {
     const d = drag.current;
     drag.current = null;
     if (d && !d.moved && recording) setPaused((p) => !p);
+    if (!d?.moved || performance.now() - d.at > 80 || Math.abs(d.v) < 0.2) return;
+    let v = d.v;
+    let t = performance.now();
+    const step = (now: number) => {
+      const dt = Math.min(32, now - t);
+      t = now;
+      scroll.current = clampScroll(scroll.current + v * dt);
+      place();
+      v *= Math.pow(0.997, dt); // friction, about like iOS scrolling
+      if (Math.abs(v) > 0.02) glide.current = requestAnimationFrame(step);
+    };
+    glide.current = requestAnimationFrame(step);
   }
+  useEffect(() => () => cancelAnimationFrame(glide.current), []);
 
   const front = shown === "user";
   // Horizontal: the controls, the text and the frame turn to face whoever
@@ -797,7 +841,7 @@ function CameraPrompter({
             fontSize: settings.fontSize,
             lineHeight: 1.35,
             color: settings.color,
-            transform: "translateY(0px)",
+            willChange: "transform", // its own layer: moving it repaints nothing
             ...(settings.mirror ? { scale: "-1 1" } : {}),
           }}
         >
