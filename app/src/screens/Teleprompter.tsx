@@ -649,6 +649,11 @@ function CameraPrompter({
   // upright (as wide as the phone, short enough for the controls below)
   const boxH = horizontal ? `min(${settings.boxHeight * 100}vh, calc(100vw - 110px))` : `${settings.boxHeight * 100}%`;
   const lens = settings.side === "left" ? ("left" as const) : ("right" as const); // the top of the phone, with the front camera
+  const far = lens === "left" ? ("right" as const) : ("left" as const);
+  // turned, the top of the phone (Dynamic Island) is the lens side and the
+  // home bar the far side: keep clear of both by the phone's own safe areas
+  const clearLens = "calc(env(safe-area-inset-top, 0px) + 10px)";
+  const clearFar = "calc(env(safe-area-inset-bottom, 0px) + 12px)";
   const picture = (
     <video
       ref={video}
@@ -656,7 +661,9 @@ function CameraPrompter({
       playsInline
       muted
       aria-label="Câmera"
-      className="object-cover"
+      // the whole frame being recorded, bars where the screen is a different
+      // shape: what is seen is what the take holds (no tighter crop)
+      className="object-contain"
       style={{
         ...(wideTurned ? turned : { position: "absolute", inset: 0, width: "100%", height: "100%" }),
         maxWidth: "none", // the base styles cap videos at 100% wide: turned, it is wider
@@ -671,7 +678,7 @@ function CameraPrompter({
       <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
       {error && <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-[rgba(0,0,0,.7)] p-4 text-center text-sm">{error}</p>}
       {real && !recording && (
-        <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: 16 }}>
+        <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: horizontal ? clearLens : 16 }}>
           {qualityLabel(real, horizontal, takeTurn)}
         </span>
       )}
@@ -688,7 +695,7 @@ function CameraPrompter({
         className={cn("absolute top-2 touch-none overflow-hidden rounded-lg", !horizontal && "pt-safe")}
         style={{
           // turned: the size it has upright, in the corner by the front camera
-          ...(horizontal ? { [lens]: 12, width: "calc(100vw - 24px)" } : { left: 12, right: 12 }),
+          ...(horizontal ? { [lens]: clearLens, width: "calc(100vw - 24px)" } : { left: 12, right: 12 }),
           height: boxH,
           background: `rgba(0,0,0,${settings.boxOpacity})`,
         }}
@@ -714,7 +721,7 @@ function CameraPrompter({
       </div>
 
       {/* top-right tools */}
-      <div className="absolute flex flex-col gap-3" style={horizontal ? { top: 8, [lens === "left" ? "right" : "left"]: 16 } : { right: 16, top: `calc(${boxH} + 16px)` }}>
+      <div className="absolute flex flex-col gap-3" style={horizontal ? { top: 8, [far]: clearFar } : { right: 16, top: `calc(${boxH} + 16px)` }}>
         <RoundButton label="Ajustes do teleprompter" onClick={() => setSettingsOpen(true)} disabled={recording}>
           <Settings2 className="size-5" />
         </RoundButton>
@@ -753,7 +760,11 @@ function CameraPrompter({
       )}
 
       {/* bottom: close, record, flip */}
-      <div className="pb-safe absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-[rgba(0,0,0,.7)] to-transparent px-6 pb-6 pt-10">
+      <div
+        className={cn("absolute inset-x-0 bottom-0 flex flex-col items-center gap-3 bg-gradient-to-t from-[rgba(0,0,0,.7)] to-transparent px-6 pb-6 pt-10", !horizontal && "pb-safe")}
+        // turned: the buttons at the ends clear of the island and the home bar
+        style={horizontal ? { [`padding${lens === "left" ? "Left" : "Right"}`]: clearLens, [`padding${far === "left" ? "Left" : "Right"}`]: clearFar } : undefined}
+      >
         {caps.zoom && !recording && (
           <div className="flex gap-2">
             {[1, 2, Math.min(caps.zoom.max, 5)]
