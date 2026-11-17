@@ -342,6 +342,57 @@ async function shareFiles(files: File[]) {
   for (const f of files) await shareFile(f);
 }
 
+// Which way the phone lies on its side, from the motion sensor (as the
+// iPhone's own camera does), so the text and the buttons always face whoever
+// holds it, either hand. Gravity runs along the phone's width then; which
+// sign means which side differs between browsers, so it is learnt once from
+// the phone held upright (gravity along its height) and kept.
+const MOTION_SIGN = "prompter-motion-sign";
+function readSign() {
+  try {
+    return Number(localStorage.getItem(MOTION_SIGN)) || 0;
+  } catch {
+    return 0;
+  }
+}
+// asked once, from a tap (the iPhone requires it); elsewhere there is no asking
+async function askMotion() {
+  const M = (globalThis as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent;
+  try {
+    if (M?.requestPermission) await M.requestPermission();
+  } catch {
+    // not granted: the side from Ajustes is used
+  }
+}
+function useSideFromSensor(active: boolean) {
+  const [side, setSide] = useState<"left" | "right" | null>(null);
+  useEffect(() => {
+    if (!active) return;
+    let sign = readSign();
+    const ios = /iPhone|iPad/.test(navigator.userAgent);
+    const on = (e: DeviceMotionEvent) => {
+      const g = e.accelerationIncludingGravity;
+      if (!g || g.x == null || g.y == null) return;
+      if (Math.abs(g.y) > 7 && Math.abs(g.x) < 3 && Math.sign(g.y) !== sign) {
+        sign = Math.sign(g.y); // upright: this browser's sign for "up"
+        try {
+          localStorage.setItem(MOTION_SIGN, String(sign));
+        } catch {
+          // kept for this visit
+        }
+      }
+      // on its side, steadily: gravity mostly across the phone
+      if (Math.abs(g.x) > 6 && Math.abs(g.x) > Math.abs(g.y) * 1.5) {
+        const s = sign || (ios ? -1 : 1); // WebKit on iPhone reports the opposite sign
+        setSide(g.x * s > 0 ? "left" : "right");
+      }
+    };
+    window.addEventListener("devicemotion", on);
+    return () => window.removeEventListener("devicemotion", on);
+  }, [active]);
+  return side;
+}
+
 function CameraPrompter({
   script,
   settings,
@@ -385,11 +436,14 @@ function CameraPrompter({
   const startedAt = useRef(0);
   const lastTap = useRef(0);
   const horizontal = settings.orientation === "horizontal";
+  // the side the phone lies on: the sensor's, else the one set in Ajustes
+  const sensed = useSideFromSensor(horizontal);
+  const side = sensed ?? settings.side;
   // the camera's picture as the phone hands it, and the frame made from it
   const [src, setSrc] = useState<{ w: number; h: number } | null>(null);
   const srcWide = !!src && src.w > src.h;
-  const turnKey = `${settings.orientation}-${settings.facing}-${settings.side}-${srcWide ? "wide" : "tall"}`;
-  const turn = settings.turns[turnKey] ?? defaultTurn(horizontal, srcWide, settings.side);
+  const turnKey = `${settings.orientation}-${settings.facing}-${side}-${srcWide ? "wide" : "tall"}`;
+  const turn = settings.turns[turnKey] ?? defaultTurn(horizontal, srcWide, side);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const live = useRef({ turn, size }); // read by the drawing loop
   live.current = { turn, size };
@@ -617,7 +671,7 @@ function CameraPrompter({
 
   // on the text: a tap pauses or resumes, a drag moves it by hand. Turned
   // (horizontal), the reader's up and down run across the glass.
-  const ui = uiTurn(settings.side);
+  const ui = uiTurn(side);
   const along = (e: PointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
   const drag = useRef<{ y: number; s: number; moved: boolean } | null>(null);
   function down(e: PointerEvent) {
@@ -648,7 +702,7 @@ function CameraPrompter({
   // the text box: as tall as set when upright; turned, the same size it has
   // upright (as wide as the phone, short enough for the controls below)
   const boxH = horizontal ? `min(${settings.boxHeight * 100}vh, calc(100vw - 110px))` : `${settings.boxHeight * 100}%`;
-  const lens = settings.side === "left" ? ("left" as const) : ("right" as const); // the top of the phone, with the front camera
+  const lens = side === "left" ? ("left" as const) : ("right" as const); // the top of the phone, with the front camera
   const far = lens === "left" ? ("right" as const) : ("left" as const);
   // turned, the top of the phone (Dynamic Island) is the lens side and the
   // home bar the far side: keep clear of both, at least the island's size
@@ -656,7 +710,7 @@ function CameraPrompter({
   const clearLens = "calc(max(env(safe-area-inset-top, 0px), 54px) + 10px)";
   const clearFar = "calc(max(env(safe-area-inset-bottom, 0px), 20px) + 12px)";
   return (
-    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]">
+    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]" onPointerDownCapture={() => horizontal && !sensed && void askMotion()}>
       {/* the camera's picture: playing but not shown (the frame below is) */}
       <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
       <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
@@ -723,7 +777,10 @@ function CameraPrompter({
         <RoundButton
           label={horizontal ? "Mudar para vertical" : "Mudar para horizontal"}
           caption={horizontal ? "Horizontal" : "Vertical"}
-          onClick={() => setSettings({ orientation: horizontal ? "vertical" : "horizontal" })}
+          onClick={() => {
+            if (!horizontal) void askMotion(); // the sensor tells which way the phone lies
+            setSettings({ orientation: horizontal ? "vertical" : "horizontal" });
+          }}
           disabled={recording || segments.length > 0}
         >
           {horizontal ? <RectangleVertical className="size-5" /> : <RectangleHorizontal className="size-5" />}
@@ -895,7 +952,7 @@ function CameraPrompter({
           />
           {horizontal && (
             <Choice
-              label="Câmera no gimbal (onde fica o topo do celular)"
+              label={sensed ? "Câmera no gimbal (o sensor do iPhone está escolhendo sozinho)" : "Câmera no gimbal (onde fica o topo do celular)"}
               value={settings.side}
               options={[
                 ["left", "À esquerda"],
