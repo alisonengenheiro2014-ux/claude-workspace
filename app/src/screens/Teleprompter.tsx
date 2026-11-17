@@ -469,11 +469,14 @@ function CameraPrompter({
   const side: PrompterSettings["side"] = pose === "left" || pose === "right" ? pose : (lastSide ?? settings.side);
   // the camera's picture as the phone hands it, and the frame made from it
   const [src, setSrc] = useState<{ w: number; h: number } | null>(null);
-  const srcWide = !!src && src.w > src.h;
-  const turn = pictureTurn(horizontal, srcWide, side, settings.facing);
+  // the camera whose picture is on screen: on "Virar câmera" the old one
+  // stays until the new one's first picture, and the mirror and the turn
+  // change with that picture, not before (else the old picture flips)
+  const [shown, setShown] = useState(settings.facing);
+  const shownRef = useRef(shown);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
-  const live = useRef({ turn, size }); // read by the drawing loop
-  live.current = { turn, size };
+  const live = useRef({ horizontal, side, size }); // read by the drawing loop
+  live.current = { horizontal, side, size };
 
   // the camera, again whenever the side, the quality or the frame rate changes
   useEffect(() => {
@@ -522,11 +525,19 @@ function CameraPrompter({
     v.srcObject = cam.video;
     void v.play().catch(() => {});
     const on = () => v.videoWidth && setSrc({ w: v.videoWidth, h: v.videoHeight });
+    const facing: PrompterSettings["facing"] = cam.key.startsWith("user") ? "user" : "environment";
+    const ready = () => {
+      shownRef.current = facing; // the drawing loop turns this camera's picture from now on
+      setShown(facing);
+    };
+    if (v.readyState >= 2) ready();
     v.addEventListener("resize", on);
     v.addEventListener("loadedmetadata", on);
+    v.addEventListener("loadeddata", ready);
     return () => {
       v.removeEventListener("resize", on);
       v.removeEventListener("loadedmetadata", on);
+      v.removeEventListener("loadeddata", ready);
     };
   }, [cam]);
 
@@ -549,8 +560,11 @@ function CameraPrompter({
     const draw = () => {
       if (stop) return;
       raf = requestAnimationFrame(draw);
-      const { turn: t, size: sz } = live.current;
+      const { horizontal: hz, side: sd, size: sz } = live.current;
       if (!sz || v.readyState < 2 || !v.videoWidth) return;
+      // the old camera already stopped, the new one not here yet: the last picture stays
+      if ((v.srcObject as MediaStream | null)?.getVideoTracks()[0]?.readyState !== "live") return;
+      const t = pictureTurn(hz, v.videoWidth > v.videoHeight, sd, shownRef.current);
       if (c.width !== sz.w || c.height !== sz.h) {
         c.width = sz.w;
         c.height = sz.h;
@@ -719,7 +733,7 @@ function CameraPrompter({
     if (d && !d.moved && recording) setPaused((p) => !p);
   }
 
-  const front = settings.facing === "user";
+  const front = shown === "user";
   // Horizontal: the controls, the text and the frame turn to face whoever
   // holds the phone on its side.
   const turned = horizontal
