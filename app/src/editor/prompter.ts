@@ -20,6 +20,9 @@ export interface PrompterSettings {
   fps: 30 | 60;
   orientation: "vertical" | "horizontal"; // horizontal: the phone on its side (a gimbal)
   side: "left" | "right"; // horizontal: where the top of the phone points
+  // horizontal takes: an extra turn per camera, side and frame shape, set
+  // from "Girar 180°" when a take came out upside down (and remembered)
+  turnFix: Record<string, number>;
   boxHeight: number; // 0.25..0.7 of the screen
   boxOpacity: number; // 0.2..0.95, the dark box behind the text
   facing: "user" | "environment";
@@ -35,6 +38,7 @@ export const DEFAULT_SETTINGS: PrompterSettings = {
   fps: 30,
   orientation: "vertical",
   side: "left",
+  turnFix: {},
   boxHeight: 0.38,
   boxOpacity: 0.55,
   facing: "user",

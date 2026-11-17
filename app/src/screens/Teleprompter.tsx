@@ -27,6 +27,7 @@ import {
 } from "../editor/prompter";
 import { durationOf, insertMedia } from "../editor/timeline";
 import { rotateTake } from "../media/rotate";
+import type { Rotation } from "mediabunny";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { Sheet } from "../ui/Sheet";
@@ -64,6 +65,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
   // both survive editing the script or watching the takes
   const [segments, setSegments] = useState<Segment[]>([]);
   const scroll = useRef(0);
+  const [turns, setTurns] = useState(0); // the takes were turned: watch them again
   const back = () => navigate(projectId ? `/p/${projectId}` : "/");
 
   function persist(next: Script) {
@@ -181,10 +183,23 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
       </main>
     );
 
+  // "Girar 180°": every take turned (no re-encoding), and the turn remembered
+  // for those cameras, sides and frame shapes
+  async function turnTakes() {
+    const files = await Promise.all(segments.map((g) => rotateTake(g.file, 180)));
+    const turnFix = { ...settings.turnFix };
+    for (const g of segments) if (g.fixKey) turnFix[g.fixKey] = ((g.fix ?? 0) + 180) % 360;
+    setSegments(segments.map((g, i) => ({ ...g, file: files[i], fix: ((g.fix ?? 0) + 180) % 360 })));
+    setSettings({ turnFix });
+    setTurns((n) => n + 1);
+  }
+
   if (step === "review" && segments.length)
     return (
       <Review
+        key={turns}
         takes={segments.map((g) => g.file)}
+        onTurn={segments.some((g) => g.fixKey) ? turnTakes : undefined}
         toProject={!!projectId}
         onBack={() => setStep("camera")}
         onUse={async () => {
@@ -227,6 +242,8 @@ interface Segment {
   file: File;
   seconds: number;
   scrollStart: number;
+  fixKey?: string; // horizontal: camera, side and frame shape it was filmed with
+  fix?: number; // the extra turn it got for that
 }
 
 // The takes go into a project, in order, one clip each: appended to the
@@ -244,18 +261,46 @@ async function takesToProject(files: File[], projectId: string | undefined, toas
 }
 
 // The takes, played one after another, before they go into a project.
-function Review({ takes, toProject, onBack, onUse }: { takes: File[]; toProject: boolean; onBack: () => void; onUse: () => Promise<void> }) {
+function Review({
+  takes,
+  toProject,
+  onBack,
+  onUse,
+  onTurn,
+}: {
+  takes: File[];
+  toProject: boolean;
+  onBack: () => void;
+  onUse: () => Promise<void>;
+  onTurn?: () => Promise<void>; // horizontal takes: turn them all 180°
+}) {
   const [urls] = useState(() => takes.map((f) => URL.createObjectURL(f)));
   const [i, setI] = useState(0);
   const [busy, setBusy] = useState(false);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-[#000]">
-      {takes.length > 1 && (
-        <p className="py-2 text-center text-xs text-[rgba(255,255,255,.75)]">
-          Trecho {i + 1} de {takes.length}
-        </p>
-      )}
+      <div className="flex items-center justify-center gap-3 py-2">
+        {takes.length > 1 && (
+          <span className="text-xs text-[rgba(255,255,255,.75)]">
+            Trecho {i + 1} de {takes.length}
+          </span>
+        )}
+        {onTurn && (
+          <Button
+            variant="secondary"
+            size="sm"
+            icon={<RotateCw aria-hidden className="size-4" />}
+            loading={busy}
+            onClick={() => {
+              setBusy(true);
+              void onTurn().finally(() => setBusy(false));
+            }}
+          >
+            Girar 180°
+          </Button>
+        )}
+      </div>
       <video
         key={urls[i]}
         src={urls[i]}
@@ -471,7 +516,12 @@ function CameraPrompter({
     const r = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: videoBitrate(settings.quality), audioBitsPerSecond: 128_000 });
     const scrollStart = scroll.current; // the next take carries on where the text is
     const n = segments.length + 1 + takesPending.current;
-    const rot = takeTurn;
+    // horizontal: the turn the frames need, plus the remembered fix. Wide
+    // frames (the iPhone turned them itself) have come out upside down,
+    // so they get 180° unless "Girar 180°" said otherwise.
+    const fixKey = horizontal ? `${settings.facing}-${settings.side}-${frameWide ? "wide" : "tall"}` : undefined;
+    const fix = fixKey ? (settings.turnFix[fixKey] ?? (frameWide ? 180 : 0)) : 0;
+    const rot = ((takeTurn + fix) % 360) as Rotation;
     const own: Blob[] = [];
     const t0 = performance.now();
     r.ondataavailable = (e) => e.data.size && own.push(e.data);
@@ -486,7 +536,7 @@ function CameraPrompter({
       saving.current = saving.current.then(async () => {
         const file = rot ? await rotateTake(raw, rot) : raw;
         takesPending.current -= 1;
-        onSegment({ file, seconds, scrollStart });
+        onSegment({ file, seconds, scrollStart, fixKey, fix });
       });
     };
     r.start(1000);
@@ -573,6 +623,10 @@ function CameraPrompter({
   // one video element always (moving it would drop the camera); turned with
   // the controls only when the frames themselves come wide
   const wideTurned = horizontal && frameWide;
+  // the text box: as tall as set when upright; turned, the same size it has
+  // upright (as wide as the phone, short enough for the controls below)
+  const boxH = horizontal ? `min(${settings.boxHeight * 100}vh, calc(100vw - 110px))` : `${settings.boxHeight * 100}%`;
+  const lens = settings.side === "left" ? ("left" as const) : ("right" as const); // the top of the phone, with the front camera
   const picture = (
     <video
       ref={video}
@@ -595,7 +649,7 @@ function CameraPrompter({
       <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
       {error && <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-[rgba(0,0,0,.7)] p-4 text-center text-sm">{error}</p>}
       {real && !recording && (
-        <span className="absolute left-4 rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${settings.boxHeight * 100}% + 20px)` }}>
+        <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: 16 }}>
           {qualityLabel(real, horizontal, takeTurn)}
         </span>
       )}
@@ -609,8 +663,13 @@ function CameraPrompter({
         onPointerMove={move}
         onPointerUp={up}
         onPointerCancel={up}
-        className={cn("absolute left-3 top-2 touch-none overflow-hidden rounded-lg", !horizontal && "pt-safe")}
-        style={{ right: horizontal ? 76 : 12, height: `${settings.boxHeight * 100}%`, background: `rgba(0,0,0,${settings.boxOpacity})` }}
+        className={cn("absolute top-2 touch-none overflow-hidden rounded-lg", !horizontal && "pt-safe")}
+        style={{
+          // turned: the size it has upright, in the corner by the front camera
+          ...(horizontal ? { [lens]: 12, width: "calc(100vw - 24px)" } : { left: 12, right: 12 }),
+          height: boxH,
+          background: `rgba(0,0,0,${settings.boxOpacity})`,
+        }}
       >
         <div className="absolute inset-x-0 top-[22%] z-10 h-0.5 bg-[rgba(255,255,255,.25)]" aria-hidden />
         <div
@@ -618,7 +677,7 @@ function CameraPrompter({
           className="whitespace-pre-wrap px-5 font-semibold"
           style={{
             // the first line starts on the reading line, a fifth down the box
-            paddingTop: `calc(${settings.boxHeight * 18}${horizontal ? "vw" : "vh"})`,
+            paddingTop: `calc(${boxH} * 0.18)`,
             paddingBottom: "100vh",
             fontSize: settings.fontSize,
             lineHeight: 1.35,
@@ -633,7 +692,7 @@ function CameraPrompter({
       </div>
 
       {/* top-right tools */}
-      <div className="absolute right-4 flex flex-col gap-3" style={{ top: horizontal ? 8 : `calc(${settings.boxHeight * 100}% + 16px)` }}>
+      <div className="absolute flex flex-col gap-3" style={horizontal ? { top: 8, [lens === "left" ? "right" : "left"]: 16 } : { right: 16, top: `calc(${boxH} + 16px)` }}>
         <RoundButton label="Ajustes do teleprompter" onClick={() => setSettingsOpen(true)} disabled={recording}>
           <Settings2 className="size-5" />
         </RoundButton>
