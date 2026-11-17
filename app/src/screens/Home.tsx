@@ -49,6 +49,7 @@ export function Home() {
   const [renaming, setRenaming] = useState<ProjectRow | null>(null);
   const [newName, setNewName] = useState("");
   const [deleting, setDeleting] = useState<ProjectRow | null>(null);
+  const [deletingAll, setDeletingAll] = useState(false);
   const backupPicker = useRef<HTMLInputElement>(null);
   const [working, setWorking] = useState<string | null>(null);
 
@@ -156,6 +157,21 @@ export function Home() {
     await refresh();
   }
 
+  // Apagar todos: every project in the list (the Modelos stay)
+  async function onDeleteAll() {
+    setDeletingAll(false);
+    if (importsInProgress()) return toast("Espere terminar de guardar os vídeos para apagar.");
+    const list = (projects ?? []).filter((p) => !p.template);
+    setWorking(`Apagando ${list.length} projetos…`);
+    try {
+      for (const p of list) await removeProject(p.id);
+      toast(list.length === 1 ? "Projeto excluído" : `${list.length} projetos excluídos`);
+    } finally {
+      setWorking(null);
+      await refresh();
+    }
+  }
+
   async function onDelete() {
     if (!deleting) return;
     await removeProject(deleting.id);
@@ -251,9 +267,15 @@ export function Home() {
           <h2 id="drafts" className="text-sm font-semibold">
             Projetos
           </h2>
-          {storage && storage.usage > 0 && (
-            <span className="text-xs text-text-subtle">{formatBytes(storage.usage)} usados</span>
-          )}
+          <span className="flex items-baseline gap-3">
+            {storage && storage.usage > 0 && <span className="text-xs text-text-subtle">{formatBytes(storage.usage)} usados</span>}
+            {projects?.some((p) => !p.template) && (
+              <button type="button" onClick={() => setDeletingAll(true)} className="flex min-h-11 items-center gap-1 text-xs font-semibold text-danger">
+                <Trash2 aria-hidden className="size-3.5" />
+                Apagar todos
+              </button>
+            )}
+          </span>
         </div>
 
         {loadError ? (
@@ -351,6 +373,16 @@ export function Home() {
           </Button>
         </form>
       </Sheet>
+
+      <ConfirmDialog
+        open={deletingAll}
+        onOpenChange={setDeletingAll}
+        title={`Apagar todos os ${(projects ?? []).filter((p) => !p.template).length} projetos?`}
+        description={`Todos os projetos e as mídias importadas para eles saem deste iPhone${storage?.usage ? ` (libera até ${formatBytes(storage.usage)})` : ""}. Não dá para desfazer. Os originais no Rolo da Câmera continuam lá, e os Modelos ficam.`}
+        confirmLabel="Apagar todos"
+        danger
+        onConfirm={() => void onDeleteAll()}
+      />
 
       <ConfirmDialog
         open={!!deleting}
