@@ -20,9 +20,9 @@ export interface PrompterSettings {
   fps: 30 | 60;
   orientation: "vertical" | "horizontal"; // horizontal: the phone on its side (a gimbal)
   side: "left" | "right"; // horizontal: where the top of the phone points
-  // horizontal takes: an extra turn per camera, side and frame shape, set
-  // from "Girar 180°" when a take came out upside down (and remembered)
-  turnFix: Record<string, number>;
+  // how the camera's picture is turned into the frame, per format, camera,
+  // gimbal side and the shape the phone hands it in; set with "Girar imagem"
+  turns: Record<string, number>;
   boxHeight: number; // 0.25..0.7 of the screen
   boxOpacity: number; // 0.2..0.95, the dark box behind the text
   facing: "user" | "environment";
@@ -38,7 +38,7 @@ export const DEFAULT_SETTINGS: PrompterSettings = {
   fps: 30,
   orientation: "vertical",
   side: "left",
-  turnFix: {},
+  turns: {},
   boxHeight: 0.38,
   boxOpacity: 0.55,
   facing: "user",
@@ -104,10 +104,23 @@ export function videoBitrate(quality: PrompterSettings["quality"]) {
   return quality === 2160 ? 35_000_000 : quality === 1080 ? 12_000_000 : 6_000_000;
 }
 
-// Horizontal with the app upright: the screen turns the controls to face the
-// reader, and a take whose frames came out upright-shaped is marked with the
-// turn (top of the phone to the left: the phone turned anticlockwise, so its
-// picture plays turned 270° clockwise; to the right, 90°).
-export function horizontalTurn(side: PrompterSettings["side"]) {
-  return { ui: side === "left" ? 90 : -90, take: side === "left" ? (270 as const) : (90 as const) };
+// The app stays upright, so with the phone on its side the controls turn
+// to face the reader: 90° when the top of the phone points left.
+export const uiTurn = (side: PrompterSettings["side"]) => (side === "left" ? 90 : -90);
+
+// The frame being recorded: the camera's own pixels (never upscaled), wide
+// for horizontal and tall for vertical, whichever shape the phone hands them in.
+export function frameOf(srcW: number, srcH: number, horizontal: boolean) {
+  const long = Math.max(srcW, srcH) & ~1;
+  const short = Math.min(srcW, srcH) & ~1;
+  return horizontal ? { w: long, h: short } : { w: short, h: long };
+}
+
+// How the camera's picture is turned into that frame, until "Girar imagem"
+// says otherwise. Upright-shaped pictures while horizontal show the world
+// turned with the phone (it lies on its side): a quarter turn back. Pictures
+// the phone already handed over wide are upright as they are.
+export function defaultTurn(horizontal: boolean, srcWide: boolean, side: PrompterSettings["side"]) {
+  if (horizontal && !srcWide) return side === "left" ? 270 : 90;
+  return 0;
 }

@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronLeft, Delete, RectangleHorizontal, RectangleVertical, RotateCw, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, RectangleHorizontal, RectangleVertical, RotateCcwSquare, RotateCw, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
@@ -21,14 +21,14 @@ import {
   videoBitrate,
   wordsOf,
   wpmOf,
-  horizontalTurn,
+  uiTurn,
+  frameOf,
+  defaultTurn,
   type PrompterSettings,
   type Script,
 } from "../editor/prompter";
 import { durationOf, insertMedia } from "../editor/timeline";
-import { rotateTake } from "../media/rotate";
 import { VERSION } from "../app/version";
-import type { Rotation } from "mediabunny";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { Sheet } from "../ui/Sheet";
@@ -40,12 +40,11 @@ type Step = "scripts" | "edit" | "camera" | "review";
 const REC = "#ff3b30"; // the record button's red, on camera (raw: no theme token fits)
 const COLORS = ["#ffffff", "#ffd400", "#00e5ff", "#7CFF6B", "#ff8a3d"];
 
-// "3840×2160 · 30 fps", as the take will play (turned when horizontal)
-function qualityLabel(real: { w: number; h: number; fps: number }, horizontal: boolean, turn: number) {
-  const [w, h] = turn ? [real.h, real.w] : [real.w, real.h];
-  const long = Math.max(w, h);
-  const name = long >= 3800 ? "4K" : long >= 1900 ? "1080p" : long >= 1260 ? "720p" : `${Math.min(w, h)}p`;
-  return `${name} · ${w}×${h} · ${real.fps} fps${horizontal ? " · horizontal" : ""}`;
+// "4K · 3840×2160 · 30 fps": the frame being recorded, the camera's own pixels
+function qualityLabel(size: { w: number; h: number }, fps: number) {
+  const long = Math.max(size.w, size.h);
+  const name = long >= 3800 ? "4K" : long >= 1900 ? "1080p" : long >= 1260 ? "720p" : `${Math.min(size.w, size.h)}p`;
+  return `${name} · ${size.w}×${size.h} · ${Math.round(fps)} fps`;
 }
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -53,20 +52,24 @@ const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).
 // One camera for the whole visit to the teleprompter: the iPhone asks for
 // camera and microphone every time they are opened anew, so they stay open
 // across scripts, edits and takes, and are closed when the teleprompter is
-// left. A change of side, quality or frame rate opens the new camera before
-// closing the old one (with a capture running, the phone does not ask again).
-let shared: { stream: MediaStream; key: string } | null = null;
-async function openCamera(key: string, constraints: MediaStreamConstraints) {
-  const live = shared && shared.stream.getTracks().every((t) => t.readyState === "live");
-  if (shared && live && shared.key === key) return shared.stream;
-  const got = await navigator.mediaDevices.getUserMedia(constraints);
+// left. The microphone is kept apart from the picture: turning the camera,
+// or a new quality, opens only a new picture (with a capture running the
+// phone does not ask again) and the recording goes on, sound and all.
+let shared: { video: MediaStream; audio: MediaStreamTrack | null; key: string } | null = null;
+async function openCamera(key: string, video: MediaTrackConstraints) {
+  const live = shared && shared.video.getVideoTracks().every((t) => t.readyState === "live");
+  if (shared && live && shared.key === key) return shared;
+  const wantAudio = !shared?.audio || shared.audio.readyState !== "live";
+  const got = await navigator.mediaDevices.getUserMedia({ video, audio: wantAudio ? { echoCancellation: true, noiseSuppression: true } : false });
   const old = shared;
-  shared = { stream: got, key };
-  old?.stream.getTracks().forEach((t) => t.stop());
-  return got;
+  const audio = wantAudio ? (got.getAudioTracks()[0] ?? null) : (old?.audio ?? null);
+  shared = { video: new MediaStream(got.getVideoTracks()), audio, key };
+  old?.video.getTracks().forEach((t) => t.stop());
+  return shared;
 }
 function closeCamera() {
-  shared?.stream.getTracks().forEach((t) => t.stop());
+  shared?.video.getTracks().forEach((t) => t.stop());
+  shared?.audio?.stop();
   shared = null;
 }
 
@@ -87,7 +90,6 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
   // both survive editing the script or watching the takes
   const [segments, setSegments] = useState<Segment[]>([]);
   const scroll = useRef(0);
-  const [turns, setTurns] = useState(0); // the takes were turned: watch them again
   const back = () => navigate(projectId ? `/p/${projectId}` : "/");
 
   function persist(next: Script) {
@@ -206,23 +208,10 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
       </main>
     );
 
-  // "Girar 180°": every take turned (no re-encoding), and the turn remembered
-  // for those cameras, sides and frame shapes
-  async function turnTakes() {
-    const files = await Promise.all(segments.map((g) => rotateTake(g.file, 180)));
-    const turnFix = { ...settings.turnFix };
-    for (const g of segments) if (g.fixKey) turnFix[g.fixKey] = ((g.fix ?? 0) + 180) % 360;
-    setSegments(segments.map((g, i) => ({ ...g, file: files[i], fix: ((g.fix ?? 0) + 180) % 360 })));
-    setSettings({ turnFix });
-    setTurns((n) => n + 1);
-  }
-
   if (step === "review" && segments.length)
     return (
       <Review
-        key={turns}
         takes={segments.map((g) => g.file)}
-        onTurn={segments.some((g) => g.fixKey) ? turnTakes : undefined}
         toProject={!!projectId}
         onBack={() => setStep("camera")}
         onUse={async () => {
@@ -265,8 +254,6 @@ interface Segment {
   file: File;
   seconds: number;
   scrollStart: number;
-  fixKey?: string; // horizontal: camera, side and frame shape it was filmed with
-  fix?: number; // the extra turn it got for that
 }
 
 // The takes go into a project, in order, one clip each: appended to the
@@ -289,13 +276,11 @@ function Review({
   toProject,
   onBack,
   onUse,
-  onTurn,
 }: {
   takes: File[];
   toProject: boolean;
   onBack: () => void;
   onUse: () => Promise<void>;
-  onTurn?: () => Promise<void>; // horizontal takes: turn them all 180°
 }) {
   const [urls] = useState(() => takes.map((f) => URL.createObjectURL(f)));
   const [i, setI] = useState(0);
@@ -308,20 +293,6 @@ function Review({
           <span className="text-xs text-[rgba(255,255,255,.75)]">
             Trecho {i + 1} de {takes.length}
           </span>
-        )}
-        {onTurn && (
-          <Button
-            variant="secondary"
-            size="sm"
-            icon={<RotateCw aria-hidden className="size-4" />}
-            loading={busy}
-            onClick={() => {
-              setBusy(true);
-              void onTurn().finally(() => setBusy(false));
-            }}
-          >
-            Girar 180°
-          </Button>
         )}
       </div>
       <video
@@ -395,10 +366,11 @@ function CameraPrompter({
   onDone: () => void;
 }) {
   const toast = useToast();
-  const video = useRef<HTMLVideoElement>(null);
+  const video = useRef<HTMLVideoElement>(null); // the camera's picture, not shown
+  const frame = useRef<HTMLCanvasElement>(null); // the frame being recorded, shown as the preview
   const box = useRef<HTMLDivElement>(null);
   const textEl = useRef<HTMLDivElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
+  const [cam, setCam] = useState<NonNullable<typeof shared> | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [caps, setCaps] = useState<{ zoom?: { min: number; max: number }; torch?: boolean }>({});
   const [zoom, setZoom] = useState(1);
@@ -411,13 +383,16 @@ function CameraPrompter({
   const [arm, setArm] = useState(false); // the last take marked; a second tap deletes it
   const recorder = useRef<MediaRecorder | null>(null);
   const startedAt = useRef(0);
-  const saving = useRef<Promise<void>>(Promise.resolve()); // takes are stored in order
-  const resume = useRef(false); // the camera was turned mid-take: record again once it is back
   const lastTap = useRef(0);
-  // what the camera really gives (shown, so the quality is never a guess)
-  const [real, setReal] = useState<{ w: number; h: number; fps: number } | null>(null);
   const horizontal = settings.orientation === "horizontal";
-  const turn = horizontalTurn(settings.side);
+  // the camera's picture as the phone hands it, and the frame made from it
+  const [src, setSrc] = useState<{ w: number; h: number } | null>(null);
+  const srcWide = !!src && src.w > src.h;
+  const turnKey = `${settings.orientation}-${settings.facing}-${settings.side}-${srcWide ? "wide" : "tall"}`;
+  const turn = settings.turns[turnKey] ?? defaultTurn(horizontal, srcWide, settings.side);
+  const [size, setSize] = useState<{ w: number; h: number } | null>(null);
+  const live = useRef({ turn, size }); // read by the drawing loop
+  live.current = { turn, size };
 
   // the camera, again whenever the side, the quality or the frame rate changes
   useEffect(() => {
@@ -428,29 +403,29 @@ function CameraPrompter({
       setError("Este navegador não dá acesso à câmera.");
       return;
     }
+    // the best the phone's camera has up to the chosen size: nothing upscaled
     void openCamera(`${settings.facing}-${settings.quality}-${settings.fps}`, {
-      // the best the phone's camera has up to the chosen size: nothing upscaled
-      video: { facingMode: settings.facing, width: { ideal: long }, height: { ideal: short }, frameRate: { ideal: settings.fps } },
-      audio: { echoCancellation: true, noiseSuppression: true },
+      facingMode: settings.facing,
+      width: { ideal: long },
+      height: { ideal: short },
+      frameRate: { ideal: settings.fps },
     })
       .then((got) => {
         if (!alive) return; // the shared camera stays open for the next screen
-        setStream(got);
+        setCam(got);
         setError(null);
-        const track = got.getVideoTracks()[0];
+        const track = got.video.getVideoTracks()[0];
         const c = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { zoom?: { min: number; max: number }; torch?: boolean };
         setCaps({ zoom: c.zoom && c.zoom.max > c.zoom.min ? { min: c.zoom.min, max: Math.min(c.zoom.max, 10) } : undefined, torch: !!c.torch });
         setZoom(1);
         setTorch(false);
-        const st = track.getSettings();
-        setReal(st.width && st.height ? { w: st.width, h: st.height, fps: Math.round(st.frameRate ?? settings.fps) } : null);
       })
       .catch((e: unknown) => {
         if (!alive) return;
         const name = e instanceof DOMException ? e.name : "";
         setError(
           name === "NotAllowedError"
-            ? "O app não tem permissão para a câmera. No iPhone: Ajustes › Safari › Câmera e Microfone › Permitir (ou toque em aA › Ajustes do site)."
+            ? "O app não tem permissão para a câmera. No iPhone: Ajustes › Apps › Safari › Câmera e Microfone › Permitir."
             : "Não foi possível abrir a câmera.",
         );
       });
@@ -459,30 +434,63 @@ function CameraPrompter({
     };
   }, [settings.facing, settings.quality, settings.fps]);
 
-  useEffect(() => {
-    if (video.current && stream) video.current.srcObject = stream;
-    // turned the camera while recording: carry on with the other one
-    if (stream && resume.current) {
-      resume.current = false;
-      begin();
-    }
-  }, [stream]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  // the frames' real shape: upright-shaped frames while filming horizontally
-  // get turned (preview stays as the phone shows it; the take is marked)
-  const [frameWide, setFrameWide] = useState(false);
+  // the picture's shape, as the phone hands it (it can change with the camera)
   useEffect(() => {
     const v = video.current;
-    if (!v) return;
-    const on = () => setFrameWide(v.videoWidth > v.videoHeight);
+    if (!v || !cam) return;
+    v.srcObject = cam.video;
+    void v.play().catch(() => {});
+    const on = () => v.videoWidth && setSrc({ w: v.videoWidth, h: v.videoHeight });
     v.addEventListener("resize", on);
     v.addEventListener("loadedmetadata", on);
     return () => {
       v.removeEventListener("resize", on);
       v.removeEventListener("loadedmetadata", on);
     };
+  }, [cam]);
+
+  // the frame's size: the camera's own pixels, wide or tall as the format
+  // asks; kept while recording (a take has one size)
+  useEffect(() => {
+    if (!src || recording) return;
+    setSize(frameOf(src.w, src.h, horizontal));
+  }, [src, horizontal, recording]);
+
+  // Each camera picture drawn into the frame, turned as set and filling it:
+  // the preview is this frame, so what is seen is exactly what is recorded,
+  // whichever way the phone hands its picture over.
+  useEffect(() => {
+    const v = video.current;
+    const c = frame.current;
+    if (!v || !c) return;
+    let stop = false;
+    let raf = 0;
+    const draw = () => {
+      if (stop) return;
+      raf = requestAnimationFrame(draw);
+      const { turn: t, size: sz } = live.current;
+      if (!sz || v.readyState < 2 || !v.videoWidth) return;
+      if (c.width !== sz.w || c.height !== sz.h) {
+        c.width = sz.w;
+        c.height = sz.h;
+      }
+      const ctx = c.getContext("2d")!;
+      const sw = v.videoWidth;
+      const sh = v.videoHeight;
+      const across = t % 180 !== 0;
+      const k = Math.max(sz.w / (across ? sh : sw), sz.h / (across ? sw : sh));
+      ctx.save();
+      ctx.translate(sz.w / 2, sz.h / 2);
+      ctx.rotate((t * Math.PI) / 180);
+      ctx.drawImage(v, (-sw * k) / 2, (-sh * k) / 2, sw * k, sh * k);
+      ctx.restore();
+    };
+    raf = requestAnimationFrame(draw);
+    return () => {
+      stop = true;
+      cancelAnimationFrame(raf);
+    };
   }, []);
-  const takeTurn = horizontal && !frameWide ? turn.take : 0;
 
   // the screen stays on while the teleprompter is open
   useEffect(() => {
@@ -494,10 +502,10 @@ function CameraPrompter({
 
   const applyTrack = useCallback(
     (c: MediaTrackConstraintSet & { zoom?: number; torch?: boolean }) => {
-      const track = stream?.getVideoTracks()[0];
+      const track = cam?.video.getVideoTracks()[0];
       void track?.applyConstraints({ advanced: [c] }).catch(() => {});
     },
-    [stream],
+    [cam],
   );
 
   const place = () => {
@@ -531,35 +539,32 @@ function CameraPrompter({
     return () => clearInterval(t);
   }, [recording]);
 
+  // A take records the frame (the canvas) with the microphone: turning the
+  // camera only changes the picture drawn into it, so the take goes on.
   function begin() {
-    if (!stream) return;
+    const c = frame.current;
+    if (!cam || !c || !size) return;
     const type = recorderType();
     if (type === null) return toast("Este aparelho não grava vídeo pelo navegador.", "error");
-    const r = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: videoBitrate(settings.quality), audioBitsPerSecond: 128_000 });
+    const tracks = [...c.captureStream(settings.fps).getVideoTracks(), ...(cam.audio ? [cam.audio] : [])];
+    const quality = Math.max(size.w, size.h) >= 3800 ? 2160 : Math.max(size.w, size.h) >= 1900 ? 1080 : 720;
+    const r = new MediaRecorder(new MediaStream(tracks), {
+      ...(type ? { mimeType: type } : {}),
+      videoBitsPerSecond: videoBitrate(quality) * (settings.fps === 60 ? 1.5 : 1),
+      audioBitsPerSecond: 128_000,
+    });
     const scrollStart = scroll.current; // the next take carries on where the text is
-    const n = segments.length + 1 + takesPending.current;
-    // horizontal: the turn the frames need, plus the remembered fix. Wide
-    // frames (the iPhone turned them itself) have come out upside down,
-    // so they get 180° unless "Girar 180°" said otherwise.
-    const fixKey = horizontal ? `${settings.facing}-${settings.side}-${frameWide ? "wide" : "tall"}` : undefined;
-    const fix = fixKey ? (settings.turnFix[fixKey] ?? (frameWide ? 180 : 0)) : 0;
-    const rot = ((takeTurn + fix) % 360) as Rotation;
+    const n = segments.length + 1;
     const own: Blob[] = [];
     const t0 = performance.now();
     r.ondataavailable = (e) => e.data.size && own.push(e.data);
     r.onstop = () => {
+      r.stream.getVideoTracks().forEach((t) => t.stop()); // the canvas capture, not the camera
       const seconds = (performance.now() - t0) / 1000;
       const mime = r.mimeType || type || "video/mp4";
       const ext = mime.includes("webm") ? "webm" : "mp4";
       const stamp = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/[/:]/g, "-").replace(", ", " ");
-      const raw = new File(own, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] });
-      takesPending.current += 1;
-      // horizontal: marked with the turn (no re-encoding), in the order recorded
-      saving.current = saving.current.then(async () => {
-        const file = rot ? await rotateTake(raw, rot) : raw;
-        takesPending.current -= 1;
-        onSegment({ file, seconds, scrollStart, fixKey, fix });
-      });
+      onSegment({ file: new File(own, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] }), seconds, scrollStart });
     };
     r.start(1000);
     recorder.current = r;
@@ -569,27 +574,23 @@ function CameraPrompter({
     setRecording(true);
   }
 
-  const takesPending = useRef(0);
-
-  // turn the camera, also mid-take: the take ends, the other camera starts a
-  // new one at once, in the same format (two quick taps on the picture too)
+  // turn the camera, also mid-take (button, or two quick taps on the picture):
+  // the take goes on with the other camera, in the same format
   function flip() {
-    if (resume.current) return; // still turning: one turn at a time
-    if (recording) {
-      resume.current = true;
-      setRecording(false);
-      recorder.current?.stop();
-      recorder.current = null;
-    }
     setSettings({ facing: settings.facing === "user" ? "environment" : "user" });
   }
   function onBackgroundTap(e: PointerEvent) {
-    if (e.target !== e.currentTarget && !(e.target instanceof HTMLVideoElement)) return;
+    if (e.target !== e.currentTarget && !(e.target instanceof HTMLCanvasElement)) return;
     const now = performance.now();
     if (now - lastTap.current < 320) {
       lastTap.current = 0;
       flip();
     } else lastTap.current = now;
+  }
+  // "Girar imagem": the picture a quarter turn further, remembered for this
+  // format, camera, gimbal side and the shape the phone hands it in
+  function turnPicture() {
+    setSettings({ turns: { ...settings.turns, [turnKey]: (turn + 90) % 360 } });
   }
 
   function onRecord() {
@@ -616,7 +617,8 @@ function CameraPrompter({
 
   // on the text: a tap pauses or resumes, a drag moves it by hand. Turned
   // (horizontal), the reader's up and down run across the glass.
-  const along = (e: PointerEvent) => (!horizontal ? e.clientY : turn.ui > 0 ? -e.clientX : e.clientX);
+  const ui = uiTurn(settings.side);
+  const along = (e: PointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
   const drag = useRef<{ y: number; s: number; moved: boolean } | null>(null);
   function down(e: PointerEvent) {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -638,48 +640,38 @@ function CameraPrompter({
   }
 
   const front = settings.facing === "user";
-  // Horizontal: the controls and the text turn to face whoever holds the
-  // phone on its side. The picture stays as the phone shows it (it already
-  // looks upright to them), unless the frames themselves come wide.
-  const turned = horizontal ? { position: "fixed" as const, top: "50%", left: "50%", width: "100vh", height: "100vw", transform: `translate(-50%, -50%) rotate(${turn.ui}deg)` } : { position: "fixed" as const, inset: 0 };
-  // one video element always (moving it would drop the camera); turned with
-  // the controls only when the frames themselves come wide
-  const wideTurned = horizontal && frameWide;
+  // Horizontal: the controls, the text and the frame turn to face whoever
+  // holds the phone on its side.
+  const turned = horizontal
+    ? { position: "fixed" as const, top: "50%", left: "50%", width: "100vh", height: "100vw", transform: `translate(-50%, -50%) rotate(${ui}deg)` }
+    : { position: "fixed" as const, inset: 0 };
   // the text box: as tall as set when upright; turned, the same size it has
   // upright (as wide as the phone, short enough for the controls below)
   const boxH = horizontal ? `min(${settings.boxHeight * 100}vh, calc(100vw - 110px))` : `${settings.boxHeight * 100}%`;
   const lens = settings.side === "left" ? ("left" as const) : ("right" as const); // the top of the phone, with the front camera
   const far = lens === "left" ? ("right" as const) : ("left" as const);
   // turned, the top of the phone (Dynamic Island) is the lens side and the
-  // home bar the far side: keep clear of both by the phone's own safe areas
-  const clearLens = "calc(env(safe-area-inset-top, 0px) + 10px)";
-  const clearFar = "calc(env(safe-area-inset-bottom, 0px) + 12px)";
-  const picture = (
-    <video
-      ref={video}
-      autoPlay
-      playsInline
-      muted
-      aria-label="Câmera"
-      // the whole frame being recorded, bars where the screen is a different
-      // shape: what is seen is what the take holds (no tighter crop)
-      className="object-contain"
-      style={{
-        ...(wideTurned ? turned : { position: "absolute", inset: 0, width: "100%", height: "100%" }),
-        maxWidth: "none", // the base styles cap videos at 100% wide: turned, it is wider
-        // the selfie mirror goes last in the same transform (on its own it would flip the turn's offset)
-        transform: `${wideTurned ? turned.transform : ""}${front ? " scaleX(-1)" : ""}` || undefined,
-      }}
-    />
-  );
+  // home bar the far side: keep clear of both, at least the island's size
+  // even where the phone does not say it
+  const clearLens = "calc(max(env(safe-area-inset-top, 0px), 54px) + 10px)";
+  const clearFar = "calc(max(env(safe-area-inset-bottom, 0px), 20px) + 12px)";
   return (
     <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]">
-      {picture}
+      {/* the camera's picture: playing but not shown (the frame below is) */}
+      <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
       <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
+      {/* the frame being recorded, whole (bars where the screen is another shape);
+          the selfie camera mirrored on screen only, as phones do */}
+      <canvas
+        ref={frame}
+        aria-label="Câmera"
+        className="absolute inset-0 size-full object-contain"
+        style={front ? { transform: "scaleX(-1)" } : undefined}
+      />
       {error && <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-[rgba(0,0,0,.7)] p-4 text-center text-sm">{error}</p>}
-      {real && !recording && (
+      {size && !recording && (
         <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: horizontal ? clearLens : 16 }}>
-          {qualityLabel(real, horizontal, takeTurn)}
+          {qualityLabel(size, cam?.video.getVideoTracks()[0]?.getSettings().frameRate ?? settings.fps)}
         </span>
       )}
 
@@ -734,6 +726,9 @@ function CameraPrompter({
           disabled={recording || segments.length > 0}
         >
           {horizontal ? <RectangleVertical className="size-5" /> : <RectangleHorizontal className="size-5" />}
+        </RoundButton>
+        <RoundButton label="Girar imagem" onClick={turnPicture} disabled={recording}>
+          <RotateCcwSquare className="size-5" />
         </RoundButton>
         {horizontal && (
           <RoundButton label="Inverter lado (gimbal)" onClick={() => setSettings({ side: settings.side === "left" ? "right" : "left" })} disabled={recording || segments.length > 0}>
@@ -823,7 +818,7 @@ function CameraPrompter({
             type="button"
             aria-label={recording ? "Pausar gravação" : segments.length ? "Continuar gravando" : "Gravar"}
             onClick={onRecord}
-            disabled={!stream}
+            disabled={!cam || !size}
             className="flex size-20 items-center justify-center rounded-full border-4 border-[#fff] disabled:opacity-40"
           >
             <span className={cn("block transition-all", recording ? "size-8 rounded-md" : "size-16 rounded-full")} style={{ background: REC }} />
