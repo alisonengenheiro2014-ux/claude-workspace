@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, ChevronLeft, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
@@ -50,7 +50,10 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
       saveSettings(next);
       return next;
     });
-  const [take, setTake] = useState<File | null>(null);
+  // the takes recorded so far (CapCut's segments) and where the text is:
+  // both survive editing the script or watching the takes
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const scroll = useRef(0);
   const back = () => navigate(projectId ? `/p/${projectId}` : "/");
 
   function persist(next: Script) {
@@ -88,18 +91,22 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
                   type="button"
                   className="flex min-w-0 flex-1 flex-col gap-0.5 text-left"
                   onClick={() => {
+                    if (s.id !== script?.id) {
+                      setSegments([]);
+                      scroll.current = 0;
+                    }
                     setScript(s);
                     setStep("camera");
                   }}
                 >
-                  <span className="truncate text-sm font-semibold">{s.title || titleOf(s.text)}</span>
+                  <span className="truncate text-sm font-semibold">{titleOf(s.text)}</span>
                   <span className="text-xs text-text-muted">
                     {s.text.length.toLocaleString("pt-BR")} caracteres · ~{mmss(readingSeconds(s.text, settings.speed))}
                   </span>
                 </button>
                 <button
                   type="button"
-                  aria-label={`Editar ${s.title || titleOf(s.text)}`}
+                  aria-label={`Editar ${titleOf(s.text)}`}
                   onClick={() => {
                     setScript(s);
                     setStep("edit");
@@ -110,7 +117,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
                 </button>
                 <button
                   type="button"
-                  aria-label={`Apagar ${s.title || titleOf(s.text)}`}
+                  aria-label={`Apagar ${titleOf(s.text)}`}
                   onClick={() => {
                     const list = scripts.filter((x) => x.id !== s.id);
                     setScripts(list);
@@ -149,13 +156,6 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
           </Button>
         </header>
         <div className="flex flex-1 flex-col gap-2 px-4 pb-4">
-          <input
-            aria-label="Título"
-            placeholder="Título (opcional)"
-            value={script.title}
-            onChange={(e) => setScript({ ...script, title: e.target.value })}
-            className="h-11 rounded-md border border-border-input bg-surface-2 px-3 text-base text-text"
-          />
           <textarea
             aria-label="Texto do roteiro"
             placeholder="Escreva ou cole aqui o que você vai falar…"
@@ -171,17 +171,14 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
       </main>
     );
 
-  if (step === "review" && take)
+  if (step === "review" && segments.length)
     return (
       <Review
-        take={take}
+        takes={segments.map((g) => g.file)}
         toProject={!!projectId}
-        onRedo={() => {
-          setTake(null);
-          setStep("camera");
-        }}
+        onBack={() => setStep("camera")}
         onUse={async () => {
-          const id = await takeToProject(take, projectId, toast);
+          const id = await takesToProject(segments.map((g) => g.file), projectId, toast);
           if (id) navigate(`/p/${id}`);
         }}
       />
@@ -193,44 +190,77 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
         script={script}
         settings={settings}
         setSettings={setSettings}
-        onClose={() => setStep("scripts")}
-        onEdit={() => setStep("edit")}
-        onTake={(file) => {
-          setTake(file);
-          setStep("review");
+        scroll={scroll}
+        segments={segments}
+        onSegment={(g) => setSegments((list) => [...list, g])}
+        onDropLast={() => {
+          const last = segments[segments.length - 1];
+          if (last) scroll.current = last.scrollStart; // the text goes back to where that take began
+          setSegments((list) => list.slice(0, -1));
         }}
+        onClose={() => {
+          if (segments.length && !confirm(`Descartar ${segments.length === 1 ? "o trecho gravado" : `os ${segments.length} trechos gravados`}?`)) return;
+          setSegments([]);
+          scroll.current = 0;
+          setStep("scripts");
+        }}
+        onEdit={() => setStep("edit")}
+        onDone={() => setStep("review")}
       />
     );
 
   return null;
 }
 
-// The take goes into a project: appended to the one the teleprompter came
-// from, or a new one.
-async function takeToProject(file: File, projectId: string | undefined, toast: ReturnType<typeof useToast>) {
+// One recorded take: its file, length, and where the text was when it began.
+interface Segment {
+  file: File;
+  seconds: number;
+  scrollStart: number;
+}
+
+// The takes go into a project, in order, one clip each: appended to the
+// project the teleprompter came from, or a new one.
+async function takesToProject(files: File[], projectId: string | undefined, toast: ReturnType<typeof useToast>) {
   const id = projectId ?? (await createProject()).id;
-  const [asset] = await runImport(id, [file], () => {}, toast);
-  if (!asset) {
+  const assets = await runImport(id, files, () => {}, toast);
+  if (!assets.length) {
     if (!projectId) await removeProject(id);
     return null;
   }
   const loaded = await loadProject(id);
-  if (loaded) await saveDoc(id, insertMedia(loaded.doc, [asset], durationOf(loaded.doc)).doc);
+  if (loaded) await saveDoc(id, insertMedia(loaded.doc, assets, durationOf(loaded.doc)).doc);
   return id;
 }
 
-function Review({ take, toProject, onRedo, onUse }: { take: File; toProject: boolean; onRedo: () => void; onUse: () => Promise<void> }) {
-  const [url] = useState(() => URL.createObjectURL(take));
+// The takes, played one after another, before they go into a project.
+function Review({ takes, toProject, onBack, onUse }: { takes: File[]; toProject: boolean; onBack: () => void; onUse: () => Promise<void> }) {
+  const [urls] = useState(() => takes.map((f) => URL.createObjectURL(f)));
+  const [i, setI] = useState(0);
   const [busy, setBusy] = useState(false);
-  useEffect(() => () => URL.revokeObjectURL(url), [url]);
+  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-[#000]">
-      <video src={url} controls playsInline autoPlay className="min-h-0 flex-1 bg-[#000] object-contain" aria-label="Vídeo gravado" />
+      {takes.length > 1 && (
+        <p className="py-2 text-center text-xs text-[rgba(255,255,255,.75)]">
+          Trecho {i + 1} de {takes.length}
+        </p>
+      )}
+      <video
+        key={urls[i]}
+        src={urls[i]}
+        controls
+        playsInline
+        autoPlay
+        onEnded={() => i < urls.length - 1 && setI(i + 1)}
+        className="min-h-0 flex-1 bg-[#000] object-contain"
+        aria-label="Vídeo gravado"
+      />
       <div className="flex gap-2 bg-bg p-3">
-        <Button variant="ghost" className="flex-1" onClick={onRedo} disabled={busy}>
-          Refazer
+        <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>
+          Voltar a gravar
         </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => void shareFile(take)} disabled={busy}>
+        <Button variant="secondary" className="flex-1" onClick={() => void shareFiles(takes)} disabled={busy}>
           Salvar no iPhone
         </Button>
         <Button
@@ -249,20 +279,42 @@ function Review({ take, toProject, onRedo, onUse }: { take: File; toProject: boo
   );
 }
 
+// all the takes in one share sheet when the phone allows, else one by one
+async function shareFiles(files: File[]) {
+  const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
+  if (files.length > 1 && nav.canShare?.({ files })) {
+    try {
+      await nav.share({ files });
+      return;
+    } catch (err) {
+      if (err instanceof DOMException && err.name === "AbortError") return;
+    }
+  }
+  for (const f of files) await shareFile(f);
+}
+
 function CameraPrompter({
   script,
   settings,
   setSettings,
+  scroll,
+  segments,
+  onSegment,
+  onDropLast,
   onClose,
   onEdit,
-  onTake,
+  onDone,
 }: {
   script: Script;
   settings: PrompterSettings;
   setSettings: (p: Partial<PrompterSettings>) => void;
+  scroll: { current: number }; // where the text is, kept by the parent
+  segments: Segment[];
+  onSegment: (g: Segment) => void;
+  onDropLast: () => void;
   onClose: () => void;
   onEdit: () => void;
-  onTake: (file: File) => void;
+  onDone: () => void;
 }) {
   const toast = useToast();
   const video = useRef<HTMLVideoElement>(null);
@@ -278,7 +330,7 @@ function CameraPrompter({
   const [paused, setPaused] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const scroll = useRef(0);
+  const [arm, setArm] = useState(false); // the last take marked; a second tap deletes it
   const recorder = useRef<MediaRecorder | null>(null);
   const chunks = useRef<Blob[]>([]);
   const startedAt = useRef(0);
@@ -344,6 +396,8 @@ function CameraPrompter({
   const place = () => {
     if (textEl.current) textEl.current.style.transform = `translateY(${-scroll.current}px)`;
   };
+  // the text where it was left (after editing the script, or a take deleted)
+  useEffect(place, [segments.length]);
 
   // the text moves while recording and not paused, at the reading pace
   useEffect(() => {
@@ -376,17 +430,18 @@ function CameraPrompter({
     if (type === null) return toast("Este aparelho não grava vídeo pelo navegador.", "error");
     const r = new MediaRecorder(stream, { ...(type ? { mimeType: type } : {}), videoBitsPerSecond: videoBitrate(settings.quality), audioBitsPerSecond: 128_000 });
     chunks.current = [];
+    const scrollStart = scroll.current; // the next take carries on where the text is
+    const n = segments.length + 1;
     r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
     r.onstop = () => {
       const mime = r.mimeType || type || "video/mp4";
       const ext = mime.includes("webm") ? "webm" : "mp4";
       const stamp = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/[/:]/g, "-").replace(", ", " ");
-      onTake(new File(chunks.current, `Teleprompter ${stamp}.${ext}`, { type: mime.split(";")[0] }));
+      const seconds = (performance.now() - startedAt.current) / 1000;
+      onSegment({ file: new File(chunks.current, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] }), seconds, scrollStart });
     };
     r.start(1000);
     recorder.current = r;
-    scroll.current = 0;
-    place();
     startedAt.current = performance.now();
     setElapsed(0);
     setPaused(false);
@@ -394,6 +449,7 @@ function CameraPrompter({
   }
 
   function onRecord() {
+    setArm(false);
     if (recording) {
       setRecording(false);
       recorder.current?.stop();
@@ -526,22 +582,53 @@ function CameraPrompter({
               ))}
           </div>
         )}
+        {(segments.length > 0 || recording) && (
+          // the takes so far, side by side; the last one red when marked to delete
+          <div aria-label="Trechos gravados" className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-pill bg-[rgba(255,255,255,.2)]">
+            {segments.map((g, i) => (
+              <span
+                key={i}
+                className="h-full rounded-pill"
+                style={{ flexGrow: g.seconds, background: arm && i === segments.length - 1 ? REC : "#fff" }}
+              />
+            ))}
+            {recording && <span className="h-full rounded-pill" style={{ flexGrow: Math.max(0.1, elapsed), background: REC }} />}
+          </div>
+        )}
         <span className="font-mono text-sm tabular-nums" style={{ color: recording ? REC : "rgba(255,255,255,.85)" }}>
-          {recording ? `● ${formatTime(elapsed * 1e6)}` : `${wpmOf(settings.speed)} palavras/min · ~${mmss(readingSeconds(script.text, settings.speed))}`}
+          {recording || segments.length
+            ? `${recording ? "● " : ""}${formatTime((segments.reduce((t, g) => t + g.seconds, 0) + (recording ? elapsed : 0)) * 1e6)}${segments.length ? ` · ${segments.length + (recording ? 1 : 0)} trecho${segments.length + (recording ? 1 : 0) > 1 ? "s" : ""}` : ""}`
+            : `${wpmOf(settings.speed)} palavras/min · ~${mmss(readingSeconds(script.text, settings.speed))}`}
         </span>
+        {arm && <span className="text-xs text-[#fff]">Toque de novo para apagar o último trecho (o texto volta para onde ele começou)</span>}
         <div className="flex w-full items-center justify-between">
           <RoundButton label="Fechar teleprompter" onClick={onClose} disabled={recording}>
             <X className="size-6" />
           </RoundButton>
+          <RoundButton
+            label={arm ? "Confirmar: apagar último trecho" : "Apagar último trecho"}
+            onClick={() => {
+              if (!arm) return setArm(true);
+              setArm(false);
+              onDropLast();
+            }}
+            disabled={recording || !segments.length}
+            danger={arm}
+          >
+            <Delete className="size-6" />
+          </RoundButton>
           <button
             type="button"
-            aria-label={recording ? "Parar gravação" : "Gravar"}
+            aria-label={recording ? "Pausar gravação" : segments.length ? "Continuar gravando" : "Gravar"}
             onClick={onRecord}
             disabled={!stream}
             className="flex size-20 items-center justify-center rounded-full border-4 border-[#fff] disabled:opacity-40"
           >
             <span className={cn("block transition-all", recording ? "size-8 rounded-md" : "size-16 rounded-full")} style={{ background: REC }} />
           </button>
+          <RoundButton label="Concluir" onClick={onDone} disabled={recording || !segments.length} accent>
+            <Check className="size-6" />
+          </RoundButton>
           <RoundButton label="Virar câmera" onClick={() => setSettings({ facing: front ? "environment" : "user" })} disabled={recording}>
             <SwitchCamera className="size-6" />
           </RoundButton>
@@ -600,9 +687,30 @@ function CameraPrompter({
   );
 }
 
-function RoundButton({ label, onClick, disabled, children }: { label: string; onClick: () => void; disabled?: boolean; children: React.ReactNode }) {
+function RoundButton({
+  label,
+  onClick,
+  disabled,
+  danger,
+  accent,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  danger?: boolean;
+  accent?: boolean;
+  children: React.ReactNode;
+}) {
   return (
-    <button type="button" aria-label={label} onClick={onClick} disabled={disabled} className="flex size-12 items-center justify-center rounded-full bg-[rgba(0,0,0,.5)] disabled:opacity-30">
+    <button
+      type="button"
+      aria-label={label}
+      onClick={onClick}
+      disabled={disabled}
+      className="flex size-12 items-center justify-center rounded-full disabled:opacity-30"
+      style={{ background: danger ? REC : accent && !disabled ? "#fff" : "rgba(0,0,0,.5)", color: accent && !disabled ? "#000" : "#fff" }}
+    >
       {children}
     </button>
   );
