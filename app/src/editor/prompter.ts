@@ -18,11 +18,9 @@ export interface PrompterSettings {
   countdown: 0 | 3 | 5; // seconds before recording starts
   quality: 720 | 1080 | 2160; // asked of the camera; it gives the closest it really has
   fps: 30 | 60;
-  orientation: "vertical" | "horizontal"; // horizontal: the phone on its side (a gimbal)
-  side: "left" | "right"; // horizontal: where the top of the phone points
-  // how the camera's picture is turned into the frame, per format, camera,
-  // gimbal side and the shape the phone hands it in; set with "Girar imagem"
-  turns: Record<string, number>;
+  // auto: the way the phone is held (upright: vertical; on its side: horizontal)
+  format: "auto" | "vertical" | "horizontal";
+  side: "left" | "right"; // horizontal without a motion sensor: where the top of the phone points
   boxHeight: number; // 0.25..0.7 of the screen
   boxOpacity: number; // 0.2..0.95, the dark box behind the text
   facing: "user" | "environment";
@@ -36,9 +34,8 @@ export const DEFAULT_SETTINGS: PrompterSettings = {
   countdown: 3,
   quality: 2160, // the camera's best (4K on an iPhone Pro, front and back)
   fps: 30,
-  orientation: "vertical",
+  format: "auto",
   side: "left",
-  turns: {},
   boxHeight: 0.38,
   boxOpacity: 0.55,
   facing: "user",
@@ -66,7 +63,14 @@ function write(key: string, value: unknown) {
 
 export const loadScripts = () => read<Script[]>(SCRIPTS, []).sort((a, b) => b.updatedAt - a.updatedAt);
 export const saveScripts = (s: Script[]) => write(SCRIPTS, s);
-export const loadSettings = (): PrompterSettings => ({ ...DEFAULT_SETTINGS, ...read<Partial<PrompterSettings>>(SETTINGS, {}) });
+export function loadSettings(): PrompterSettings {
+  // older versions kept a fixed format and hand-set picture turns: dropped,
+  // the phone's own position decides now
+  const { orientation: _o, turns: _t, ...saved } = read<Partial<PrompterSettings> & { orientation?: unknown; turns?: unknown }>(SETTINGS, {});
+  const s = { ...DEFAULT_SETTINGS, ...saved };
+  if (!["auto", "vertical", "horizontal"].includes(s.format)) s.format = "auto";
+  return s;
+}
 export const saveSettings = (s: PrompterSettings) => write(SETTINGS, s);
 
 // a title from the script's first words
@@ -116,11 +120,26 @@ export function frameOf(srcW: number, srcH: number, horizontal: boolean) {
   return horizontal ? { w: long, h: short } : { w: short, h: long };
 }
 
-// How the camera's picture is turned into that frame, until "Girar imagem"
-// says otherwise. Upright-shaped pictures while horizontal show the world
-// turned with the phone (it lies on its side): a quarter turn back. Pictures
-// the phone already handed over wide are upright as they are.
-export function defaultTurn(horizontal: boolean, srcWide: boolean, side: PrompterSettings["side"]) {
-  if (horizontal && !srcWide) return side === "left" ? 270 : 90;
-  return 0;
+// How the camera's picture is turned into that frame. The app stays
+// upright, so with the phone on its side the camera hands over a tall
+// picture with the world lying across it: a quarter turn puts it back up.
+// The back camera sees the world turned one way and the front camera (it
+// looks the other way) the other way, so their turns are opposite. Pictures
+// the phone already hands over wide are upright as they are.
+export function pictureTurn(horizontal: boolean, srcWide: boolean, side: PrompterSettings["side"], facing: PrompterSettings["facing"]) {
+  if (!horizontal || srcWide) return 0;
+  const back = side === "left" ? 270 : 90;
+  return facing === "user" ? (back + 180) % 360 : back;
+}
+
+export type Pose = "portrait" | "left" | "right";
+// How the phone is held, from gravity (m/s², as accelerationIncludingGravity
+// reports it): upright, or on its side with the top pointing left or right.
+// sign: the sign gravity's y has when the phone is upright in this browser
+// (WebKit reports the opposite of the spec). Flat or in between: null, the
+// last pose holds.
+export function poseOf(x: number, y: number, sign: number): Pose | null {
+  if (Math.abs(y) > 6 && Math.abs(y) > Math.abs(x) * 1.5) return "portrait";
+  if (Math.abs(x) > 6 && Math.abs(x) > Math.abs(y) * 1.5) return x * sign > 0 ? "left" : "right";
+  return null;
 }

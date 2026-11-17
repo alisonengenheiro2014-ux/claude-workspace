@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronLeft, Delete, RectangleHorizontal, RectangleVertical, RotateCcwSquare, FlipHorizontal2, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { navigate } from "../app/router";
@@ -23,7 +23,9 @@ import {
   wpmOf,
   uiTurn,
   frameOf,
-  defaultTurn,
+  pictureTurn,
+  poseOf,
+  type Pose,
   type PrompterSettings,
   type Script,
 } from "../editor/prompter";
@@ -132,6 +134,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
                       setSegments([]);
                       scroll.current = 0;
                     }
+                    void askMotion(); // a full tap: the only moment the iPhone lets the sensor be asked
                     setScript(s);
                     setStep("camera");
                   }}
@@ -185,6 +188,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
             icon={<Camera aria-hidden className="size-4" />}
             disabled={!script.text.trim()}
             onClick={() => {
+              void askMotion();
               persist({ ...script, updatedAt: Date.now() });
               setStep("camera");
             }}
@@ -254,6 +258,7 @@ interface Segment {
   file: File;
   seconds: number;
   scrollStart: number;
+  horizontal: boolean; // the format it was recorded in: the next takes keep it
 }
 
 // The takes go into a project, in order, one clip each: appended to the
@@ -342,11 +347,11 @@ async function shareFiles(files: File[]) {
   for (const f of files) await shareFile(f);
 }
 
-// Which way the phone lies on its side, from the motion sensor (as the
-// iPhone's own camera does), so the text and the buttons always face whoever
-// holds it, either hand. Gravity runs along the phone's width then; which
-// sign means which side differs between browsers, so it is learnt once from
-// the phone held upright (gravity along its height) and kept.
+// How the phone is held, from the motion sensor (as the iPhone's own camera
+// does): upright, or on its side with the top to the left or the right, so
+// the format follows the phone and the text and the buttons always face
+// whoever holds it, either hand. Which sign gravity has differs between
+// browsers, so it is learnt from the phone held upright and kept.
 const MOTION_SIGN = "prompter-motion-sign";
 function readSign() {
   try {
@@ -355,24 +360,38 @@ function readSign() {
     return 0;
   }
 }
-// asked once, from a tap (the iPhone requires it); elsewhere there is no asking
-async function askMotion() {
-  const M = (globalThis as unknown as { DeviceMotionEvent?: { requestPermission?: () => Promise<string> } }).DeviceMotionEvent;
-  try {
-    if (M?.requestPermission) await M.requestPermission();
-  } catch {
-    // not granted: the side from Ajustes is used
-  }
+const needsAsking = () =>
+  typeof (globalThis as unknown as { DeviceMotionEvent?: { requestPermission?: unknown } }).DeviceMotionEvent?.requestPermission === "function";
+// The iPhone asks once, and only from a finished tap (click, not touch down);
+// elsewhere there is nothing to ask.
+let motionAsked: Promise<boolean> | null = null;
+function askMotion() {
+  if (!needsAsking()) return Promise.resolve(true);
+  const M = (globalThis as unknown as { DeviceMotionEvent: { requestPermission: () => Promise<string> } }).DeviceMotionEvent;
+  motionAsked ??= M.requestPermission().then(
+    (r) => r === "granted",
+    () => {
+      motionAsked = null; // not from a tap: asked again on the next one
+      return false;
+    },
+  );
+  return motionAsked;
 }
-function useSideFromSensor(active: boolean) {
-  const [side, setSide] = useState<"left" | "right" | null>(null);
+function usePose() {
+  const [pose, setPose] = useState<Pose | null>(null);
+  const [heard, setHeard] = useState(false); // the sensor answers
+  const [retry, setRetry] = useState(0);
   useEffect(() => {
-    if (!active) return;
     let sign = readSign();
     const ios = /iPhone|iPad/.test(navigator.userAgent);
+    let got = false;
     const on = (e: DeviceMotionEvent) => {
       const g = e.accelerationIncludingGravity;
       if (!g || g.x == null || g.y == null) return;
+      if (!got) {
+        got = true;
+        setHeard(true);
+      }
       if (Math.abs(g.y) > 7 && Math.abs(g.x) < 3 && Math.sign(g.y) !== sign) {
         sign = Math.sign(g.y); // upright: this browser's sign for "up"
         try {
@@ -381,16 +400,15 @@ function useSideFromSensor(active: boolean) {
           // kept for this visit
         }
       }
-      // on its side, steadily: gravity mostly across the phone
-      if (Math.abs(g.x) > 6 && Math.abs(g.x) > Math.abs(g.y) * 1.5) {
-        const s = sign || (ios ? -1 : 1); // WebKit on iPhone reports the opposite sign
-        setSide(g.x * s > 0 ? "left" : "right");
-      }
+      const p = poseOf(g.x, g.y, sign || (ios ? -1 : 1)); // WebKit reports the opposite sign
+      if (p) setPose(p);
     };
     window.addEventListener("devicemotion", on);
     return () => window.removeEventListener("devicemotion", on);
-  }, [active]);
-  return side;
+  }, [retry]);
+  // "Ativar giro automático", when the sensor was not allowed yet
+  const enable = () => void askMotion().then(() => setRetry((r) => r + 1));
+  return { pose, heard, enable };
 }
 
 function CameraPrompter({
@@ -435,15 +453,24 @@ function CameraPrompter({
   const recorder = useRef<MediaRecorder | null>(null);
   const startedAt = useRef(0);
   const lastTap = useRef(0);
-  const horizontal = settings.orientation === "horizontal";
-  // the side the phone lies on: the sensor's, else the one set in Ajustes
-  const sensed = useSideFromSensor(horizontal);
-  const side = sensed ?? settings.side;
+  // The format follows the phone: upright records vertical, on its side
+  // horizontal, facing whoever holds it. Once a take is recorded the format
+  // stays (all the takes have one shape); the side still follows the phone.
+  const { pose, heard, enable } = usePose();
+  const [lastSide, setLastSide] = useState<PrompterSettings["side"] | null>(null);
+  useEffect(() => {
+    if (pose === "left" || pose === "right") setLastSide(pose);
+  }, [pose]);
+  const wantHorizontal = settings.format === "auto" ? pose === "left" || pose === "right" : settings.format === "horizontal";
+  const [take, setTake] = useState<boolean | null>(null); // the format of the take being recorded
+  const [finishing, setFinishing] = useState(false); // stopped, the take not handed over yet
+  const locked = recording || finishing || segments.length > 0;
+  const horizontal = segments[0]?.horizontal ?? (recording || finishing ? (take ?? wantHorizontal) : wantHorizontal);
+  const side: PrompterSettings["side"] = pose === "left" || pose === "right" ? pose : (lastSide ?? settings.side);
   // the camera's picture as the phone hands it, and the frame made from it
   const [src, setSrc] = useState<{ w: number; h: number } | null>(null);
   const srcWide = !!src && src.w > src.h;
-  const turnKey = `${settings.orientation}-${settings.facing}-${side}-${srcWide ? "wide" : "tall"}`;
-  const turn = settings.turns[turnKey] ?? defaultTurn(horizontal, srcWide, side);
+  const turn = pictureTurn(horizontal, srcWide, side, settings.facing);
   const [size, setSize] = useState<{ w: number; h: number } | null>(null);
   const live = useRef({ turn, size }); // read by the drawing loop
   live.current = { turn, size };
@@ -506,9 +533,9 @@ function CameraPrompter({
   // the frame's size: the camera's own pixels, wide or tall as the format
   // asks; kept while recording (a take has one size)
   useEffect(() => {
-    if (!src || recording) return;
+    if (!src || (locked && size)) return;
     setSize(frameOf(src.w, src.h, horizontal));
-  }, [src, horizontal, recording]);
+  }, [src, horizontal, locked, size]);
 
   // Each camera picture drawn into the frame, turned as set and filling it:
   // the preview is this frame, so what is seen is exactly what is recorded,
@@ -608,6 +635,8 @@ function CameraPrompter({
       audioBitsPerSecond: 128_000,
     });
     const scrollStart = scroll.current; // the next take carries on where the text is
+    const h = horizontal; // this take's format, kept until it is handed over
+    setTake(h);
     const n = segments.length + 1;
     const own: Blob[] = [];
     const t0 = performance.now();
@@ -618,7 +647,8 @@ function CameraPrompter({
       const mime = r.mimeType || type || "video/mp4";
       const ext = mime.includes("webm") ? "webm" : "mp4";
       const stamp = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/[/:]/g, "-").replace(", ", " ");
-      onSegment({ file: new File(own, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] }), seconds, scrollStart });
+      onSegment({ file: new File(own, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] }), seconds, scrollStart, horizontal: h });
+      setFinishing(false);
     };
     r.start(1000);
     recorder.current = r;
@@ -641,15 +671,11 @@ function CameraPrompter({
       flip();
     } else lastTap.current = now;
   }
-  // "Girar imagem": the picture a quarter turn further, remembered for this
-  // format, camera, gimbal side and the shape the phone hands it in
-  function turnPicture() {
-    setSettings({ turns: { ...settings.turns, [turnKey]: (turn + 90) % 360 } });
-  }
 
   function onRecord() {
     setArm(false);
     if (recording) {
+      setFinishing(true);
       setRecording(false);
       recorder.current?.stop();
       recorder.current = null;
@@ -710,7 +736,7 @@ function CameraPrompter({
   const clearLens = "calc(max(env(safe-area-inset-top, 0px), 54px) + 10px)";
   const clearFar = "calc(max(env(safe-area-inset-bottom, 0px), 20px) + 12px)";
   return (
-    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]" onPointerDownCapture={() => horizontal && !sensed && void askMotion()}>
+    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]">
       {/* the camera's picture: playing but not shown (the frame below is) */}
       <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
       <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
@@ -774,20 +800,11 @@ function CameraPrompter({
         <RoundButton label="Editar roteiro" caption="Roteiro" onClick={onEdit} disabled={recording}>
           <Pencil className="size-5" />
         </RoundButton>
-        <RoundButton
-          label={horizontal ? "Mudar para vertical" : "Mudar para horizontal"}
-          caption={horizontal ? "Horizontal" : "Vertical"}
-          onClick={() => {
-            if (!horizontal) void askMotion(); // the sensor tells which way the phone lies
-            setSettings({ orientation: horizontal ? "vertical" : "horizontal" });
-          }}
-          disabled={recording || segments.length > 0}
-        >
-          {horizontal ? <RectangleVertical className="size-5" /> : <RectangleHorizontal className="size-5" />}
-        </RoundButton>
-        <RoundButton label="Girar imagem" caption="Girar imagem" onClick={turnPicture} disabled={recording}>
-          <RotateCcwSquare className="size-5" />
-        </RoundButton>
+        {!heard && needsAsking() && settings.format === "auto" && !recording && (
+          <RoundButton label="Ativar giro automático" caption="Ativar giro" onClick={enable}>
+            <Smartphone className="size-5" />
+          </RoundButton>
+        )}
         {caps.torch && (
           <RoundButton
             label={torch ? "Desligar flash" : "Ligar flash"}
@@ -942,17 +959,19 @@ function CameraPrompter({
             onChange={(v) => setSettings({ fps: Number(v) as PrompterSettings["fps"] })}
           />
           <Choice
-            label="Formato"
-            value={settings.orientation}
+            label={settings.format === "auto" ? "Formato (automático: segue o celular em pé ou deitado)" : "Formato"}
+            value={settings.format}
             options={[
+              ["auto", "Automático"],
               ["vertical", "Vertical"],
-              ["horizontal", "Horizontal (gimbal)"],
+              ["horizontal", "Horizontal"],
             ]}
-            onChange={(v) => setSettings({ orientation: v as PrompterSettings["orientation"] })}
+            onChange={(v) => setSettings({ format: v as PrompterSettings["format"] })}
           />
-          {horizontal && (
+          {!heard && horizontal && (
+            // no motion sensor: say which way the phone lies
             <Choice
-              label={sensed ? "Câmera no gimbal (o sensor do iPhone está escolhendo sozinho)" : "Câmera no gimbal (onde fica o topo do celular)"}
+              label="Topo do celular"
               value={settings.side}
               options={[
                 ["left", "À esquerda"],
