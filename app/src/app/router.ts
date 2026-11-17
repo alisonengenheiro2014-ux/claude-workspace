@@ -4,13 +4,16 @@ import { useEffect, useState } from "react";
 //   #/            S01 início
 //   #/p/:id       S03 editor (S04–S17 open inside it as sheets)
 //   #/design      design system page
-export type Route = { name: "home" } | { name: "editor"; projectId: string } | { name: "design" };
+//   #/prompter[/:id]  teleprompter (with an id: the take goes into that project)
+export type Route = { name: "home" } | { name: "editor"; projectId: string } | { name: "design" } | { name: "prompter"; projectId?: string };
 
 export function parse(hash: string): Route {
   const path = hash.replace(/^#/, "") || "/";
   const m = path.match(/^\/p\/([\w-]+)$/);
   if (m) return { name: "editor", projectId: m[1] };
   if (path === "/design") return { name: "design" };
+  const t = path.match(/^\/prompter(?:\/([\w-]+))?$/);
+  if (t) return { name: "prompter", projectId: t[1] };
   return { name: "home" };
 }
 

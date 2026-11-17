@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles/index.css";
 import { useRoute } from "./app/router";
+import { Teleprompter } from "./screens/Teleprompter";
 import { watchForUpdates } from "./app/updates";
 import { DesignPage } from "./design/DesignPage";
 import { Editor } from "./screens/Editor";
@@ -12,6 +13,7 @@ function App() {
   const route = useRoute();
   if (route.name === "editor") return <Editor key={route.projectId} projectId={route.projectId} />;
   if (route.name === "design") return <DesignPage />;
+  if (route.name === "prompter") return <Teleprompter projectId={route.projectId} />;
   return <Home />;
 }
 

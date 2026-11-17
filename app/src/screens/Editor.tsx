@@ -14,6 +14,7 @@ import {
   ImagePlus,
   Wand2,
   SunMedium,
+  ScrollText,
   FlipHorizontal2,
   Gauge,
   Layers,
@@ -1471,6 +1472,7 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
               <ToolbarItem icon={<Smile />} label="Stickers" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "stickers" }))} />
               <ToolbarItem icon={<Layers />} label="Camada" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
+              <ToolbarItem icon={<ScrollText />} label="Teleprompter" onClick={() => (stop(), navigate(`/prompter/${projectId}`))} />
               <ToolbarItem icon={<PanelsTopLeft />} label="Tela dividida" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "layout" }))} />
               <ToolbarItem icon={<Sparkles />} label="Efeitos" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "effects" }))} />
               <ToolbarItem icon={<Palette />} label="Filtros" disabled={!target} onClick={() => openLook("filters")} />

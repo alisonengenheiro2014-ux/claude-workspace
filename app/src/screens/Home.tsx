@@ -1,5 +1,5 @@
 // S01 Início: new project and the drafts list.
-import { Archive, ArchiveRestore, Copy, Film, ImageIcon, LayoutTemplate, Pencil, Plus, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Copy, Film, ImageIcon, LayoutTemplate, Pencil, Plus, ScrollText, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { FilePicker } from "../app/FilePicker";
 import { ImportOverlay } from "../app/ImportOverlay";
@@ -191,6 +191,14 @@ export function Home() {
             <span className="text-base font-semibold">Editar foto</span>
           </button>
         </div>
+        <button
+          type="button"
+          onClick={() => navigate("/prompter")}
+          className="mt-3 flex h-14 w-full items-center justify-center gap-2 rounded-lg bg-surface-2 text-text active:brightness-90"
+        >
+          <ScrollText aria-hidden className="size-5" />
+          <span className="text-sm font-semibold">Teleprompter</span>
+        </button>
         <FilePicker ref={picker} onFiles={(f) => void onFiles(f)} />
         <FilePicker ref={photoPicker} accept="image/*" onFiles={(f) => void onPhoto(f)} />
         <Button variant="ghost" className="mt-2 w-full" icon={<ArchiveRestore aria-hidden className="size-4" />} onClick={() => backupPicker.current?.click()}>
