@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { actualVideoLabel, boundZoom, digitalZoomFactor, nativeZoomRange, targetVideoSize } from "./cameraCapture";
+import { actualVideoLabel, boundZoom, digitalZoomFactor, nativeZoomRange, pinchZoomLevel, targetVideoSize } from "./cameraCapture";
 
 describe("camera capture options", () => {
   it("requests 720p, 1080p, 2K and 4K without upscaling", () => {
@@ -24,4 +24,12 @@ describe("camera capture options", () => {
     expect(digitalZoomFactor(.5, .5)).toBe(1);
     expect(digitalZoomFactor(4, 2)).toBe(2);
   });
+  it("pinch expands and contracts the zoom while keeping physical bounds honest", () => {
+    expect(pinchZoomLevel(1, 100, 200, null)).toBe(2);
+    expect(pinchZoomLevel(2, 100, 50, null)).toBe(1);
+    expect(pinchZoomLevel(2, 100, 25, { min: 0.5, max: 6 })).toBe(0.5);
+    expect(pinchZoomLevel(2, 0, 100, null)).toBe(2);
+    expect(pinchZoomLevel(1, 100, 600, null)).toBe(5);
+  });
+
 });

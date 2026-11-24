@@ -4,7 +4,7 @@
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
 import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type PointerEvent, type TouchEvent as ReactTouchEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
 import { navigate } from "../app/router";
@@ -38,7 +38,7 @@ import { Sheet } from "../ui/Sheet";
 import { Slider } from "../ui/Slider";
 import { useToast } from "../ui/Toast";
 import { formatTime } from "../ui/Transport";
-import { actualVideoLabel, boundZoom, digitalZoomFactor, nativeZoomRange, targetVideoSize, type CameraZoomRange } from "../editor/cameraCapture";
+import { actualVideoLabel, boundZoom, digitalZoomFactor, nativeZoomRange, targetVideoSize, pinchZoomLevel, type CameraZoomRange } from "../editor/cameraCapture";
 
 type Step = "scripts" | "edit" | "camera" | "review";
 const REC = "#ff3b30"; // the record button's red, on camera (raw: no theme token fits)
@@ -480,6 +480,7 @@ function CameraPrompter({
   const video = useRef<HTMLVideoElement>(null); // the camera's picture, not shown
   const frame = useRef<HTMLCanvasElement>(null); // the frame being recorded, shown as the preview
   const box = useRef<HTMLDivElement>(null);
+  const pinchSurface = useRef<HTMLDivElement>(null);
   const textEl = useRef<HTMLDivElement>(null);
   const [cam, setCam] = useState<NonNullable<typeof shared> | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -742,34 +743,91 @@ function CameraPrompter({
     setZoom(value);
     syncNativeZoom();
   };
-  const fingersDistance = (e: ReactTouchEvent) => {
-    if (e.touches.length < 2) return 0;
-    const a = e.touches[0];
-    const b = e.touches[1];
-    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-  };
-  const pinchStart = (e: ReactTouchEvent) => {
-    if (e.touches.length < 2) return;
-    const distance = fingersDistance(e);
-    if (distance < 5) return;
-    pinch.current = { distance, startZoom: zoomTarget.current };
-    lastPinchAt.current = performance.now();
-    cancelAnimationFrame(glide.current);
-    drag.current = null;
-  };
-  const pinchMove = (e: ReactTouchEvent) => {
-    if (!pinch.current || e.touches.length < 2) return;
-    e.preventDefault();
-    const distance = fingersDistance(e);
-    if (distance > 5) setZoomLevel(pinch.current.startZoom * distance / pinch.current.distance);
-    lastPinchAt.current = performance.now();
-  };
-  const pinchEnd = (e: ReactTouchEvent) => {
-    if (e.touches.length < 2) {
+  // React's synthetic touchmove listener can be passive on iOS Safari.
+  // Install native capture listeners with passive:false on the camera surface.
+  // This also recognises a gesture spanning the video and the text overlay.
+  // The zoom setter is stored in a ref to avoid replacing the listeners on
+  // every camera frame, without closing over stale native zoom capabilities.
+  const zoomSetter = useRef(setZoomLevel);
+  zoomSetter.current = setZoomLevel;
+  useEffect(() => {
+    const surface = pinchSurface.current;
+    if (!surface) return;
+    let gestureZoom: number | null = null;
+    let lastTouchMoveAt = 0;
+    const fingersDistance = (touches: TouchList) => {
+      const a = touches[0];
+      const b = touches[1];
+      return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
+    };
+    const beginPinch = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      const distance = fingersDistance(event.touches);
+      if (distance < 8) return;
+      // Do not interfere with native controls such as the camera selector.
+      if (event.target instanceof Element && event.target.closest("button, select, input, textarea, [role=dialog]")) return;
+      if (event.cancelable) event.preventDefault();
+      if (!pinch.current) {
+        pinch.current = { distance, startZoom: zoomTarget.current };
+        lastPinchAt.current = performance.now();
+        cancelAnimationFrame(glide.current);
+        drag.current = null;
+      }
+    };
+    const movePinch = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      if (!pinch.current) beginPinch(event);
+      if (!pinch.current) return;
+      if (event.cancelable) event.preventDefault();
+      const distance = fingersDistance(event.touches);
+      zoomSetter.current(pinchZoomLevel(pinch.current.startZoom, pinch.current.distance, distance, nativeRange.current));
+      lastTouchMoveAt = performance.now();
+      lastPinchAt.current = lastTouchMoveAt;
+    };
+    const endPinch = (event: TouchEvent) => {
+      if (event.touches.length >= 2) return;
       pinch.current = null;
       lastPinchAt.current = performance.now();
-    }
-  };
+    };
+    // WebKit also exposes gesture events. Prevent the page itself zooming,
+    // and use gesture scale as a fallback if Safari suppresses touchmove.
+    const startGesture = (event: Event) => {
+      if (event.cancelable) event.preventDefault();
+      gestureZoom = zoomTarget.current;
+      drag.current = null;
+      lastPinchAt.current = performance.now();
+    };
+    const changeGesture = (event: Event) => {
+      if (event.cancelable) event.preventDefault();
+      const scale = (event as Event & { scale?: number }).scale;
+      if (typeof scale === "number" && scale > 0 && gestureZoom !== null &&
+          performance.now() - lastTouchMoveAt > 120) {
+        // Fallback if WebKit consumed the touchmove stream during a pinch.
+        zoomSetter.current(boundZoom(gestureZoom * scale, nativeRange.current));
+      }
+      lastPinchAt.current = performance.now();
+    };
+    const endGesture = () => {
+      gestureZoom = null;
+      lastPinchAt.current = performance.now();
+    };
+    surface.addEventListener("touchstart", beginPinch, { passive: false, capture: true });
+    surface.addEventListener("touchmove", movePinch, { passive: false, capture: true });
+    surface.addEventListener("touchend", endPinch, { passive: false, capture: true });
+    surface.addEventListener("touchcancel", endPinch, { passive: false, capture: true });
+    surface.addEventListener("gesturestart", startGesture, { passive: false, capture: true });
+    surface.addEventListener("gesturechange", changeGesture, { passive: false, capture: true });
+    surface.addEventListener("gestureend", endGesture, { passive: false, capture: true });
+    return () => {
+      surface.removeEventListener("touchstart", beginPinch, true);
+      surface.removeEventListener("touchmove", movePinch, true);
+      surface.removeEventListener("touchend", endPinch, true);
+      surface.removeEventListener("touchcancel", endPinch, true);
+      surface.removeEventListener("gesturestart", startGesture, true);
+      surface.removeEventListener("gesturechange", changeGesture, true);
+      surface.removeEventListener("gestureend", endGesture, true);
+    };
+  }, []);
   const place = () => {
     if (textEl.current) textEl.current.style.transform = `translate3d(0, ${-scroll.current}px, 0)`;
   };
@@ -891,6 +949,7 @@ function CameraPrompter({
   const manualUntil = useRef(0);
   const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
   function down(e: PointerEvent) {
+    if (pinch.current) return;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -902,6 +961,7 @@ function CameraPrompter({
     drag.current = { y, s: scroll.current, moved: false, v: 0, at: performance.now(), last: y };
   }
   function move(e: PointerEvent) {
+    if (pinch.current) return;
     const d = drag.current;
     if (!d) return;
     const y = along(e);
@@ -958,13 +1018,10 @@ function CameraPrompter({
       {/* the camera's picture: playing but not shown (the frame below is) */}
       <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
       <div
+        ref={pinchSurface}
         style={turned}
         className="touch-none"
         onPointerUp={onBackgroundTap}
-        onTouchStart={pinchStart}
-        onTouchMove={pinchMove}
-        onTouchEnd={pinchEnd}
-        onTouchCancel={pinchEnd}
       >
       {/* the frame being recorded, whole (bars where the screen is another shape);
           the selfie camera mirrored on screen only, as phones do */}

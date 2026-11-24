@@ -38,3 +38,14 @@ export function digitalZoomFactor(requested: number, appliedNative: number) {
   // Never zoom out digitally: <1x requires genuine ultra-wide optical access.
   return Math.max(1, requested / Math.max(0.1, appliedNative));
 }
+
+/** Pure pinch math; never assumes the Safari zoom range supports 0.5x. */
+export function pinchZoomLevel(
+  initialZoom: number,
+  initialDistance: number,
+  currentDistance: number,
+  caps: CameraZoomRange | null,
+) {
+  if (initialDistance < 8 || currentDistance < 0 || !Number.isFinite(currentDistance)) return boundZoom(initialZoom, caps);
+  return boundZoom(initialZoom * currentDistance / initialDistance, caps);
+}
