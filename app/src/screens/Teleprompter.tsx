@@ -488,6 +488,13 @@ function CameraPrompter({
   const [cameraId, setCameraId] = useState("");
   const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [torch, setTorch] = useState(false);
+  // Only cameras actually exposed by the browser can be selected. The
+  // iPhone's rear lenses are not always individually available to a PWA.
+  const rearCameras = availableCameras.filter((device) =>
+    /back|rear|traseir|wide|telephoto|ultra|principal/i.test(device.label) &&
+    !/front|frontal|selfie|user/i.test(device.label),
+  );
+  const canChooseRearLens = settings.facing === "environment" && rearCameras.length > 1;
   const nativeRange = useRef<CameraZoomRange | null>(null);
   const zoomTarget = useRef(1);
   const zoomAppliedNative = useRef(1);
@@ -1013,13 +1020,72 @@ function CameraPrompter({
       </div>
 
       {/* top-right tools */}
-      <div className="absolute flex flex-col gap-2" style={horizontal ? { top: 8, [far]: clearFar } : { right: 12, top: `calc(${boxH} + 16px)` }}>
+      <div className="absolute z-20 flex flex-col items-end gap-2" style={horizontal ? { top: 8, [far]: clearFar } : { right: 12, top: `calc(${boxH} + 16px)` }}>
         <RoundButton label="Ajustes do teleprompter" caption="Ajustes" onClick={() => setSettingsOpen(true)} disabled={recording}>
           <Settings2 className="size-5" />
         </RoundButton>
         <RoundButton label="Editar roteiro" caption="Roteiro" onClick={onEdit} disabled={recording}>
           <Pencil className="size-5" />
         </RoundButton>
+        {/* The camera controls must remain operable during a take. Keep them
+            at the far edge rather than over the text or record button. */}
+        {shown === "environment" && (
+          <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
+          <div
+            role="group"
+            aria-label="Zoom durante a gravação"
+            className="flex items-center justify-center gap-1 rounded-full bg-[rgba(0,0,0,.7)] p-1 shadow-md"
+          >
+            <button
+              type="button"
+              aria-label="Afastar câmera"
+              title="Afastar câmera"
+              onClick={() => setZoomLevel(zoomTarget.current - 0.5)}
+              disabled={zoom <= (caps.zoom?.min ?? 1) + 0.05}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,.12)] text-xl font-semibold disabled:opacity-30"
+            >−</button>
+            <span className="min-w-12 text-center text-xs font-semibold tabular-nums" aria-live="off">
+              {zoom.toFixed(1)}×
+            </span>
+            <button
+              type="button"
+              aria-label="Aproximar câmera"
+              title="Aproximar câmera"
+              onClick={() => setZoomLevel(zoomTarget.current + 0.5)}
+              disabled={zoom >= Math.max(5, caps.zoom?.max ?? 5) - 0.05}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,.12)] text-xl font-semibold disabled:opacity-30"
+            >+</button>
+          </div>
+        {caps.zoom && caps.zoom.min < 0.95 && (
+          <button
+            type="button"
+            aria-label="Usar enquadramento ultra-angular disponível"
+            onClick={() => setZoomLevel(Math.max(caps.zoom!.min, 0.5))}
+            className="self-center rounded-full bg-[rgba(0,0,0,.7)] px-3 py-1.5 text-xs font-semibold"
+          >{Math.max(caps.zoom.min, 0.5).toFixed(1)}×</button>
+        )}
+        {canChooseRearLens && (
+          <label className="max-w-36 rounded-lg bg-[rgba(0,0,0,.7)] px-1 py-1.5 text-xs">
+            <span className="sr-only">Selecionar lente traseira</span>
+            <select
+              aria-label="Selecionar lente traseira"
+              title="Trocar lente durante a gravação (pode haver breve congelamento)"
+              value={cameraId}
+              disabled={finishing}
+              onChange={(e) => setCameraId(e.currentTarget.value)}
+              className="w-full max-w-32 truncate bg-transparent text-xs text-white"
+            >
+              <option value="" className="text-black">Câmera padrão</option>
+              {rearCameras.map((camera, i) => (
+                <option key={camera.deviceId} value={camera.deviceId} className="text-black">
+                  {camera.label || `Traseira ${i + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+          </div>
+        )}
         {!heard && needsAsking() && settings.format === "auto" && !recording && (
           <RoundButton label="Ativar giro automático" caption="Ativar giro" onClick={enable}>
             <Smartphone className="size-5" />
@@ -1198,7 +1264,7 @@ function CameraPrompter({
               <span className="text-xs text-text-muted">Lente / câmera disponível no Safari</span>
               <select
                 value={cameraId}
-                disabled={recording || finishing || segments.length > 0}
+                disabled={finishing}
                 onChange={(e) => {
                   const id = e.currentTarget.value;
                   const selected = availableCameras.find((c) => c.deviceId === id);
@@ -1221,7 +1287,10 @@ function CameraPrompter({
             </label>
           )}
           <p className="text-xs text-text-muted">
-            As lentes listadas são as que o Safari disponibiliza. Se a ultra-angular não estiver na lista, o PWA não pode ativá-la como o app Câmera nativo.
+            O zoom −/＋ e o seletor de lentes traseiras ficam acessíveis mesmo durante a gravação.
+            Se o Safari oferecer uma lente ultra-angular, ela poderá ser selecionada durante o take,
+            com uma breve transição de imagem. Sem uma lente ou zoom nativo compatível,
+            o PWA não consegue produzir um campo de visão 0,5× real.
           </p>
           <Choice
             label={settings.format === "auto" ? "Formato (automático: segue o celular em pé ou deitado)" : "Formato"}
