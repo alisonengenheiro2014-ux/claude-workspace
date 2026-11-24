@@ -57,7 +57,7 @@ interface Prefs {
   model: AsrModel;
   preset: string;
 }
-const DEFAULT_PREFS: Prefs = { language: "portuguese", source: "video", model: "base", preset: DEFAULT_CAPTION_PRESET };
+const DEFAULT_PREFS: Prefs = { language: "portuguese", source: "all", model: "base", preset: DEFAULT_CAPTION_PRESET };
 function loadPrefs(): Prefs {
   try {
     const raw = localStorage.getItem("caption-prefs");
@@ -269,6 +269,7 @@ export function CaptionSheet({
 
   const generateMain = (
     <div className="flex flex-col gap-3">
+      <p className="text-sm text-text-muted">A IA escuta o vídeo e a narração, reconhece as falas e sincroniza as legendas automaticamente. Depois você pode corrigir palavras e escolher o estilo.</p>
       <Row icon={<ScanText className="size-5" />} label="Gerar a partir de" value={SOURCES.find((o) => o.value === prefs.source)!.label} onClick={() => setPage("source")} />
       <Row icon={<Languages className="size-5" />} label="Idioma de origem" value={LANGUAGES.find((o) => o.value === prefs.language)!.label} onClick={() => setPage("language")} />
       <div className="flex flex-col gap-3 rounded-lg bg-surface-2 pb-4">
@@ -313,7 +314,7 @@ export function CaptionSheet({
         </div>
       ) : (
         <Button variant="primary" size="lg" onClick={() => void generate()}>
-          Gerar
+          Gerar legendas automáticas
         </Button>
       )}
     </div>

@@ -152,6 +152,7 @@ type Panel =
   | { name: "export" }
   | { name: "missing"; assetId: Id }
   | { name: "text"; id: Id; tab: TextTab }
+  | { name: "textMenu" }
   | { name: "audio" }
   | { name: "fade" }
   | { name: "record" }
@@ -1013,6 +1014,11 @@ export function Editor({ projectId }: { projectId: Id }) {
     if (s.doc) s.commit(setTrackMuted(s.doc, "main", !mainTrack(s.doc).muted), videoMuted ? "Ligar som do vídeo" : "Tirar som do vídeo");
   }
 
+  function openTextMenu() {
+    stop();
+    setPanel({ name: "textMenu" });
+  }
+
   function onAddText() {
     stop();
     const s = useEditor.getState();
@@ -1374,6 +1380,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               }
             >
+              <ToolbarItem icon={<Type />} label="Texto" onClick={openTextMenu} />
               <ToolbarItem icon={<Volume2 />} label="Volume" onClick={() => setPanel({ name: "volume" })} />
               <ToolbarItem icon={<Waves />} label="Fade" onClick={() => setPanel({ name: "fade" })} />
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplitAudio} />
@@ -1410,6 +1417,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               }
             >
+              <ToolbarItem icon={<Type />} label="Texto" onClick={openTextMenu} />
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplit} disabled={!doc || !target || !canSplit(doc, target.id, playheadUs)} />
               <ToolbarItem icon={<Gauge />} label="Velocidade" onClick={() => setPanel({ name: "speed" })} />
               <ToolbarItem
@@ -1468,8 +1476,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 disabled={totalUs === 0}
                 onClick={toggleVideoSound}
               />
-              <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={onAddText} />
-              <ToolbarItem icon={<Captions />} label="Legendas" disabled={totalUs === 0} onClick={() => openCaptions(captionTrack(doc!) ? "edit" : "generate")} />
+              <ToolbarItem icon={<Type />} label="Texto" disabled={totalUs === 0} onClick={openTextMenu} />
               <ToolbarItem icon={<Smile />} label="Stickers" disabled={totalUs === 0} onClick={() => (stop(), setPanel({ name: "stickers" }))} />
               <ToolbarItem icon={<Layers />} label="Camada" disabled={totalUs === 0} onClick={() => overlayPicker.current?.click()} />
               <ToolbarItem icon={<ScrollText />} label="Teleprompter" onClick={() => (stop(), navigate(`/prompter/${projectId}`))} />
@@ -1508,6 +1515,41 @@ export function Editor({ projectId }: { projectId: Id }) {
       />
       <FilePicker ref={overlayPicker} onFiles={(f) => void onAddOverlay(f)} />
       <FilePicker ref={audioPicker} accept="audio/*,.mp3,.m4a,.wav,.aac" onFiles={(f) => void onAddMusic(f)} />
+
+      <Sheet
+        open={panel?.name === "textMenu"}
+        onOpenChange={(open) => { if (!open) setPanel(null); }}
+        title="Texto"
+      >
+        <div className="flex flex-col gap-3">
+          <Button
+            className="justify-start"
+            icon={<Type aria-hidden className="size-5" />}
+            onClick={onAddText}
+          >
+            Adicionar texto
+          </Button>
+          <Button
+            className="justify-start"
+            icon={<Captions aria-hidden className="size-5" />}
+            onClick={() => openCaptions("generate")}
+          >
+            Legendas automáticas
+          </Button>
+          {doc && captionTrack(doc) && (
+            <Button
+              className="justify-start"
+              icon={<Captions aria-hidden className="size-5" />}
+              onClick={() => openCaptions("edit")}
+            >
+              Editar legendas
+            </Button>
+          )}
+          <p className="text-xs text-text-muted">
+            Legendas automáticas: a IA transforma as falas do vídeo e da narração em texto sincronizado. Depois você pode revisar as palavras e escolher o estilo.
+          </p>
+        </div>
+      </Sheet>
 
       <CaptionSheet
         open={panel?.name === "captions"}
