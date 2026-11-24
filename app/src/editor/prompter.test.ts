@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { pictureTurn, poseOf } from "./prompter";
+import { displayPose, pictureTurn, poseOf } from "./prompter";
 
 describe("poseOf", () => {
   it("reads upright and both sides, spec and WebKit signs", () => {
@@ -26,5 +26,16 @@ describe("pictureTurn", () => {
   it("leaves vertical and already wide pictures", () => {
     expect(pictureTurn(false, false, "left", "user")).toBe(0);
     expect(pictureTurn(true, true, "right", "environment")).toBe(0);
+  });
+});
+
+describe("displayPose without motion permission", () => {
+  it("uses the browser orientation without asking for motion sensors", () => {
+    expect(displayPose(0, 390, 844)).toBe("portrait");
+    expect(displayPose(90, 390, 844)).toBe("right");
+    expect(displayPose(-90, 390, 844)).toBe("left");
+    expect(displayPose(270, 390, 844)).toBe("left");
+    expect(displayPose(null, 844, 390)).toBe("right");
+    expect(displayPose(null, 390, 844)).toBe("portrait");
   });
 });

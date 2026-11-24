@@ -143,3 +143,17 @@ export function poseOf(x: number, y: number, sign: number): Pose | null {
   if (Math.abs(x) > 6 && Math.abs(x) > Math.abs(y) * 1.5) return x * sign > 0 ? "left" : "right";
   return null;
 }
+
+/**
+ * Approximate phone orientation using public display state, without asking
+ * for sensitive accelerometer access. Some iOS standalone PWAs lock the
+ * viewport to portrait; in that case this can only report portrait and
+ * users must explicitly choose "Ativar giro" for sensor-based rotation.
+ */
+export function displayPose(angle: number | null, width: number, height: number): Pose {
+  const degrees = typeof angle === "number" && Number.isFinite(angle) ? ((angle % 360) + 360) % 360 : null;
+  if (degrees === 90) return "right";
+  if (degrees === 270) return "left";
+  if (width > height * 1.1) return "right";
+  return "portrait";
+}

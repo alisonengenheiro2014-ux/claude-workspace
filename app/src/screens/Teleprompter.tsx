@@ -26,6 +26,7 @@ import {
   frameOf,
   pictureTurn,
   poseOf,
+  displayPose,
   type Pose,
   type PrompterSettings,
   type Script,
@@ -135,7 +136,9 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
                       setSegments([]);
                       scroll.current = 0;
                     }
-                    void askMotion(); // a full tap: the only moment the iPhone lets the sensor be asked
+                    // iOS asks for motion/orientation on every fresh PWA
+                    // launch. Only request it from the explicit "Ativar giro"
+                    // button, never simply because the user opened a script.
                     setScript(s);
                     setStep("camera");
                   }}
@@ -189,7 +192,8 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
             icon={<Camera aria-hidden className="size-4" />}
             disabled={!script.text.trim()}
             onClick={() => {
-              void askMotion();
+              // Camera/microphone consent is handled by getUserMedia. Motion
+              // consent is optional and has its own deliberate button.
               persist({ ...script, updatedAt: Date.now() });
               setStep("camera");
             }}
@@ -413,8 +417,28 @@ function askMotion() {
 }
 function usePose() {
   const [pose, setPose] = useState<Pose | null>(null);
+  const [displayOrientation, setDisplayOrientation] = useState<Pose | null>(null);
   const [heard, setHeard] = useState(false); // the sensor answers
   const [retry, setRetry] = useState(0);
+  // Prefer browser/screen orientation, which needs no motion-sensor consent.
+  // In an installed portrait-locked PWA this may remain portrait; the user
+  // can explicitly tap "Ativar giro" to enable gravity-based rotation.
+  useEffect(() => {
+    const update = () => {
+      const angle = window.screen.orientation?.angle ??
+        (window as Window & { orientation?: number }).orientation ?? null;
+      setDisplayOrientation(displayPose(angle, window.innerWidth, window.innerHeight));
+    };
+    update();
+    window.addEventListener("resize", update);
+    window.addEventListener("orientationchange", update);
+    window.screen.orientation?.addEventListener?.("change", update);
+    return () => {
+      window.removeEventListener("resize", update);
+      window.removeEventListener("orientationchange", update);
+      window.screen.orientation?.removeEventListener?.("change", update);
+    };
+  }, []);
   useEffect(() => {
     let sign = readSign();
     const ios = /iPhone|iPad/.test(navigator.userAgent);
@@ -442,7 +466,7 @@ function usePose() {
   }, [retry]);
   // "Ativar giro automático", when the sensor was not allowed yet
   const enable = () => void askMotion().then(() => setRetry((r) => r + 1));
-  return { pose, heard, enable };
+  return { pose: pose ?? displayOrientation, heard, enable };
 }
 
 function CameraPrompter({
