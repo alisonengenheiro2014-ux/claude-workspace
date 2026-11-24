@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronDown, ChevronLeft, ChevronUp, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
@@ -768,28 +768,7 @@ function CameraPrompter({
   const drag = useRef<{ y: number; s: number; moved: boolean; v: number; at: number; last: number } | null>(null);
   const glide = useRef(0);
   const manualUntil = useRef(0);
-  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
-  const stopHold = () => {
-    if (holdTimer.current !== null) clearTimeout(holdTimer.current);
-    if (holdInterval.current !== null) clearInterval(holdInterval.current);
-    holdTimer.current = null;
-    holdInterval.current = null;
-  };
-  const nudge = (direction: -1 | 1) => {
-    cancelAnimationFrame(glide.current);
-    manualUntil.current = performance.now() + 1800;
-    scroll.current = clampScroll(scroll.current + direction * Math.max(75, settings.fontSize * 4));
-    place();
-  };
-  const startHold = (direction: -1 | 1) => {
-    stopHold();
-    holdTimer.current = setTimeout(() => {
-      nudge(direction);
-      holdInterval.current = setInterval(() => nudge(direction), 130);
-    }, 400);
-  };
   function down(e: PointerEvent) {
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -835,10 +814,7 @@ function CameraPrompter({
     };
     glide.current = requestAnimationFrame(step);
   }
-  useEffect(() => () => {
-    cancelAnimationFrame(glide.current);
-    stopHold();
-  }, []);
+  useEffect(() => () => cancelAnimationFrame(glide.current), []);
 
   const front = shown === "user";
   // Horizontal: the controls, the text and the frame turn to face whoever
@@ -911,34 +887,6 @@ function CameraPrompter({
           {script.text}
         </div>
         {recording && paused && <span className="absolute bottom-2 right-3 rounded-pill bg-[rgba(0,0,0,.6)] px-2 py-0.5 text-xs">Pausado · toque para seguir</span>}
-      </div>
-
-      {/* Manual scroll works before recording, while recording, paused and
-          between takes. Taps step one paragraph; holding scrolls continuously. */}
-      <div
-        role="group"
-        aria-label="Rolar texto manualmente"
-        className="absolute z-20 flex gap-2"
-        style={horizontal
-          ? { bottom: "28%", left: "50%", transform: "translateX(-50%)" }
-          : { top: `calc(${boxH} + 16px)`, left: 12 }}
-      >
-        {([[-1, ChevronUp, "Voltar no texto"], [1, ChevronDown, "Avançar no texto"]] as const).map(([dir, Icon, label]) => (
-          <button
-            key={dir}
-            type="button"
-            aria-label={label}
-            title={label}
-            onClick={() => nudge(dir)}
-            onPointerDown={() => startHold(dir)}
-            onPointerUp={stopHold}
-            onPointerCancel={stopHold}
-            onPointerLeave={stopHold}
-            className="flex size-12 touch-manipulation items-center justify-center rounded-full border border-[rgba(255,255,255,.45)] bg-[rgba(0,0,0,.75)] text-[#fff]"
-          >
-            <Icon aria-hidden className="size-6" />
-          </button>
-        ))}
       </div>
 
       {/* top-right tools */}
