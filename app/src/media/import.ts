@@ -44,9 +44,70 @@ export function isPending(assetId: Id) {
 export async function assetFile(asset: AssetRow): Promise<File | null> {
   const inMemory = pending.get(asset.id);
   if (inMemory) return inMemory;
-  if (asset.status !== "ready" && !copied.has(asset.id)) return null;
+  // An iPhone can reload the PWA after the OPFS worker finished writing but
+  // before Dexie was marked "ready". Do not mislabel a complete recording as
+  // missing solely because its import status is stale.
   const stored = await readFile(asset.opfsPath);
-  return stored && withType(stored, asset);
+  if (!stored || stored.size !== asset.sizeBytes) return null;
+  if (asset.status !== "ready" && !copied.has(asset.id)) {
+    const now = Date.now();
+    await db.assets.update(asset.id, { status: "ready", error: null, updatedAt: now });
+    copied.add(asset.id);
+  }
+  return withType(stored, asset);
+}
+
+// Inspect any bytes left in OPFS even if the copy was interrupted. Never
+// delete this remainder: the user may be able to save a fragment to Files.
+export async function remainingAssetFile(asset: AssetRow): Promise<File | null> {
+  const inMemory = pending.get(asset.id);
+  if (inMemory) return inMemory;
+  const file = await readFile(asset.opfsPath);
+  return file?.size ? withType(file, asset) : null;
+}
+
+// Keep the teleprompter's File in memory on the review screen until the
+// background copy has fully reached OPFS. Entering the editor sooner risks
+// losing an eight-minute recording if Safari suspends or reloads the PWA.
+export async function waitForAssetsDurable(assetIds: Id[], onProgress?: (fraction: number) => void) {
+  const ids = [...new Set(assetIds)];
+  if (ids.length === 0) return;
+  const start = Date.now();
+  const limitMs = 5 * 60_000;
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+    const end = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      off();
+      clearTimeout(timer);
+      if (error) reject(error);
+      else resolve();
+    };
+    const onEvent = (e: ImportEvent) => {
+      const id = e.type === "ready" ? e.asset.id : e.assetId;
+      if (!ids.includes(id)) return;
+      if (e.type === "progress") onProgress?.(e.fraction);
+      else if (e.type === "error") end(new Error(e.reason));
+      else if (e.type === "ready") void check();
+    };
+    const off = onImportEvent(onEvent);
+    let timer: ReturnType<typeof setTimeout>;
+    const check = async () => {
+      if (settled) return;
+      try {
+        const rows = await db.assets.bulkGet(ids);
+        const bad = rows.find((row) => !row || row.status === "error" || row.status === "missing");
+        if (bad) return end(new Error(bad?.error || "Não foi possível guardar a gravação no iPhone."));
+        if (rows.every((row) => row?.status === "ready")) return end();
+        if (Date.now() - start > limitMs) return end(new Error("O iPhone demorou demais para guardar a gravação. Salve o arquivo original antes de sair."));
+      } catch (err) {
+        return end(err instanceof Error ? err : new Error(String(err)));
+      }
+      if (!settled) timer = setTimeout(() => void check(), 750);
+    };
+    void check();
+  });
 }
 
 const MIME_BY_EXT: Record<string, string> = {
@@ -205,26 +266,34 @@ function reasonOf(err: unknown) {
 const queue: { asset: AssetRow; file: File }[] = [];
 let running = false;
 
-// Thumbnails and the copy run side by side: one decodes, the other writes.
+// The original recording must be copied to durable OPFS storage BEFORE
+// decoding preview thumbnails. Doing both simultaneously on iPhone caused
+// memory pressure; a thumbnail error could also mark a good recording as
+// failed. Thumbnails are disposable; the user's source video is not.
 async function work(asset: AssetRow, file: File) {
   const copy = writeFile(asset.opfsPath, file, (fraction) => emit({ type: "progress", assetId: asset.id, fraction }));
-  copy.catch(() => {}); // awaited below; avoid an unhandled rejection meanwhile
-  if (asset.kind === "audio") return finishCopy(asset, file, copy);
-  const thumbs =
-    asset.kind === "video"
-      ? await videoThumbs(file, (t) => emit({ type: "thumbs", assetId: asset.id, ...t }))
-      : await imageThumbs(file);
-  await db.derivatives.add({
-    id: crypto.randomUUID(),
-    assetId: asset.id,
-    kind: "thumbs",
-    opfsPath: null,
-    data: thumbs.times,
-    blobs: thumbs.blobs,
-    createdAt: Date.now(),
-  });
-  emit({ type: "thumbs", assetId: asset.id, ...thumbs });
-  return finishCopy(asset, file, copy);
+  await finishCopy(asset, file, copy);
+  if (asset.kind === "audio") return;
+  try {
+    const thumbs =
+      asset.kind === "video"
+        ? await videoThumbs(file, (t) => emit({ type: "thumbs", assetId: asset.id, ...t }))
+        : await imageThumbs(file);
+    await db.derivatives.add({
+      id: crypto.randomUUID(),
+      assetId: asset.id,
+      kind: "thumbs",
+      opfsPath: null,
+      data: thumbs.times,
+      blobs: thumbs.blobs,
+      createdAt: Date.now(),
+    });
+    emit({ type: "thumbs", assetId: asset.id, ...thumbs });
+  } catch (err) {
+    // Thumbnails can be regenerated; never mark a stored video as missing
+    // because creating its preview images failed.
+    console.warn("Falha ao gerar miniaturas; o vídeo original foi preservado.", err);
+  }
 }
 
 async function finishCopy(asset: AssetRow, file: File, copy: Promise<void>) {
@@ -253,7 +322,8 @@ async function drain() {
     } catch (err) {
       const reason = reasonOf(err);
       await db.assets.update(asset.id, { status: "error", error: reason, updatedAt: Date.now() }).catch(() => {});
-      await removeFile(asset.opfsPath);
+      // NEVER delete the OPFS path after a failed copy. The partial bytes
+      // might be the only remaining copy if iOS closes the PWA unexpectedly.
       // keep the File in memory: this session can still edit and export it
       emit({ type: "error", assetId: asset.id, name: asset.name, reason });
     }

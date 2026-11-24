@@ -32,7 +32,7 @@ export const DEFAULT_SETTINGS: PrompterSettings = {
   color: "#ffffff",
   mirror: false,
   countdown: 3,
-  quality: 2160, // the camera's best (4K on an iPhone Pro, front and back)
+  quality: 1080, // safer default for long iPhone recordings; 4K remains optional
   fps: 30,
   format: "auto",
   side: "left",

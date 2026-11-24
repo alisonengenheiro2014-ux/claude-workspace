@@ -3,9 +3,10 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronDown, ChevronLeft, ChevronUp, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
 import { runImport } from "../app/importFlow";
+import { waitForAssetsDurable } from "../media/import";
 import { navigate } from "../app/router";
 import { shareFile } from "../data/backup";
 import { createProject, loadProject, removeProject, saveDoc } from "../data/projects";
@@ -218,8 +219,8 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
         takes={segments.map((g) => g.file)}
         toProject={!!projectId}
         onBack={() => setStep("camera")}
-        onUse={async () => {
-          const id = await takesToProject(segments.map((g) => g.file), projectId, toast);
+        onUse={async (onProgress) => {
+          const id = await takesToProject(segments.map((g) => g.file), projectId, toast, onProgress);
           if (id) navigate(`/p/${id}`);
         }}
       />
@@ -263,15 +264,27 @@ interface Segment {
 
 // The takes go into a project, in order, one clip each: appended to the
 // project the teleprompter came from, or a new one.
-async function takesToProject(files: File[], projectId: string | undefined, toast: ReturnType<typeof useToast>) {
+async function takesToProject(
+  files: File[],
+  projectId: string | undefined,
+  toast: ReturnType<typeof useToast>,
+  onProgress: (fraction: number) => void,
+) {
   const id = projectId ?? (await createProject()).id;
   const assets = await runImport(id, files, () => {}, toast);
   if (!assets.length) {
     if (!projectId) await removeProject(id);
-    return null;
+    throw new Error("Não consegui importar a gravação. Use Salvar no iPhone antes de sair do teleprompter.");
   }
+  if (assets.length !== files.length) {
+    throw new Error("Um dos trechos não foi importado. Salve os vídeos no iPhone antes de continuar.");
+  }
+  // Never navigate to the editor until all original recordings are durable.
+  // A reload during the background import previously lost long recordings.
+  await waitForAssetsDurable(assets.map((a) => a.id), onProgress);
   const loaded = await loadProject(id);
-  if (loaded) await saveDoc(id, insertMedia(loaded.doc, assets, durationOf(loaded.doc)).doc);
+  if (!loaded) throw new Error("Não consegui reabrir o projeto depois de salvar os vídeos.");
+  await saveDoc(id, insertMedia(loaded.doc, assets, durationOf(loaded.doc)).doc);
   return id;
 }
 
@@ -285,11 +298,13 @@ function Review({
   takes: File[];
   toProject: boolean;
   onBack: () => void;
-  onUse: () => Promise<void>;
+  onUse: (onProgress: (fraction: number) => void) => Promise<void>;
 }) {
   const [urls] = useState(() => takes.map((f) => URL.createObjectURL(f)));
   const [i, setI] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [copyProgress, setCopyProgress] = useState(0);
+  const [copyError, setCopyError] = useState<string | null>(null);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-[#000]">
@@ -310,7 +325,18 @@ function Review({
         className="min-h-0 flex-1 bg-[#000] object-contain"
         aria-label="Vídeo gravado"
       />
-      <div className="flex gap-2 bg-bg p-3">
+      <div className="flex flex-col gap-2 bg-bg p-3">
+        {busy && (
+          <p role="status" className="text-center text-sm text-[#fff]">
+            Guardando a gravação no iPhone… {Math.round(copyProgress * 100)}%
+          </p>
+        )}
+        {copyError && (
+          <p role="alert" className="rounded-md border border-[#ffb3ad] p-2 text-sm text-[#ffb3ad]">
+            {copyError} Não feche o teleprompter: use “Salvar no iPhone” para preservar o vídeo original.
+          </p>
+        )}
+        <div className="flex gap-2">
         <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>
           Voltar a gravar
         </Button>
@@ -322,12 +348,20 @@ function Review({
           className="flex-1"
           loading={busy}
           onClick={() => {
+            setCopyError(null);
+            setCopyProgress(0);
             setBusy(true);
-            void onUse().finally(() => setBusy(false));
+            void onUse(setCopyProgress)
+              .catch((err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)))
+              .finally(() => setBusy(false));
           }}
         >
           {toProject ? "Usar no projeto" : "Editar vídeo"}
         </Button>
+        </div>
+        <p className="text-xs text-[rgba(255,255,255,.6)]">
+          Para vídeos longos, salve também uma cópia em Arquivos. A edição só abre depois que o original estiver completamente guardado neste aparelho.
+        </p>
       </div>
     </main>
   );
@@ -633,6 +667,7 @@ function CameraPrompter({
       raf = requestAnimationFrame(tick);
       const dt = (now - last) / 1000;
       last = now;
+      if (drag.current || now < manualUntil.current) return;
       const h = textEl.current?.scrollHeight ?? 0;
       const v = pxPerSecond(h, script.text, settings.speed);
       scroll.current = Math.min(h, scroll.current + v * dt);
@@ -732,7 +767,29 @@ function CameraPrompter({
   // slows down like a phone's own scrolling, so any part is quickly reached.
   const drag = useRef<{ y: number; s: number; moved: boolean; v: number; at: number; last: number } | null>(null);
   const glide = useRef(0);
+  const manualUntil = useRef(0);
+  const holdTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
+  const stopHold = () => {
+    if (holdTimer.current !== null) clearTimeout(holdTimer.current);
+    if (holdInterval.current !== null) clearInterval(holdInterval.current);
+    holdTimer.current = null;
+    holdInterval.current = null;
+  };
+  const nudge = (direction: -1 | 1) => {
+    cancelAnimationFrame(glide.current);
+    manualUntil.current = performance.now() + 1800;
+    scroll.current = clampScroll(scroll.current + direction * Math.max(75, settings.fontSize * 4));
+    place();
+  };
+  const startHold = (direction: -1 | 1) => {
+    stopHold();
+    holdTimer.current = setTimeout(() => {
+      nudge(direction);
+      holdInterval.current = setInterval(() => nudge(direction), 130);
+    }, 400);
+  };
   function down(e: PointerEvent) {
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -740,6 +797,7 @@ function CameraPrompter({
       // a pointer already gone: the drag still follows it over the box
     }
     cancelAnimationFrame(glide.current);
+    manualUntil.current = performance.now() + 1800;
     const y = along(e);
     drag.current = { y, s: scroll.current, moved: false, v: 0, at: performance.now(), last: y };
   }
@@ -755,6 +813,7 @@ function CameraPrompter({
     if (dt > 0) d.v = 0.7 * ((d.last - y) / dt) + 0.3 * d.v; // px per ms, smoothed
     d.at = now;
     d.last = y;
+    manualUntil.current = performance.now() + 1800;
     scroll.current = clampScroll(d.s - dy);
     place();
   }
@@ -768,6 +827,7 @@ function CameraPrompter({
     const step = (now: number) => {
       const dt = Math.min(32, now - t);
       t = now;
+      manualUntil.current = performance.now() + 1800;
       scroll.current = clampScroll(scroll.current + v * dt);
       place();
       v *= Math.pow(0.997, dt); // friction, about like iOS scrolling
@@ -775,7 +835,10 @@ function CameraPrompter({
     };
     glide.current = requestAnimationFrame(step);
   }
-  useEffect(() => () => cancelAnimationFrame(glide.current), []);
+  useEffect(() => () => {
+    cancelAnimationFrame(glide.current);
+    stopHold();
+  }, []);
 
   const front = shown === "user";
   // Horizontal: the controls, the text and the frame turn to face whoever
@@ -848,6 +911,34 @@ function CameraPrompter({
           {script.text}
         </div>
         {recording && paused && <span className="absolute bottom-2 right-3 rounded-pill bg-[rgba(0,0,0,.6)] px-2 py-0.5 text-xs">Pausado · toque para seguir</span>}
+      </div>
+
+      {/* Manual scroll works before recording, while recording, paused and
+          between takes. Taps step one paragraph; holding scrolls continuously. */}
+      <div
+        role="group"
+        aria-label="Rolar texto manualmente"
+        className="absolute z-20 flex gap-2"
+        style={horizontal
+          ? { bottom: "28%", left: "50%", transform: "translateX(-50%)" }
+          : { top: `calc(${boxH} + 16px)`, left: 12 }}
+      >
+        {([[-1, ChevronUp, "Voltar no texto"], [1, ChevronDown, "Avançar no texto"]] as const).map(([dir, Icon, label]) => (
+          <button
+            key={dir}
+            type="button"
+            aria-label={label}
+            title={label}
+            onClick={() => nudge(dir)}
+            onPointerDown={() => startHold(dir)}
+            onPointerUp={stopHold}
+            onPointerCancel={stopHold}
+            onPointerLeave={stopHold}
+            className="flex size-12 touch-manipulation items-center justify-center rounded-full border border-[rgba(255,255,255,.45)] bg-[rgba(0,0,0,.75)] text-[#fff]"
+          >
+            <Icon aria-hidden className="size-6" />
+          </button>
+        ))}
       </div>
 
       {/* top-right tools */}
@@ -967,6 +1058,11 @@ function CameraPrompter({
       <Sheet open={settingsOpen} onOpenChange={setSettingsOpen} title="Teleprompter">
         <div className="flex flex-col gap-4">
           <Slider label="Velocidade" value={settings.speed} min={1} max={10} defaultValue={5} format={(v) => `${v} · ${wpmOf(v)} palavras/min`} onChange={(speed) => setSettings({ speed })} />
+          {settings.quality === 2160 && (
+            <p className="rounded-md border border-[#fbbf24]/50 p-2 text-xs text-[#fcd34d]">
+              Para gravações longas, prefira 1080p e 30 fps. O formato 4K ocupa muito mais armazenamento no iPhone e aumenta o risco de interrupção.
+            </p>
+          )}
           <Slider label="Tamanho do texto" value={settings.fontSize} min={18} max={64} defaultValue={30} onChange={(fontSize) => setSettings({ fontSize })} />
           <Slider label="Altura da caixa" value={Math.round(settings.boxHeight * 100)} min={25} max={70} defaultValue={38} format={(v) => `${v}%`} onChange={(v) => setSettings({ boxHeight: v / 100 })} />
           <Slider label="Fundo do texto" value={Math.round(settings.boxOpacity * 100)} min={20} max={95} defaultValue={55} format={(v) => `${v}%`} onChange={(v) => setSettings({ boxOpacity: v / 100 })} />

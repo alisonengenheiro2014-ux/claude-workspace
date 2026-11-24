@@ -3,7 +3,7 @@ import { Download, Share } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useEditor } from "../editor/store";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
-import { assetFile, isPending } from "../media/import";
+import { assetFile, isPending, remainingAssetFile } from "../media/import";
 import { shareFile } from "../data/backup";
 import { estimateBytes, ExportCancelled, exportTimeline, type ExportOptions } from "../export/exporter";
 import { Button } from "../ui/Button";
@@ -109,23 +109,43 @@ export function ExportSheet({
   const firstVideo = doc ? mainClips(doc).find((c) => assets.get(c.assetId)?.kind === "video") : undefined;
   const originalAsset = firstVideo ? assets.get(firstVideo.assetId) : undefined;
   const [originalFile, setOriginalFile] = useState<File | null>(null);
+  const [partialFile, setPartialFile] = useState<File | null>(null);
   const [originalLoading, setOriginalLoading] = useState(false);
+  const [recoverAttempt, setRecoverAttempt] = useState(0);
   useEffect(() => {
     if (!open || !originalAsset) {
       setOriginalFile(null);
+      setPartialFile(null);
       setOriginalLoading(false);
       return;
     }
     let alive = true;
     setOriginalFile(null);
+    setPartialFile(null);
     setOriginalLoading(true);
-    void assetFile(originalAsset).then(
-      (file) => { if (alive) { setOriginalFile(file); setOriginalLoading(false); } },
-      () => { if (alive) { setOriginalFile(null); setOriginalLoading(false); } },
-    );
+    void (async () => {
+      // assetFile also repairs an interrupted "importing" status when the
+      // complete bytes actually exist on disk.
+      const file = await assetFile(originalAsset);
+      const remainder = file ? null : await remainingAssetFile(originalAsset);
+      if (!alive) return;
+      setOriginalFile(file);
+      setPartialFile(remainder);
+      setOriginalLoading(false);
+    })().catch(() => { if (alive) setOriginalLoading(false); });
     return () => { alive = false; };
-  }, [open, originalAsset]);
+  }, [open, originalAsset, recoverAttempt]);
 
+  const savePartial = () => {
+    if (!partialFile || !originalAsset) return;
+    // A partial MP4 is NOT guaranteed to play; share whatever survived so
+    // an external repair tool can inspect it without modifying OPFS.
+    const name = originalAsset.name.replace(/\.[^.]+$/, "") + "-fragmento.mp4";
+    const salvage = new File([partialFile], name, { type: partialFile.type || "video/mp4" });
+    void shareFile(salvage).catch((error: unknown) => {
+      toast(`Não foi possível salvar o fragmento: ${error instanceof Error ? error.message : String(error)}`, "error");
+    });
+  };
   const saveOriginal = () => {
     if (!originalFile) return;
     // This bypasses the audio mix/video re-encode and preserves the exact
@@ -272,9 +292,27 @@ export function ExportSheet({
                 mesmo se a exportação travar. Não inclui cortes, textos ou efeitos.
               </p>
               {!originalLoading && !originalFile && (
-                <p role="alert" className="text-xs text-danger">
-                  Não encontrei a gravação original neste aparelho. Não apague o projeto; procure o arquivo que foi salvo em Arquivos ou Fotos.
-                </p>
+                <div className="flex flex-col gap-2">
+                  {partialFile && (
+                    <>
+                      <p className="text-xs text-text-muted">
+                        Encontrei {formatBytes(partialFile.size)} do arquivo de {formatBytes(originalAsset.sizeBytes)}.
+                        O fragmento pode não abrir, mas é melhor preservá-lo antes de tentar reparos.
+                      </p>
+                      <Button variant="secondary" icon={<Download aria-hidden className="size-5" />} onClick={savePartial}>
+                        Salvar fragmento encontrado
+                      </Button>
+                    </>
+                  )}
+                  {!partialFile && (
+                    <p role="alert" className="text-xs text-danger">
+                      O arquivo original não está no armazenamento deste PWA; só restaram os dados do projeto e as miniaturas. Se você já salvou o vídeo no app Arquivos, selecione-o para substituir a mídia.
+                    </p>
+                  )}
+                  <Button variant="ghost" onClick={() => setRecoverAttempt((n) => n + 1)}>
+                    Verificar armazenamento novamente
+                  </Button>
+                </div>
               )}
             </div>
           )}
@@ -318,9 +356,16 @@ export function ExportSheet({
           <Button variant="ghost" onClick={() => setPhase({ name: "settings" })}>
             Mudar configurações
           </Button>
-          {originalFile && (
-            <Button variant="secondary" icon={<Download aria-hidden className="size-5" />} onClick={saveOriginal}>
-              Salvar gravação original
+          {originalAsset && (
+            <Button
+              variant="secondary"
+              icon={<Download aria-hidden className="size-5" />}
+              onClick={() => {
+                setRecoverAttempt((n) => n + 1);
+                setPhase({ name: "settings" });
+              }}
+            >
+              Recuperar / salvar gravação original
             </Button>
           )}
         </div>

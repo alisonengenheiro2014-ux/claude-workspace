@@ -34,8 +34,15 @@ self.onmessage = async (e: MessageEvent<WriteRequest>) => {
       for (;;) {
         const { done, value } = await reader.read();
         if (done) break;
-        access.write(value, { at });
-        at += value.byteLength;
+        // A write may be shorter than the requested chunk; skipping the
+        // remainder produces a corrupt recording that later looks missing.
+        let consumed = 0;
+        while (consumed < value.byteLength) {
+          const written = access.write(value.subarray(consumed), { at: at + consumed });
+          if (written <= 0) throw new Error("O armazenamento não conseguiu gravar todos os bytes.");
+          consumed += written;
+        }
+        at += consumed;
         if (at - lastReport > 2 * 1024 * 1024) {
           lastReport = at;
           self.postMessage({ id, progress: at / file.size });
