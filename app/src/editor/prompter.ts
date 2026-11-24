@@ -16,7 +16,7 @@ export interface PrompterSettings {
   color: string;
   mirror: boolean; // text mirrored, for a teleprompter glass
   countdown: 0 | 3 | 5; // seconds before recording starts
-  quality: 720 | 1080 | 2160; // asked of the camera; it gives the closest it really has
+  quality: 720 | 1080 | 1440 | 2160; // asked of the camera; it gives the closest it really has
   fps: 30 | 60;
   // auto: the way the phone is held (upright: vertical; on its side: horizontal)
   format: "auto" | "vertical" | "horizontal";
@@ -69,6 +69,8 @@ export function loadSettings(): PrompterSettings {
   const { orientation: _o, turns: _t, ...saved } = read<Partial<PrompterSettings> & { orientation?: unknown; turns?: unknown }>(SETTINGS, {});
   const s = { ...DEFAULT_SETTINGS, ...saved };
   if (!["auto", "vertical", "horizontal"].includes(s.format)) s.format = "auto";
+  if (![720, 1080, 1440, 2160].includes(s.quality)) s.quality = 1080;
+  if (s.quality === 2160 && s.fps === 60) s.fps = 30;
   return s;
 }
 export const saveSettings = (s: PrompterSettings) => write(SETTINGS, s);
@@ -105,7 +107,7 @@ export function recorderType() {
 }
 
 export function videoBitrate(quality: PrompterSettings["quality"]) {
-  return quality === 2160 ? 35_000_000 : quality === 1080 ? 12_000_000 : 6_000_000;
+  return quality === 2160 ? 35_000_000 : quality === 1440 ? 20_000_000 : quality === 1080 ? 12_000_000 : 6_000_000;
 }
 
 // The app stays upright, so with the phone on its side the controls turn

@@ -4,7 +4,7 @@
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
 import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
 import { navigate } from "../app/router";
@@ -39,6 +39,7 @@ import { Sheet } from "../ui/Sheet";
 import { Slider } from "../ui/Slider";
 import { useToast } from "../ui/Toast";
 import { formatTime } from "../ui/Transport";
+import { actualVideoLabel, boundZoom, digitalZoomFactor, nativeZoomRange, targetVideoSize, pinchZoomLevel, type CameraZoomRange } from "../editor/cameraCapture";
 
 type Step = "scripts" | "edit" | "camera" | "review";
 const REC = "#ff3b30"; // the record button's red, on camera (raw: no theme token fits)
@@ -46,9 +47,7 @@ const COLORS = ["#ffffff", "#ffd400", "#00e5ff", "#7CFF6B", "#ff8a3d"];
 
 // "4K · 3840×2160 · 30 fps": the frame being recorded, the camera's own pixels
 function qualityLabel(size: { w: number; h: number }, fps: number) {
-  const long = Math.max(size.w, size.h);
-  const name = long >= 3800 ? "4K" : long >= 1900 ? "1080p" : long >= 1260 ? "720p" : `${Math.min(size.w, size.h)}p`;
-  return `${name} · ${size.w}×${size.h} · ${Math.round(fps)} fps`;
+  return `${actualVideoLabel(size.w, size.h)} · ${size.w}×${size.h} · ${Math.round(fps)} fps`;
 }
 
 const mmss = (s: number) => `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, "0")}`;
@@ -307,6 +306,7 @@ function Review({
   const [urls] = useState(() => takes.map((f) => URL.createObjectURL(f)));
   const [i, setI] = useState(0);
   const [busy, setBusy] = useState(false);
+  const [recordedInfo, setRecordedInfo] = useState("");
   const [copyProgress, setCopyProgress] = useState(0);
   const [copyError, setCopyError] = useState<string | null>(null);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
@@ -325,11 +325,19 @@ function Review({
         controls
         playsInline
         autoPlay
+        onLoadedMetadata={(e) => {
+          const v = e.currentTarget;
+          setRecordedInfo(v.videoWidth && v.videoHeight
+            ? `Arquivo gravado: ${actualVideoLabel(v.videoWidth, v.videoHeight)} (${v.videoWidth}×${v.videoHeight}) · ${Math.round(takes[i].size / (1024 * 1024))} MB`
+            : "Não consegui ler a resolução do arquivo gravado.");
+        }}
+        onError={() => setRecordedInfo("Falha ao reproduzir a gravação: salve uma cópia no iPhone antes de editar.")}
         onEnded={() => i < urls.length - 1 && setI(i + 1)}
         className="min-h-0 flex-1 bg-[#000] object-contain"
         aria-label="Vídeo gravado"
       />
       <div className="flex flex-col gap-2 bg-bg p-3">
+        {recordedInfo && <p role="status" className="text-center text-xs text-[#fff]">{recordedInfo}</p>}
         {busy && (
           <p role="status" className="text-center text-sm text-[#fff]">
             Guardando a gravação no iPhone… {Math.round(copyProgress * 100)}%
@@ -496,12 +504,29 @@ function CameraPrompter({
   const video = useRef<HTMLVideoElement>(null); // the camera's picture, not shown
   const frame = useRef<HTMLCanvasElement>(null); // the frame being recorded, shown as the preview
   const box = useRef<HTMLDivElement>(null);
+  const pinchSurface = useRef<HTMLDivElement>(null);
   const textEl = useRef<HTMLDivElement>(null);
   const [cam, setCam] = useState<NonNullable<typeof shared> | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [caps, setCaps] = useState<{ zoom?: { min: number; max: number }; torch?: boolean }>({});
+  const [caps, setCaps] = useState<{ zoom?: CameraZoomRange; torch?: boolean }>({});
   const [zoom, setZoom] = useState(1);
+  const [cameraId, setCameraId] = useState("");
+  const [availableCameras, setAvailableCameras] = useState<MediaDeviceInfo[]>([]);
   const [torch, setTorch] = useState(false);
+  // Only cameras actually exposed by the browser can be selected. The
+  // iPhone's rear lenses are not always individually available to a PWA.
+  const rearCameras = availableCameras.filter((device) =>
+    /back|rear|traseir|wide|telephoto|ultra|principal/i.test(device.label) &&
+    !/front|frontal|selfie|user/i.test(device.label),
+  );
+  const canChooseRearLens = settings.facing === "environment" && rearCameras.length > 1;
+  const nativeRange = useRef<CameraZoomRange | null>(null);
+  const zoomTarget = useRef(1);
+  const zoomAppliedNative = useRef(1);
+  const zoomTrack = useRef<MediaStreamTrack | null>(null);
+  const zoomBusy = useRef(false);
+  const pinch = useRef<{ distance: number; startZoom: number } | null>(null);
+  const lastPinchAt = useRef(0);
   const [count, setCount] = useState<number | null>(null);
   const [recording, setRecording] = useState(false);
   const [paused, setPaused] = useState(false);
@@ -539,18 +564,22 @@ function CameraPrompter({
   // the camera, again whenever the side, the quality or the frame rate changes
   useEffect(() => {
     let alive = true;
-    const long = settings.quality === 2160 ? 3840 : settings.quality === 1080 ? 1920 : 1280;
-    const short = settings.quality;
+    const { width: long, height: short } = targetVideoSize(settings.quality);
     if (!navigator.mediaDevices) {
       setError("Este navegador não dá acesso à câmera.");
       return;
     }
-    // the best the phone's camera has up to the chosen size: nothing upscaled
-    void openCamera(`${settings.facing}-${settings.quality}-${settings.fps}`, {
-      facingMode: settings.facing,
+    // Never label an old frame as the new requested resolution.
+    if (!locked) {
+      setSrc(null);
+      setSize(null);
+    }
+    // The best the browser can provide; the canvas never upscales it.
+    void openCamera(`${settings.facing}-${cameraId || "default"}-${settings.quality}-${settings.fps}`, {
+      ...(cameraId ? { deviceId: { exact: cameraId } } : { facingMode: settings.facing }),
       width: { ideal: long },
       height: { ideal: short },
-      frameRate: { ideal: settings.fps },
+      frameRate: { ideal: settings.quality === 2160 ? 30 : settings.fps },
     })
       .then((got) => {
         if (!alive) return; // the shared camera stays open for the next screen
@@ -558,13 +587,31 @@ function CameraPrompter({
         setError(null);
         const track = got.video.getVideoTracks()[0];
         const c = (track.getCapabilities?.() ?? {}) as MediaTrackCapabilities & { zoom?: { min: number; max: number }; torch?: boolean };
-        setCaps({ zoom: c.zoom && c.zoom.max > c.zoom.min ? { min: c.zoom.min, max: Math.min(c.zoom.max, 10) } : undefined, torch: !!c.torch });
-        setZoom(1);
+        const range = nativeZoomRange(c);
+        nativeRange.current = range;
+        zoomTrack.current = track;
+        zoomBusy.current = false;
+        const current = (track.getSettings() as MediaTrackSettings & { zoom?: number }).zoom;
+        const initial = typeof current === "number" && Number.isFinite(current) ? current : 1;
+        zoomAppliedNative.current = initial;
+        zoomTarget.current = initial;
+        setCaps({ zoom: range ?? undefined, torch: !!c.torch });
+        setZoom(initial);
         setTorch(false);
+        // Permission has now been granted: Safari may reveal distinct lenses,
+        // but it sometimes exposes only the aggregate front/back camera.
+        void navigator.mediaDevices.enumerateDevices().then((devices) => {
+          if (alive) setAvailableCameras(devices.filter((item) => item.kind === "videoinput" && !!item.deviceId));
+        }).catch(() => {});
       })
       .catch((e: unknown) => {
         if (!alive) return;
         const name = e instanceof DOMException ? e.name : "";
+        if (cameraId) {
+          setCameraId("");
+          toast("Esta lente não foi liberada pelo Safari. Voltando à câmera padrão.", "error");
+          return;
+        }
         setError(
           name === "NotAllowedError"
             ? "O app não tem permissão para a câmera. No iPhone: Ajustes › Apps › Safari › Câmera e Microfone › Permitir."
@@ -574,7 +621,7 @@ function CameraPrompter({
     return () => {
       alive = false;
     };
-  }, [settings.facing, settings.quality, settings.fps]);
+  }, [settings.facing, settings.quality, settings.fps, cameraId]);
 
   // the picture's shape, as the phone hands it (it can change with the camera)
   useEffect(() => {
@@ -583,7 +630,10 @@ function CameraPrompter({
     v.srcObject = cam.video;
     void v.play().catch(() => {});
     const on = () => v.videoWidth && setSrc({ w: v.videoWidth, h: v.videoHeight });
-    const facing: PrompterSettings["facing"] = cam.key.startsWith("user") ? "user" : "environment";
+    const reportedFacing = cam.video.getVideoTracks()[0]?.getSettings().facingMode;
+    const facing: PrompterSettings["facing"] =
+      reportedFacing === "user" || reportedFacing === "environment"
+        ? reportedFacing : cam.key.startsWith("user") ? "user" : "environment";
     const ready = () => {
       shownRef.current = facing; // the drawing loop turns this camera's picture from now on
       setShown(facing);
@@ -646,7 +696,12 @@ function CameraPrompter({
       const sw = v.videoWidth;
       const sh = v.videoHeight;
       const across = t % 180 !== 0;
-      const k = Math.max(sz.w / (across ? sh : sw), sz.h / (across ? sw : sh));
+      // Always crop the recording canvas when zooming IN. Some WebKit builds
+      // report a changed native zoom in getSettings(), although the pixels
+      // delivered by the camera are unchanged. Dividing by that reported
+      // value silently cancelled all visible zoom.
+      const crop = digitalZoomFactor(zoomTarget.current, 1);
+      const k = Math.max(sz.w / (across ? sh : sw), sz.h / (across ? sw : sh)) * crop;
       ctx.save();
       ctx.translate(sz.w / 2, sz.h / 2);
       ctx.rotate((t * Math.PI) / 180);
@@ -676,6 +731,202 @@ function CameraPrompter({
     [cam],
   );
 
+  // Zoom may be optical when the browser exposes it, otherwise it is a
+  // canvas crop. Both operate on the SAME canvas that MediaRecorder records.
+  // Browser APIs cannot manufacture an ultra-wide field of view.
+  const syncNativeZoom = () => {
+    const track = zoomTrack.current;
+    const range = nativeRange.current;
+    if (!track || !range || zoomBusy.current) return;
+    zoomBusy.current = true;
+    void (async () => {
+      while (track === zoomTrack.current && range === nativeRange.current && track.readyState === "live") {
+        // Native zoom is used only for a genuine <1x optical wide angle.
+        // For >=1x the canvas performs deterministic zoom on the pixels
+        // actually recorded, regardless of Safari's track zoom reports.
+        const nativeTarget = zoomTarget.current < 1 ? zoomTarget.current : 1;
+        const requested = Math.max(range.min, Math.min(range.max, nativeTarget));
+        if (Math.abs(requested - zoomAppliedNative.current) < 0.08) break;
+        try {
+          await track.applyConstraints({ advanced: [{ zoom: requested } as MediaTrackConstraintSet] });
+          if (track !== zoomTrack.current) break;
+          const observed = (track.getSettings() as MediaTrackSettings & { zoom?: number }).zoom;
+          if (typeof observed !== "number" || !Number.isFinite(observed) ||
+              Math.abs(observed - requested) > 0.25) {
+            // Safari can accept zoom constraints yet ignore them, or omit
+            // the applied zoom entirely. Never assume a hardware change:
+            // digital crop must take over so the recorded image really zooms.
+            zoomAppliedNative.current =
+              typeof observed === "number" && Number.isFinite(observed) ? observed : 1;
+            nativeRange.current = null;
+            setCaps((c) => ({ ...c, zoom: undefined }));
+            break;
+          }
+          zoomAppliedNative.current = observed;
+        } catch {
+          if (track === zoomTrack.current) {
+            nativeRange.current = null;
+            setCaps((c) => ({ ...c, zoom: undefined }));
+          }
+          break;
+        }
+      }
+    })().finally(() => { zoomBusy.current = false; });
+  };
+  const setZoomLevel = (requested: number) => {
+    const value = boundZoom(requested, nativeRange.current);
+    if (Math.abs(value - zoomTarget.current) < 0.05) return;
+    zoomTarget.current = value;
+    setZoom(value);
+    // Restore any previous optical wide-angle setting to its baseline when
+    // returning to >=1x. No native zoom-in calls: camera crop is reliable.
+    if (value < 1 || zoomAppliedNative.current < 0.95) syncNativeZoom();
+  };
+  // iOS Safari sometimes starts native page magnification before a touch
+  // reaches a rotated child. Capture native touch/gesture events on document
+  // while the teleprompter is mounted, NOT just on its rotated surface.
+  // The interception applies only to two-finger interactions in this screen:
+  // single-finger teleprompter scrolling and ordinary controls are untouched.
+  const zoomSetter = useRef(setZoomLevel);
+  zoomSetter.current = setZoomLevel;
+  useEffect(() => {
+    const surface = pinchSurface.current;
+    if (!surface) return;
+    let gestureZoom: number | null = null;
+    let lastTouchMoveAt = 0;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pointerPinch: { distance: number; startZoom: number } | null = null;
+    const pointerDistance = () => {
+      const [a, b] = Array.from(pointers.values());
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+    const pointerStart = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || !isWithinCamera(event.target) || isControl(event.target)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointers.size === 2) {
+        const d = pointerDistance();
+        if (d >= 8) {
+          pointerPinch = { distance: d, startZoom: zoomTarget.current };
+          drag.current = null;
+          cancelAnimationFrame(glide.current);
+          lastPinchAt.current = performance.now();
+        }
+      }
+    };
+    const pointerMove = (event: PointerEvent) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointerPinch && pointers.size >= 2 && performance.now() - lastTouchMoveAt > 120) {
+        // Fallback when Safari suppresses native touchmove/gesturechange.
+        const d = pointerDistance();
+        if (d >= 8) zoomSetter.current(pinchZoomLevel(pointerPinch.startZoom, pointerPinch.distance, d, nativeRange.current));
+        lastPinchAt.current = performance.now();
+      }
+    };
+    const pointerEnd = (event: PointerEvent) => {
+      pointers.delete(event.pointerId);
+      if (pointers.size < 2) {
+        pointerPinch = null;
+        lastPinchAt.current = performance.now();
+      }
+    };
+    const isWithinCamera = (target: EventTarget | null) =>
+      !!target && target instanceof Node && surface.contains(target);
+    const isControl = (target: EventTarget | null) =>
+      target instanceof Element &&
+      !!target.closest("button, select, input, textarea, [role=dialog]");
+    const distance = (touches: TouchList) => {
+      const [a, b] = [touches.item(0), touches.item(1)];
+      return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
+    };
+    const touchStart = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      if (!pinch.current && (!isWithinCamera(event.target) || isControl(event.target))) return;
+      if (event.cancelable) event.preventDefault();
+      const d = distance(event.touches);
+      if (d < 8 || pinch.current) return;
+      pinch.current = { distance: d, startZoom: zoomTarget.current };
+      cancelAnimationFrame(glide.current);
+      drag.current = null;
+      lastPinchAt.current = performance.now();
+    };
+    const touchMove = (event: TouchEvent) => {
+      if (event.touches.length < 2) return;
+      if (!pinch.current && !isWithinCamera(event.target)) return;
+      // Prevent Safari from zooming the entire page instead of the video.
+      if (event.cancelable) event.preventDefault();
+      if (!pinch.current) touchStart(event);
+      if (!pinch.current) return;
+      const d = distance(event.touches);
+      if (d > 8) zoomSetter.current(pinchZoomLevel(pinch.current.startZoom, pinch.current.distance, d, nativeRange.current));
+      lastTouchMoveAt = performance.now();
+      lastPinchAt.current = lastTouchMoveAt;
+    };
+    const touchEnd = (event: TouchEvent) => {
+      if (event.touches.length >= 2) return;
+      pinch.current = null;
+      lastPinchAt.current = performance.now();
+    };
+    // WebKit's separate gesture events may arrive even when touchmove is
+    // suppressed. Listening at document capture prevents viewport zoom.
+    const gestureStart = (event: Event) => {
+      if (event.cancelable) event.preventDefault();
+      gestureZoom = zoomTarget.current;
+      cancelAnimationFrame(glide.current);
+      drag.current = null;
+      lastPinchAt.current = performance.now();
+    };
+    const gestureChange = (event: Event) => {
+      if (event.cancelable) event.preventDefault();
+      const scale = (event as Event & { scale?: number }).scale;
+      if (typeof scale === "number" && scale > 0 && gestureZoom !== null &&
+        performance.now() - lastTouchMoveAt > 120) {
+        zoomSetter.current(boundZoom(gestureZoom * scale, nativeRange.current));
+      }
+      lastPinchAt.current = performance.now();
+    };
+    const gestureEnd = () => {
+      gestureZoom = null;
+      pinch.current = null;
+      lastPinchAt.current = performance.now();
+    };
+    const options: AddEventListenerOptions = { capture: true, passive: false };
+    // WebKit versions can refuse preventDefault on document-level touchmove.
+    // Also listen directly on the camera node while it is visible.
+    surface.addEventListener("touchstart", touchStart, options);
+    surface.addEventListener("touchmove", touchMove, options);
+    surface.addEventListener("gesturestart", gestureStart, options);
+    surface.addEventListener("gesturechange", gestureChange, options);
+    document.addEventListener("touchstart", touchStart, options);
+    document.addEventListener("touchmove", touchMove, options);
+    document.addEventListener("touchend", touchEnd, options);
+    document.addEventListener("touchcancel", touchEnd, options);
+    document.addEventListener("gesturestart", gestureStart, options);
+    document.addEventListener("gesturechange", gestureChange, options);
+    document.addEventListener("gestureend", gestureEnd, options);
+    document.addEventListener("pointerdown", pointerStart, true);
+    document.addEventListener("pointermove", pointerMove, true);
+    document.addEventListener("pointerup", pointerEnd, true);
+    document.addEventListener("pointercancel", pointerEnd, true);
+    return () => {
+      surface.removeEventListener("touchstart", touchStart, true);
+      surface.removeEventListener("touchmove", touchMove, true);
+      surface.removeEventListener("gesturestart", gestureStart, true);
+      surface.removeEventListener("gesturechange", gestureChange, true);
+      document.removeEventListener("touchstart", touchStart, true);
+      document.removeEventListener("touchmove", touchMove, true);
+      document.removeEventListener("touchend", touchEnd, true);
+      document.removeEventListener("touchcancel", touchEnd, true);
+      document.removeEventListener("gesturestart", gestureStart, true);
+      document.removeEventListener("gesturechange", gestureChange, true);
+      document.removeEventListener("gestureend", gestureEnd, true);
+      document.removeEventListener("pointerdown", pointerStart, true);
+      document.removeEventListener("pointermove", pointerMove, true);
+      document.removeEventListener("pointerup", pointerEnd, true);
+      document.removeEventListener("pointercancel", pointerEnd, true);
+      pinch.current = null;
+    };
+  }, []);
   const place = () => {
     if (textEl.current) textEl.current.style.transform = `translate3d(0, ${-scroll.current}px, 0)`;
   };
@@ -749,11 +1000,14 @@ function CameraPrompter({
   // turn the camera, also mid-take (button, or two quick taps on the picture):
   // the take goes on with the other camera, in the same format
   function flip() {
+    // A previously selected camera device cannot be reused when flipping.
+    setCameraId("");
     setSettings({ facing: settings.facing === "user" ? "environment" : "user" });
   }
-  function onBackgroundTap(e: PointerEvent) {
+  function onBackgroundTap(e: ReactPointerEvent) {
     if (e.target !== e.currentTarget && !(e.target instanceof HTMLCanvasElement)) return;
     const now = performance.now();
+    if (now - lastPinchAt.current < 700) return;
     if (now - lastTap.current < 320) {
       lastTap.current = 0;
       flip();
@@ -786,14 +1040,15 @@ function CameraPrompter({
   // on the text: a tap pauses or resumes, a drag moves it by hand. Turned
   // (horizontal), the reader's up and down run across the glass.
   const ui = uiTurn(side);
-  const along = (e: PointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
+  const along = (e: ReactPointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
   // The text follows the finger and, let go with a flick, glides on and
   // slows down like a phone's own scrolling, so any part is quickly reached.
   const drag = useRef<{ y: number; s: number; moved: boolean; v: number; at: number; last: number } | null>(null);
   const glide = useRef(0);
   const manualUntil = useRef(0);
   const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
-  function down(e: PointerEvent) {
+  function down(e: ReactPointerEvent) {
+    if (pinch.current) return;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
     } catch {
@@ -804,7 +1059,8 @@ function CameraPrompter({
     const y = along(e);
     drag.current = { y, s: scroll.current, moved: false, v: 0, at: performance.now(), last: y };
   }
-  function move(e: PointerEvent) {
+  function move(e: ReactPointerEvent) {
+    if (pinch.current) return;
     const d = drag.current;
     if (!d) return;
     const y = along(e);
@@ -857,10 +1113,15 @@ function CameraPrompter({
   const clearLens = "calc(max(env(safe-area-inset-top, 0px), 54px) + 10px)";
   const clearFar = "calc(max(env(safe-area-inset-bottom, 0px), 20px) + 12px)";
   return (
-    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]">
+    <main className="fixed inset-0 touch-none overflow-hidden bg-[#000] text-[#fff]">
       {/* the camera's picture: playing but not shown (the frame below is) */}
       <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
-      <div style={turned} className="touch-manipulation" onPointerUp={onBackgroundTap}>
+      <div
+        ref={pinchSurface}
+        style={turned}
+        className="touch-none"
+        onPointerUp={onBackgroundTap}
+      >
       {/* the frame being recorded, whole (bars where the screen is another shape);
           the selfie camera mirrored on screen only, as phones do */}
       <canvas
@@ -870,9 +1131,10 @@ function CameraPrompter({
         style={front ? { transform: "scaleX(-1)" } : undefined}
       />
       {error && <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-[rgba(0,0,0,.7)] p-4 text-center text-sm">{error}</p>}
-      {size && !recording && (
+      {size && (
         <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: horizontal ? clearLens : 16 }}>
           {qualityLabel(size, cam?.video.getVideoTracks()[0]?.getSettings().frameRate ?? settings.fps)}
+          {" · "}{zoom.toFixed(1)}×{!caps.zoom ? " digital" : ""}
         </span>
       )}
 
@@ -914,13 +1176,72 @@ function CameraPrompter({
       </div>
 
       {/* top-right tools */}
-      <div className="absolute flex flex-col gap-2" style={horizontal ? { top: 8, [far]: clearFar } : { right: 12, top: `calc(${boxH} + 16px)` }}>
+      <div className="absolute z-20 flex flex-col items-end gap-2" style={horizontal ? { top: 8, [far]: clearFar } : { right: 12, top: `calc(${boxH} + 16px)` }}>
         <RoundButton label="Ajustes do teleprompter" caption="Ajustes" onClick={() => setSettingsOpen(true)} disabled={recording}>
           <Settings2 className="size-5" />
         </RoundButton>
         <RoundButton label="Editar roteiro" caption="Roteiro" onClick={onEdit} disabled={recording}>
           <Pencil className="size-5" />
         </RoundButton>
+        {/* The camera controls must remain operable during a take. Keep them
+            at the far edge rather than over the text or record button. */}
+        {shown === "environment" && (
+          <div className="flex max-w-[320px] flex-wrap items-center justify-end gap-1">
+          <div
+            role="group"
+            aria-label="Zoom durante a gravação"
+            className="flex items-center justify-center gap-1 rounded-full bg-[rgba(0,0,0,.7)] p-1 shadow-md"
+          >
+            <button
+              type="button"
+              aria-label="Afastar câmera"
+              title="Afastar câmera"
+              onClick={() => setZoomLevel(zoomTarget.current - 0.5)}
+              disabled={zoom <= (caps.zoom?.min ?? 1) + 0.05}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,.12)] text-xl font-semibold disabled:opacity-30"
+            >−</button>
+            <span className="min-w-12 text-center text-xs font-semibold tabular-nums" aria-live="off">
+              {zoom.toFixed(1)}×
+            </span>
+            <button
+              type="button"
+              aria-label="Aproximar câmera"
+              title="Aproximar câmera"
+              onClick={() => setZoomLevel(zoomTarget.current + 0.5)}
+              disabled={zoom >= Math.max(5, caps.zoom?.max ?? 5) - 0.05}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full bg-[rgba(255,255,255,.12)] text-xl font-semibold disabled:opacity-30"
+            >+</button>
+          </div>
+        {caps.zoom && caps.zoom.min < 0.95 && (
+          <button
+            type="button"
+            aria-label="Usar enquadramento ultra-angular disponível"
+            onClick={() => setZoomLevel(Math.max(caps.zoom!.min, 0.5))}
+            className="self-center rounded-full bg-[rgba(0,0,0,.7)] px-3 py-1.5 text-xs font-semibold"
+          >{Math.max(caps.zoom.min, 0.5).toFixed(1)}×</button>
+        )}
+        {canChooseRearLens && (
+          <label className="max-w-36 rounded-lg bg-[rgba(0,0,0,.7)] px-1 py-1.5 text-xs">
+            <span className="sr-only">Selecionar lente traseira</span>
+            <select
+              aria-label="Selecionar lente traseira"
+              title="Trocar lente durante a gravação (pode haver breve congelamento)"
+              value={cameraId}
+              disabled={finishing}
+              onChange={(e) => setCameraId(e.currentTarget.value)}
+              className="w-full max-w-32 truncate bg-transparent text-xs text-white"
+            >
+              <option value="" className="text-black">Câmera padrão</option>
+              {rearCameras.map((camera, i) => (
+                <option key={camera.deviceId} value={camera.deviceId} className="text-black">
+                  {camera.label || `Traseira ${i + 1}`}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+          </div>
+        )}
         {!heard && needsAsking() && settings.format === "auto" && !recording && (
           <RoundButton label="Ativar giro automático" caption="Ativar giro" onClick={enable}>
             <Smartphone className="size-5" />
@@ -952,25 +1273,6 @@ function CameraPrompter({
         // turned: the buttons at the ends clear of the island and the home bar
         style={horizontal ? { [`padding${lens === "left" ? "Left" : "Right"}`]: clearLens, [`padding${far === "left" ? "Left" : "Right"}`]: clearFar } : undefined}
       >
-        {caps.zoom && !recording && (
-          <div className="flex gap-2">
-            {[1, 2, Math.min(caps.zoom.max, 5)]
-              .filter((z, i, a) => z >= caps.zoom!.min && a.indexOf(z) === i)
-              .map((z) => (
-                <button
-                  key={z}
-                  type="button"
-                  onClick={() => {
-                    applyTrack({ zoom: z });
-                    setZoom(z);
-                  }}
-                  className={cn("size-10 rounded-full text-xs font-semibold", zoom === z ? "bg-[#fff] text-[#000]" : "bg-[rgba(0,0,0,.5)]")}
-                >
-                  {z}x
-                </button>
-              ))}
-          </div>
-        )}
         {(segments.length > 0 || recording) && (
           // the takes so far, side by side; the last one red when marked to delete
           <div aria-label="Trechos gravados" className="flex h-1.5 w-full gap-0.5 overflow-hidden rounded-pill bg-[rgba(255,255,255,.2)]">
@@ -1066,24 +1368,86 @@ function CameraPrompter({
             onChange={(v) => setSettings({ countdown: Number(v) as PrompterSettings["countdown"] })}
           />
           <Choice
-            label="Qualidade"
+            label="Qualidade solicitada"
             value={String(settings.quality)}
             options={[
-              ["2160", "Máxima (4K)"],
-              ["1080", "1080p"],
               ["720", "720p"],
+              ["1080", "1080p"],
+              ["1440", "2K / 1440p"],
+              ["2160", "4K"],
             ]}
-            onChange={(v) => setSettings({ quality: Number(v) as PrompterSettings["quality"] })}
+            disabled={segments.length > 0}
+            onChange={(v) => {
+              const quality = Number(v) as PrompterSettings["quality"];
+              setSettings({ quality, ...(quality === 2160 ? { fps: 30 } : {}) });
+            }}
           />
           <Choice
             label="Quadros por segundo"
             value={String(settings.fps)}
-            options={[
-              ["30", "30 fps"],
-              ["60", "60 fps"],
-            ]}
+            options={settings.quality === 2160 ? [["30", "30 fps (4K)"]] : [["30", "30 fps"], ["60", "60 fps"]]}
+            disabled={segments.length > 0}
             onChange={(v) => setSettings({ fps: Number(v) as PrompterSettings["fps"] })}
           />
+          <p className="text-xs text-text-muted">
+            Resolução real da câmera: {size ? qualityLabel(size, cam?.video.getVideoTracks()[0]?.getSettings().frameRate ?? settings.fps) : "aguardando imagem"}.
+            O Safari pode entregar menos que a qualidade solicitada; o aplicativo não aumenta artificialmente a resolução.
+          </p>
+          {segments.length > 0 && (
+            <p className="text-xs text-[#fcd34d]">
+              Termine ou salve os trechos atuais antes de mudar resolução e FPS.
+            </p>
+          )}
+          <div className="flex flex-col gap-2">
+            <span className="text-xs text-text-muted">Zoom da câmera ({zoom.toFixed(1)}×)</span>
+            <Slider
+              label="Aproximar / afastar"
+              value={Math.round(zoom * 10)}
+              min={Math.round((caps.zoom?.min ?? 1) * 10)}
+              max={Math.round(Math.max(5, caps.zoom?.max ?? 5) * 10)}
+              defaultValue={10}
+              format={(v) => `${(v / 10).toFixed(1)}×`}
+              onChange={(v) => setZoomLevel(v / 10)}
+            />
+            <p className="text-xs text-text-muted">
+              Use dois dedos sobre a imagem para dar zoom enquanto grava. {caps.zoom
+                ? "O navegador informou controle de zoom na câmera; aproximações maiores podem combinar zoom da câmera e recorte digital."
+                : "Zoom digital disponível. Para 0,5× verdadeiro, o Safari precisa liberar a lente ultra-angular."}
+            </p>
+          </div>
+          {availableCameras.length > 1 && (
+            <label className="flex flex-col gap-2">
+              <span className="text-xs text-text-muted">Lente / câmera disponível no Safari</span>
+              <select
+                value={cameraId}
+                disabled={finishing}
+                onChange={(e) => {
+                  const id = e.currentTarget.value;
+                  const selected = availableCameras.find((c) => c.deviceId === id);
+                  setCameraId(id);
+                  if (selected) {
+                    const label = selected.label.toLowerCase();
+                    if (/front|frontal|user|selfie/.test(label)) setSettings({ facing: "user" });
+                    else if (/back|rear|traseira|environment/.test(label)) setSettings({ facing: "environment" });
+                  }
+                }}
+                className="w-full rounded-lg border border-border-input bg-bg p-3 text-sm text-text disabled:opacity-50"
+              >
+                <option value="">Padrão do iPhone ({settings.facing === "user" ? "frontal" : "traseira"})</option>
+                {availableCameras.map((camera, i) => (
+                  <option key={camera.deviceId} value={camera.deviceId}>
+                    {camera.label || `Câmera disponível ${i + 1}`}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <p className="text-xs text-text-muted">
+            O zoom −/＋ e o seletor de lentes traseiras ficam acessíveis mesmo durante a gravação.
+            Se o Safari oferecer uma lente ultra-angular, ela poderá ser selecionada durante o take,
+            com uma breve transição de imagem. Sem uma lente ou zoom nativo compatível,
+            o PWA não consegue produzir um campo de visão 0,5× real.
+          </p>
           <Choice
             label={settings.format === "auto" ? "Formato (automático: segue o celular em pé ou deitado)" : "Formato"}
             value={settings.format}
@@ -1155,19 +1519,20 @@ function RoundButton({
   );
 }
 
-function Choice({ label, value, options, onChange }: { label: string; value: string; options: [string, string][]; onChange: (v: string) => void }) {
+function Choice({ label, value, options, onChange, disabled }: { label: string; value: string; options: [string, string][]; onChange: (v: string) => void; disabled?: boolean }) {
   return (
     <div className="flex flex-col gap-2">
       <span className="text-xs text-text-muted">{label}</span>
-      <div role="radiogroup" aria-label={label} className="flex gap-2">
+      <div role="radiogroup" aria-label={label} className="flex flex-wrap gap-2">
         {options.map(([v, l]) => (
           <button
             key={v}
             type="button"
             role="radio"
             aria-checked={value === v}
+            disabled={disabled}
             onClick={() => onChange(v)}
-            className={cn("h-9 flex-1 rounded-pill border text-sm", value === v ? "border-accent bg-accent text-on-accent" : "border-border-input")}
+            className={cn("min-w-[68px] h-9 flex-1 rounded-pill border px-2 text-sm disabled:opacity-50", value === v ? "border-accent bg-accent text-on-accent" : "border-border-input")}
           >
             {l}
           </button>
