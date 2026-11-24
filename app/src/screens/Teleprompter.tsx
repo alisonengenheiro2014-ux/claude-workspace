@@ -743,13 +743,18 @@ function CameraPrompter({
           await track.applyConstraints({ advanced: [{ zoom: requested } as MediaTrackConstraintSet] });
           if (track !== zoomTrack.current) break;
           const observed = (track.getSettings() as MediaTrackSettings & { zoom?: number }).zoom;
-          if (typeof observed === "number" && Math.abs(observed - requested) > 0.25) {
-            // Safari may accept but ignore the zoom constraint.
+          if (typeof observed !== "number" || !Number.isFinite(observed) ||
+              Math.abs(observed - requested) > 0.25) {
+            // Safari can accept zoom constraints yet ignore them, or omit
+            // the applied zoom entirely. Never assume a hardware change:
+            // digital crop must take over so the recorded image really zooms.
+            zoomAppliedNative.current =
+              typeof observed === "number" && Number.isFinite(observed) ? observed : 1;
             nativeRange.current = null;
             setCaps((c) => ({ ...c, zoom: undefined }));
             break;
           }
-          zoomAppliedNative.current = typeof observed === "number" ? observed : requested;
+          zoomAppliedNative.current = observed;
         } catch {
           if (track === zoomTrack.current) {
             nativeRange.current = null;
@@ -767,11 +772,11 @@ function CameraPrompter({
     setZoom(value);
     syncNativeZoom();
   };
-  // React's synthetic touchmove listener can be passive on iOS Safari.
-  // Install native capture listeners with passive:false on the camera surface.
-  // This also recognises a gesture spanning the video and the text overlay.
-  // The zoom setter is stored in a ref to avoid replacing the listeners on
-  // every camera frame, without closing over stale native zoom capabilities.
+  // iOS Safari sometimes starts native page magnification before a touch
+  // reaches a rotated child. Capture native touch/gesture events on document
+  // while the teleprompter is mounted, NOT just on its rotated surface.
+  // The interception applies only to two-finger interactions in this screen:
+  // single-finger teleprompter scrolling and ordinary controls are untouched.
   const zoomSetter = useRef(setZoomLevel);
   zoomSetter.current = setZoomLevel;
   useEffect(() => {
@@ -779,77 +784,93 @@ function CameraPrompter({
     if (!surface) return;
     let gestureZoom: number | null = null;
     let lastTouchMoveAt = 0;
-    const fingersDistance = (touches: TouchList) => {
-      const a = touches[0];
-      const b = touches[1];
+    const isWithinCamera = (target: EventTarget | null) =>
+      !!target && target instanceof Node && surface.contains(target);
+    const isControl = (target: EventTarget | null) =>
+      target instanceof Element &&
+      !!target.closest("button, select, input, textarea, [role=dialog]");
+    const distance = (touches: TouchList) => {
+      const [a, b] = [touches.item(0), touches.item(1)];
       return a && b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0;
     };
-    const beginPinch = (event: TouchEvent) => {
+    const touchStart = (event: TouchEvent) => {
       if (event.touches.length < 2) return;
-      const distance = fingersDistance(event.touches);
-      if (distance < 8) return;
-      // Do not interfere with native controls such as the camera selector.
-      if (event.target instanceof Element && event.target.closest("button, select, input, textarea, [role=dialog]")) return;
+      if (!pinch.current && (!isWithinCamera(event.target) || isControl(event.target))) return;
       if (event.cancelable) event.preventDefault();
-      if (!pinch.current) {
-        pinch.current = { distance, startZoom: zoomTarget.current };
-        lastPinchAt.current = performance.now();
-        cancelAnimationFrame(glide.current);
-        drag.current = null;
-      }
+      const d = distance(event.touches);
+      if (d < 8 || pinch.current) return;
+      pinch.current = { distance: d, startZoom: zoomTarget.current };
+      cancelAnimationFrame(glide.current);
+      drag.current = null;
+      lastPinchAt.current = performance.now();
     };
-    const movePinch = (event: TouchEvent) => {
+    const touchMove = (event: TouchEvent) => {
       if (event.touches.length < 2) return;
-      if (!pinch.current) beginPinch(event);
-      if (!pinch.current) return;
+      if (!pinch.current && !isWithinCamera(event.target)) return;
+      // Prevent Safari from zooming the entire page instead of the video.
       if (event.cancelable) event.preventDefault();
-      const distance = fingersDistance(event.touches);
-      zoomSetter.current(pinchZoomLevel(pinch.current.startZoom, pinch.current.distance, distance, nativeRange.current));
+      if (!pinch.current) touchStart(event);
+      if (!pinch.current) return;
+      const d = distance(event.touches);
+      if (d > 8) zoomSetter.current(pinchZoomLevel(pinch.current.startZoom, pinch.current.distance, d, nativeRange.current));
       lastTouchMoveAt = performance.now();
       lastPinchAt.current = lastTouchMoveAt;
     };
-    const endPinch = (event: TouchEvent) => {
+    const touchEnd = (event: TouchEvent) => {
       if (event.touches.length >= 2) return;
       pinch.current = null;
       lastPinchAt.current = performance.now();
     };
-    // WebKit also exposes gesture events. Prevent the page itself zooming,
-    // and use gesture scale as a fallback if Safari suppresses touchmove.
-    const startGesture = (event: Event) => {
+    // WebKit's separate gesture events may arrive even when touchmove is
+    // suppressed. Listening at document capture prevents viewport zoom.
+    const gestureStart = (event: Event) => {
       if (event.cancelable) event.preventDefault();
       gestureZoom = zoomTarget.current;
+      cancelAnimationFrame(glide.current);
       drag.current = null;
       lastPinchAt.current = performance.now();
     };
-    const changeGesture = (event: Event) => {
+    const gestureChange = (event: Event) => {
       if (event.cancelable) event.preventDefault();
       const scale = (event as Event & { scale?: number }).scale;
       if (typeof scale === "number" && scale > 0 && gestureZoom !== null &&
-          performance.now() - lastTouchMoveAt > 120) {
-        // Fallback if WebKit consumed the touchmove stream during a pinch.
+        performance.now() - lastTouchMoveAt > 120) {
         zoomSetter.current(boundZoom(gestureZoom * scale, nativeRange.current));
       }
       lastPinchAt.current = performance.now();
     };
-    const endGesture = () => {
+    const gestureEnd = () => {
       gestureZoom = null;
+      pinch.current = null;
       lastPinchAt.current = performance.now();
     };
-    surface.addEventListener("touchstart", beginPinch, { passive: false, capture: true });
-    surface.addEventListener("touchmove", movePinch, { passive: false, capture: true });
-    surface.addEventListener("touchend", endPinch, { passive: false, capture: true });
-    surface.addEventListener("touchcancel", endPinch, { passive: false, capture: true });
-    surface.addEventListener("gesturestart", startGesture, { passive: false, capture: true });
-    surface.addEventListener("gesturechange", changeGesture, { passive: false, capture: true });
-    surface.addEventListener("gestureend", endGesture, { passive: false, capture: true });
+    const options: AddEventListenerOptions = { capture: true, passive: false };
+    // WebKit versions can refuse preventDefault on document-level touchmove.
+    // Also listen directly on the camera node while it is visible.
+    surface.addEventListener("touchstart", touchStart, options);
+    surface.addEventListener("touchmove", touchMove, options);
+    surface.addEventListener("gesturestart", gestureStart, options);
+    surface.addEventListener("gesturechange", gestureChange, options);
+    document.addEventListener("touchstart", touchStart, options);
+    document.addEventListener("touchmove", touchMove, options);
+    document.addEventListener("touchend", touchEnd, options);
+    document.addEventListener("touchcancel", touchEnd, options);
+    document.addEventListener("gesturestart", gestureStart, options);
+    document.addEventListener("gesturechange", gestureChange, options);
+    document.addEventListener("gestureend", gestureEnd, options);
     return () => {
-      surface.removeEventListener("touchstart", beginPinch, true);
-      surface.removeEventListener("touchmove", movePinch, true);
-      surface.removeEventListener("touchend", endPinch, true);
-      surface.removeEventListener("touchcancel", endPinch, true);
-      surface.removeEventListener("gesturestart", startGesture, true);
-      surface.removeEventListener("gesturechange", changeGesture, true);
-      surface.removeEventListener("gestureend", endGesture, true);
+      surface.removeEventListener("touchstart", touchStart, true);
+      surface.removeEventListener("touchmove", touchMove, true);
+      surface.removeEventListener("gesturestart", gestureStart, true);
+      surface.removeEventListener("gesturechange", gestureChange, true);
+      document.removeEventListener("touchstart", touchStart, true);
+      document.removeEventListener("touchmove", touchMove, true);
+      document.removeEventListener("touchend", touchEnd, true);
+      document.removeEventListener("touchcancel", touchEnd, true);
+      document.removeEventListener("gesturestart", gestureStart, true);
+      document.removeEventListener("gesturechange", gestureChange, true);
+      document.removeEventListener("gestureend", gestureEnd, true);
+      pinch.current = null;
     };
   }, []);
   const place = () => {
@@ -1038,7 +1059,7 @@ function CameraPrompter({
   const clearLens = "calc(max(env(safe-area-inset-top, 0px), 54px) + 10px)";
   const clearFar = "calc(max(env(safe-area-inset-bottom, 0px), 20px) + 12px)";
   return (
-    <main className="fixed inset-0 overflow-hidden bg-[#000] text-[#fff]">
+    <main className="fixed inset-0 touch-none overflow-hidden bg-[#000] text-[#fff]">
       {/* the camera's picture: playing but not shown (the frame below is) */}
       <video ref={video} autoPlay playsInline muted aria-hidden className="pointer-events-none fixed left-0 top-0 size-px opacity-0" />
       <div
