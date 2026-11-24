@@ -163,6 +163,72 @@ export async function mixAudio(
   return any ? ctx.startRendering() : null;
 }
 
+
+
+// Long projects must NOT build an eight-minute 48-kHz stereo AudioBuffer
+// before exporting. Safari may terminate the app while holding that buffer,
+// the video decoder and the source file simultaneously. Render a small piece,
+// encode it, release it and continue; AudioBufferSource.add() concatenates
+// successive buffers without losing sync with the video timeline.
+const AUDIO_CHUNK_US = 15_000_000;
+
+async function mixAudioChunk(
+  doc: TimelineDoc,
+  assets: Map<Id, AssetRow>,
+  inputs: Map<Id, Input>,
+  fromUs: number,
+  toUs: number,
+  signal: AbortSignal,
+): Promise<AudioBuffer> {
+  const durationS = (toUs - fromUs) / 1e6;
+  const ctx = new OfflineAudioContext(2, Math.max(1, Math.round(durationS * SAMPLE_RATE)), SAMPLE_RATE);
+  for (const lane of doc.tracks) {
+    if ((lane.kind !== "main" && lane.kind !== "audio" && lane.kind !== "overlay") || lane.muted || lane.hidden) continue;
+    for (const item of lane.items) {
+      if (item.type !== "media") continue;
+      const clip = item;
+      const asset = assets.get(clip.assetId);
+      const start = Math.max(fromUs, clip.startUs);
+      const end = Math.min(toUs, clip.startUs + clip.durationUs);
+      if (!asset || asset.kind === "image" || !asset.hasAudio || clip.freeze || clip.volume === 0 || end <= start) continue;
+      if (signal.aborted) throw new ExportCancelled();
+      const track = await (await openInput(asset, inputs)).getPrimaryAudioTrack();
+      if (!track) continue;
+      const gain = ctx.createGain();
+      scheduleEnvelope(gain.gain, clip, start - clip.startUs, (start - fromUs) / 1e6);
+      gain.connect(ctx.destination);
+      const chain = soundChain(ctx, clip);
+      let into: AudioNode = gain;
+      if (chain) {
+        chain.output.connect(gain);
+        into = chain.input;
+      }
+      const inS = sourceTimeUs(clip, start - clip.startUs) / 1e6;
+      const outS = sourceTimeUs(clip, end - clip.startUs) / 1e6;
+      if (outS <= inS) continue;
+      const sink = new AudioBufferSink(track);
+      for await (const { buffer, timestamp } of sink.buffers(inS, outS)) {
+        if (signal.aborted) throw new ExportCancelled();
+        const skip = Math.max(0, inS - timestamp);
+        const play = Math.min(buffer.duration - skip, outS - (timestamp + skip));
+        if (play <= 0) continue;
+        const offset = offsetForSource(clip, (timestamp + skip) * 1e6);
+        const when = (clip.startUs + offset - fromUs) / 1e6;
+        const node = ctx.createBufferSource();
+        node.buffer = buffer;
+        node.playbackRate.value = speedAt(clip, offset);
+        node.connect(into);
+        // Floating-point source timestamps may be a fraction before the
+        // window boundary. Clamp the schedule but retain the source offset.
+        const trim = Math.max(0, -when) * node.playbackRate.value;
+        if (skip + trim < buffer.duration && play > trim) node.start(Math.max(0, when), skip + trim, play - trim);
+      }
+    }
+  }
+  if (signal.aborted) throw new ExportCancelled();
+  return ctx.startRendering();
+}
+
 export async function exportTimeline(
   doc: TimelineDoc,
   assets: Map<Id, AssetRow>,
@@ -480,15 +546,35 @@ export async function exportTimeline(
 
   try {
     onProgress(0, "audio");
-    const mixed = codecs.audio ? await mixAudio(doc, assets, inputs, totalUs, signal) : null;
-    const audioSource = mixed && codecs.audio ? new AudioBufferSource({ codec: codecs.audio, bitrate: 128_000 }) : null;
+    const hasSound = doc.tracks.some((lane) =>
+      (lane.kind === "main" || lane.kind === "audio" || lane.kind === "overlay") &&
+      !lane.muted && !lane.hidden &&
+      lane.items.some((item) => item.type === "media" && !item.freeze && item.volume !== 0 &&
+        !!assets.get(item.assetId)?.hasAudio),
+    );
+    const chunkedAudio = hasSound && totalUs > 90_000_000;
+    const mixed = codecs.audio && hasSound && !chunkedAudio ? await mixAudio(doc, assets, inputs, totalUs, signal) : null;
+    const audioSource = codecs.audio && (mixed || chunkedAudio)
+      ? new AudioBufferSource({ codec: codecs.audio, bitrate: 128_000 }) : null;
     if (audioSource) output.addAudioTrack(audioSource);
 
     await output.start();
-    if (audioSource && mixed) {
+    if (audioSource && chunkedAudio) {
+      for (let fromUs = 0; fromUs < totalUs; fromUs += AUDIO_CHUNK_US) {
+        if (signal.aborted) throw new ExportCancelled();
+        const toUs = Math.min(totalUs, fromUs + AUDIO_CHUNK_US);
+        const chunk = await mixAudioChunk(doc, assets, inputs, fromUs, toUs, signal);
+        if (signal.aborted) throw new ExportCancelled();
+        await audioSource.add(chunk);
+        onProgress(0.15 * (toUs / totalUs), "audio");
+      }
+      audioSource.close();
+    } else if (audioSource && mixed) {
+      if (signal.aborted) throw new ExportCancelled();
       await audioSource.add(mixed);
       audioSource.close();
     }
+    onProgress(0.15, "video");
 
     const frameS = 1 / opts.fps;
     const totalFrames = Math.max(1, Math.round((totalUs / 1e6) * opts.fps));
@@ -528,7 +614,7 @@ export async function exportTimeline(
           if (frame === 0 && coverPic) ctx.drawImage(coverPic, 0, 0);
           await videoSource.add(frame * frameS, frameS);
           frame++;
-          if (frame % 10 === 0) onProgress(frame / totalFrames, "video");
+          if (frame % 10 === 0) onProgress(0.15 + 0.82 * (frame / totalFrames), "video");
         };
 
         if (!asset) {
@@ -610,8 +696,9 @@ export async function exportTimeline(
     }
 
     videoSource.close();
-    onProgress(1, "finishing");
+    onProgress(0.98, "finishing");
     await output.finalize();
+    onProgress(1, "finishing");
     let file: File;
     if (stream) {
       const f = await readFile(`exports/${name}`);

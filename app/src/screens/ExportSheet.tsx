@@ -3,6 +3,8 @@ import { Download, Share } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useEditor } from "../editor/store";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
+import { assetFile, isPending } from "../media/import";
+import { shareFile } from "../data/backup";
 import { estimateBytes, ExportCancelled, exportTimeline, type ExportOptions } from "../export/exporter";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
@@ -102,6 +104,36 @@ export function ExportSheet({
   const assets = useEditor((s) => s.assets);
   const [phase, setPhase] = useState<Phase>({ name: "settings" });
   const abort = useRef<AbortController | null>(null);
+  // Keep an OPFS-backed File ready for the share button. iOS needs the
+  // share sheet to open directly from a tap (not after an awaited file read).
+  const firstVideo = doc ? mainClips(doc).find((c) => assets.get(c.assetId)?.kind === "video") : undefined;
+  const originalAsset = firstVideo ? assets.get(firstVideo.assetId) : undefined;
+  const [originalFile, setOriginalFile] = useState<File | null>(null);
+  const [originalLoading, setOriginalLoading] = useState(false);
+  useEffect(() => {
+    if (!open || !originalAsset) {
+      setOriginalFile(null);
+      setOriginalLoading(false);
+      return;
+    }
+    let alive = true;
+    setOriginalFile(null);
+    setOriginalLoading(true);
+    void assetFile(originalAsset).then(
+      (file) => { if (alive) { setOriginalFile(file); setOriginalLoading(false); } },
+      () => { if (alive) { setOriginalFile(null); setOriginalLoading(false); } },
+    );
+    return () => { alive = false; };
+  }, [open, originalAsset]);
+
+  const saveOriginal = () => {
+    if (!originalFile) return;
+    // This bypasses the audio mix/video re-encode and preserves the exact
+    // recording. It intentionally does not apply any edits to the timeline.
+    void shareFile(originalFile).catch((error: unknown) => {
+      toast(`Não foi possível salvar o arquivo original: ${error instanceof Error ? error.message : String(error)}`, "error");
+    });
+  };
 
   useEffect(() => {
     if (open && phase.name !== "running") setPhase({ name: "settings" });
@@ -123,6 +155,11 @@ export function ExportSheet({
 
   async function run() {
     if (!doc) return;
+    const stillCopying = doc.tracks.some((lane) => lane.items.some((item) => item.type === "media" && isPending(item.assetId)));
+    if (stillCopying) {
+      toast("O vídeo ainda está sendo guardado no iPhone. Aguarde a cópia terminar antes de exportar; você já pode salvar o original.", "error");
+      return;
+    }
     await useEditor.getState().flush();
     const ctl = new AbortController();
     abort.current = ctl;
@@ -219,6 +256,28 @@ export function ExportSheet({
           <Button variant="primary" size="lg" disabled={totalUs === 0} onClick={() => void run()}>
             Exportar vídeo
           </Button>
+          {originalAsset && (
+            <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
+              <p className="text-sm font-semibold">Proteger a gravação</p>
+              <Button
+                variant="secondary"
+                icon={<Download aria-hidden className="size-5" />}
+                disabled={!originalFile || originalLoading}
+                onClick={saveOriginal}
+              >
+                {originalLoading ? "Localizando gravação…" : "Salvar vídeo original"}
+              </Button>
+              <p className="text-xs text-text-muted">
+                {formatBytes(originalAsset.sizeBytes)} · Salva o arquivo da câmera sem reprocessar,
+                mesmo se a exportação travar. Não inclui cortes, textos ou efeitos.
+              </p>
+              {!originalLoading && !originalFile && (
+                <p role="alert" className="text-xs text-danger">
+                  Não encontrei a gravação original neste aparelho. Não apague o projeto; procure o arquivo que foi salvo em Arquivos ou Fotos.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -259,6 +318,11 @@ export function ExportSheet({
           <Button variant="ghost" onClick={() => setPhase({ name: "settings" })}>
             Mudar configurações
           </Button>
+          {originalFile && (
+            <Button variant="secondary" icon={<Download aria-hidden className="size-5" />} onClick={saveOriginal}>
+              Salvar gravação original
+            </Button>
+          )}
         </div>
       )}
     </Sheet>
