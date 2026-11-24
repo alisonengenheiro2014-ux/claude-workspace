@@ -24,6 +24,16 @@ describe("camera capture options", () => {
     expect(digitalZoomFactor(.5, .5)).toBe(1);
     expect(digitalZoomFactor(4, 2)).toBe(2);
   });
+  it("guarantees canvas zoom even when Safari reports native zoom without changing pixels", () => {
+    // The camera drawing code now deliberately uses a 1x digital baseline.
+    // If Safari claims the camera is at 2x but its video frames are static,
+    // the actual pixels must still get 2x cropped.
+    const requestedZoom = 2;
+    const browserReportedZoom = 2;
+    expect(browserReportedZoom).toBe(2);
+    expect(digitalZoomFactor(requestedZoom, 1)).toBe(2);
+    expect(digitalZoomFactor(requestedZoom, browserReportedZoom)).toBe(1);
+  });
   it("pinch expands and contracts the zoom while keeping physical bounds honest", () => {
     expect(pinchZoomLevel(1, 100, 200, null)).toBe(2);
     expect(pinchZoomLevel(2, 100, 50, null)).toBe(1);

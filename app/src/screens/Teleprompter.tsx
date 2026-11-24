@@ -4,7 +4,7 @@
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
 import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
-import { useCallback, useEffect, useRef, useState, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
 import { navigate } from "../app/router";
@@ -696,7 +696,11 @@ function CameraPrompter({
       const sw = v.videoWidth;
       const sh = v.videoHeight;
       const across = t % 180 !== 0;
-      const crop = digitalZoomFactor(zoomTarget.current, zoomAppliedNative.current);
+      // Always crop the recording canvas when zooming IN. Some WebKit builds
+      // report a changed native zoom in getSettings(), although the pixels
+      // delivered by the camera are unchanged. Dividing by that reported
+      // value silently cancelled all visible zoom.
+      const crop = digitalZoomFactor(zoomTarget.current, 1);
       const k = Math.max(sz.w / (across ? sh : sw), sz.h / (across ? sw : sh)) * crop;
       ctx.save();
       ctx.translate(sz.w / 2, sz.h / 2);
@@ -737,7 +741,11 @@ function CameraPrompter({
     zoomBusy.current = true;
     void (async () => {
       while (track === zoomTrack.current && range === nativeRange.current && track.readyState === "live") {
-        const requested = Math.max(range.min, Math.min(range.max, zoomTarget.current));
+        // Native zoom is used only for a genuine <1x optical wide angle.
+        // For >=1x the canvas performs deterministic zoom on the pixels
+        // actually recorded, regardless of Safari's track zoom reports.
+        const nativeTarget = zoomTarget.current < 1 ? zoomTarget.current : 1;
+        const requested = Math.max(range.min, Math.min(range.max, nativeTarget));
         if (Math.abs(requested - zoomAppliedNative.current) < 0.08) break;
         try {
           await track.applyConstraints({ advanced: [{ zoom: requested } as MediaTrackConstraintSet] });
@@ -770,7 +778,9 @@ function CameraPrompter({
     if (Math.abs(value - zoomTarget.current) < 0.05) return;
     zoomTarget.current = value;
     setZoom(value);
-    syncNativeZoom();
+    // Restore any previous optical wide-angle setting to its baseline when
+    // returning to >=1x. No native zoom-in calls: camera crop is reliable.
+    if (value < 1 || zoomAppliedNative.current < 0.95) syncNativeZoom();
   };
   // iOS Safari sometimes starts native page magnification before a touch
   // reaches a rotated child. Capture native touch/gesture events on document
@@ -784,6 +794,42 @@ function CameraPrompter({
     if (!surface) return;
     let gestureZoom: number | null = null;
     let lastTouchMoveAt = 0;
+    const pointers = new Map<number, { x: number; y: number }>();
+    let pointerPinch: { distance: number; startZoom: number } | null = null;
+    const pointerDistance = () => {
+      const [a, b] = Array.from(pointers.values());
+      return a && b ? Math.hypot(a.x - b.x, a.y - b.y) : 0;
+    };
+    const pointerStart = (event: PointerEvent) => {
+      if (event.pointerType !== "touch" || !isWithinCamera(event.target) || isControl(event.target)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointers.size === 2) {
+        const d = pointerDistance();
+        if (d >= 8) {
+          pointerPinch = { distance: d, startZoom: zoomTarget.current };
+          drag.current = null;
+          cancelAnimationFrame(glide.current);
+          lastPinchAt.current = performance.now();
+        }
+      }
+    };
+    const pointerMove = (event: PointerEvent) => {
+      if (!pointers.has(event.pointerId)) return;
+      pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (pointerPinch && pointers.size >= 2 && performance.now() - lastTouchMoveAt > 120) {
+        // Fallback when Safari suppresses native touchmove/gesturechange.
+        const d = pointerDistance();
+        if (d >= 8) zoomSetter.current(pinchZoomLevel(pointerPinch.startZoom, pointerPinch.distance, d, nativeRange.current));
+        lastPinchAt.current = performance.now();
+      }
+    };
+    const pointerEnd = (event: PointerEvent) => {
+      pointers.delete(event.pointerId);
+      if (pointers.size < 2) {
+        pointerPinch = null;
+        lastPinchAt.current = performance.now();
+      }
+    };
     const isWithinCamera = (target: EventTarget | null) =>
       !!target && target instanceof Node && surface.contains(target);
     const isControl = (target: EventTarget | null) =>
@@ -858,6 +904,10 @@ function CameraPrompter({
     document.addEventListener("gesturestart", gestureStart, options);
     document.addEventListener("gesturechange", gestureChange, options);
     document.addEventListener("gestureend", gestureEnd, options);
+    document.addEventListener("pointerdown", pointerStart, true);
+    document.addEventListener("pointermove", pointerMove, true);
+    document.addEventListener("pointerup", pointerEnd, true);
+    document.addEventListener("pointercancel", pointerEnd, true);
     return () => {
       surface.removeEventListener("touchstart", touchStart, true);
       surface.removeEventListener("touchmove", touchMove, true);
@@ -870,6 +920,10 @@ function CameraPrompter({
       document.removeEventListener("gesturestart", gestureStart, true);
       document.removeEventListener("gesturechange", gestureChange, true);
       document.removeEventListener("gestureend", gestureEnd, true);
+      document.removeEventListener("pointerdown", pointerStart, true);
+      document.removeEventListener("pointermove", pointerMove, true);
+      document.removeEventListener("pointerup", pointerEnd, true);
+      document.removeEventListener("pointercancel", pointerEnd, true);
       pinch.current = null;
     };
   }, []);
@@ -950,7 +1004,7 @@ function CameraPrompter({
     setCameraId("");
     setSettings({ facing: settings.facing === "user" ? "environment" : "user" });
   }
-  function onBackgroundTap(e: PointerEvent) {
+  function onBackgroundTap(e: ReactPointerEvent) {
     if (e.target !== e.currentTarget && !(e.target instanceof HTMLCanvasElement)) return;
     const now = performance.now();
     if (now - lastPinchAt.current < 700) return;
@@ -986,14 +1040,14 @@ function CameraPrompter({
   // on the text: a tap pauses or resumes, a drag moves it by hand. Turned
   // (horizontal), the reader's up and down run across the glass.
   const ui = uiTurn(side);
-  const along = (e: PointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
+  const along = (e: ReactPointerEvent) => (!horizontal ? e.clientY : ui > 0 ? -e.clientX : e.clientX);
   // The text follows the finger and, let go with a flick, glides on and
   // slows down like a phone's own scrolling, so any part is quickly reached.
   const drag = useRef<{ y: number; s: number; moved: boolean; v: number; at: number; last: number } | null>(null);
   const glide = useRef(0);
   const manualUntil = useRef(0);
   const clampScroll = (y: number) => Math.max(0, Math.min(textEl.current?.scrollHeight ?? 0, y));
-  function down(e: PointerEvent) {
+  function down(e: ReactPointerEvent) {
     if (pinch.current) return;
     try {
       (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
@@ -1005,7 +1059,7 @@ function CameraPrompter({
     const y = along(e);
     drag.current = { y, s: scroll.current, moved: false, v: 0, at: performance.now(), last: y };
   }
-  function move(e: PointerEvent) {
+  function move(e: ReactPointerEvent) {
     if (pinch.current) return;
     const d = drag.current;
     if (!d) return;
@@ -1077,7 +1131,7 @@ function CameraPrompter({
         style={front ? { transform: "scaleX(-1)" } : undefined}
       />
       {error && <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 rounded-md bg-[rgba(0,0,0,.7)] p-4 text-center text-sm">{error}</p>}
-      {size && !recording && (
+      {size && (
         <span className="absolute rounded-pill bg-[rgba(0,0,0,.55)] px-2 py-0.5 font-mono text-[11px]" style={{ top: `calc(${boxH} + 20px)`, [horizontal ? lens : "left"]: horizontal ? clearLens : 16 }}>
           {qualityLabel(size, cam?.video.getVideoTracks()[0]?.getSettings().frameRate ?? settings.fps)}
           {" · "}{zoom.toFixed(1)}×{!caps.zoom ? " digital" : ""}
