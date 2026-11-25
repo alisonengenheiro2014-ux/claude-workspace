@@ -8,7 +8,7 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
 import { navigate } from "../app/router";
-import { shareFile } from "../data/backup";
+
 import { createProject, loadProject, removeProject, saveDoc } from "../data/projects";
 import {
   loadScripts,
@@ -312,14 +312,19 @@ function Review({
   const [recordedInfo, setRecordedInfo] = useState("");
   const [copyProgress, setCopyProgress] = useState(0);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [saveInfo, setSaveInfo] = useState<string | null>(null);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-[#000]">
       <div className="flex items-center justify-center gap-3 py-2">
         {takes.length > 1 && (
-          <span className="text-xs text-[rgba(255,255,255,.75)]">
-            Trecho {i + 1} de {takes.length}
-          </span>
+          <>
+            <button type="button" className="rounded-lg px-4 py-2 text-[#fff] disabled:opacity-30" disabled={i === 0} onClick={() => { setI(i - 1); setSaveInfo(null); setCopyError(null); }} aria-label="Trecho anterior">◀</button>
+            <span className="text-sm font-semibold text-[#fff]">
+              Trecho {i + 1} de {takes.length}
+            </span>
+            <button type="button" className="rounded-lg px-4 py-2 text-[#fff] disabled:opacity-30" disabled={i >= takes.length - 1} onClick={() => { setI(i + 1); setSaveInfo(null); setCopyError(null); }} aria-label="Próximo trecho">▶</button>
+          </>
         )}
       </div>
       <video
@@ -348,52 +353,73 @@ function Review({
         )}
         {copyError && (
           <p role="alert" className="rounded-md border border-[#ffb3ad] p-2 text-sm text-[#ffb3ad]">
-            {copyError} Não feche o teleprompter: use “Salvar no iPhone” para preservar o vídeo original.
+            {copyError} Não feche o teleprompter: tente salvar os trechos individualmente.
           </p>
         )}
+        {saveInfo && (
+          <p role="status" className="rounded-md border border-[#86efac]/50 p-2 text-sm text-[#bbf7d0]">{saveInfo}</p>
+        )}
         <div className="flex gap-2">
-        <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>
-          Voltar a gravar
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => void shareFiles(takes)} disabled={busy}>
-          Salvar no iPhone
-        </Button>
-        <Button
-          variant="primary"
-          className="flex-1"
-          loading={busy}
-          onClick={() => {
-            setCopyError(null);
-            setCopyProgress(0);
-            setBusy(true);
-            void onUse(setCopyProgress)
-              .catch((err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {toProject ? "Usar no projeto" : "Editar vídeo"}
-        </Button>
+          <Button
+            variant="secondary"
+            className="flex-1"
+            disabled={busy}
+            onClick={() => {
+              // Must be invoked synchronously from a real tap. NEVER await
+              // before navigator.share(): iOS revokes transient activation.
+              setSaveInfo(null);
+              setCopyError(null);
+              void shareSingleRecording(takes[i])
+                .then(() => setSaveInfo("Compartilhamento encerrado. Confira se o trecho aparece no app Arquivos antes de sair."))
+                .catch((e: unknown) => setCopyError(
+                  e instanceof Error ? "O iPhone não abriu o compartilhamento: " + e.message :
+                  "O iPhone não abriu o compartilhamento."
+                ));
+            }}
+          >
+            Salvar trecho {i + 1}
+          </Button>
+          <a
+            href={urls[i]}
+            download={takes[i].name}
+            className="flex flex-1 items-center justify-center rounded-lg border border-border-input bg-surface-2 p-3 text-center text-sm text-text"
+            onClick={() => setSaveInfo("Verifique no app Arquivos se o download apareceu. Não feche o teleprompter antes de confirmar.")}
+          >Baixar trecho {i + 1}</a>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>Voltar a gravar</Button>
+          <Button
+            variant="primary"
+            className="flex-1"
+            loading={busy}
+            onClick={() => {
+              setCopyError(null);
+              setCopyProgress(0);
+              setBusy(true);
+              void onUse(setCopyProgress)
+                .catch((err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {toProject ? "Usar no projeto" : "Editar vídeo"}
+          </Button>
         </div>
         <p className="text-xs text-[rgba(255,255,255,.6)]">
-          Para vídeos longos, salve também uma cópia em Arquivos. A edição só abre depois que o original estiver completamente guardado neste aparelho.
+          Faça o salvamento de cada trecho separadamente, usando ◀ e ▶. Confirme no app Arquivos que cada arquivo foi recebido. Nunca feche o PWA enquanto o original não estiver seguro.
         </p>
       </div>
     </main>
   );
 }
 
-// all the takes in one share sheet when the phone allows, else one by one
-async function shareFiles(files: File[]) {
+// The iOS Web Share API needs a fresh tap for EACH file. Do not try
+// eleven videos in one call, or run sequential share() calls after awaits.
+function shareSingleRecording(file: File): Promise<void> {
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-  if (files.length > 1 && nav.canShare?.({ files })) {
-    try {
-      await nav.share({ files });
-      return;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-    }
+  if (!nav.share || !nav.canShare?.({ files: [file] })) {
+    return Promise.reject(new Error("Formato indisponível para compartilhar. Use Baixar trecho."));
   }
-  for (const f of files) await shareFile(f);
+  return nav.share({ files: [file], title: file.name });
 }
 
 // The iOS motion axes have a stable device reference. Never learn and save
