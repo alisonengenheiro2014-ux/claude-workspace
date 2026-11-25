@@ -27,6 +27,7 @@ import { Button } from "../ui/Button";
 import { ConfirmDialog } from "../ui/ConfirmDialog";
 import { DraftCard } from "../ui/DraftCard";
 import { Sheet } from "../ui/Sheet";
+import { RecoverySheet } from "./RecoverySheet";
 import { TextField } from "../ui/TextField";
 import { useToast } from "../ui/Toast";
 
@@ -53,6 +54,7 @@ export function Home() {
   const [deletingAll, setDeletingAll] = useState(false);
   const backupPicker = useRef<HTMLInputElement>(null);
   const [working, setWorking] = useState<string | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
 
   const refresh = useCallback(async () => {
     try {
@@ -231,6 +233,9 @@ export function Home() {
             e.target.value = "";
           }}
         />
+        <Button variant="secondary" className="mt-3 w-full" icon={<ArchiveRestore aria-hidden className="size-4" />} onClick={() => setRecoveryOpen(true)}>
+          Resgatar gravações / verificar arquivos
+        </Button>
         <p className="mt-2 text-xs text-text-muted">
           Dica: pela Fototeca, o iPhone converte o vídeo antes de entregar (demora e perde qualidade). Para abrir na hora, salve o
           vídeo em Arquivos e escolha <span className="text-text">Escolher Arquivo</span>.
@@ -263,6 +268,12 @@ export function Home() {
         </section>
       )}
 
+      {projects?.some((p) => p.durationUs === 0 && !p.photo) && (
+        <p className="mx-4 mt-3 rounded-md border border-[#fbbf24]/50 p-3 text-xs text-text">
+          Projetos com duração 00:00 podem conter cópias de arquivos.
+          Use “Resgatar gravações” antes de excluir projetos ou limpar os dados do PWA.
+        </p>
+      )}
       <section aria-labelledby="drafts" className="mt-6 flex flex-1 flex-col px-3">
         <div className="flex items-baseline justify-between px-1 pb-2">
           <h2 id="drafts" className="text-sm font-semibold">
@@ -317,6 +328,8 @@ export function Home() {
           </ul>
         )}
       </section>
+
+      <RecoverySheet open={recoveryOpen} onOpenChange={setRecoveryOpen} />
 
       <Sheet open={!!menuFor} onOpenChange={(o) => !o && setMenuFor(null)} title={menuFor?.name ?? ""}>
         <div className="flex flex-col gap-2">
