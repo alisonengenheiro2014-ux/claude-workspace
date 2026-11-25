@@ -1417,6 +1417,7 @@ export function Editor({ projectId }: { projectId: Id }) {
                 </button>
               }
             >
+              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Type />} label="Texto" onClick={openTextMenu} />
               <ToolbarItem icon={<Scissors />} label="Dividir" onClick={onSplit} disabled={!doc || !target || !canSplit(doc, target.id, playheadUs)} />
               <ToolbarItem icon={<Gauge />} label="Velocidade" onClick={() => setPanel({ name: "speed" })} />
@@ -1452,7 +1453,6 @@ export function Editor({ projectId }: { projectId: Id }) {
               <ToolbarItem icon={<ArrowRight />} label="Mover →" disabled={mainIndex < 0 || mainIndex >= mainCount - 1} onClick={() => moveSelected(1)} />
               <ToolbarItem icon={<Copy />} label="Duplicar" onClick={onDuplicate} />
               {laneTools}
-              <ToolbarItem icon={<Trash2 />} label="Excluir" onClick={onDelete} />
               <ToolbarItem icon={<Replace />} label="Substituir" onClick={() => setPanel({ name: "missing", assetId: selected!.assetId })} />
               <ToolbarItem icon={<Circle />} label="Máscara" onClick={() => (stop(), setPanel({ name: "mask" }))} />
               <ToolbarItem icon={<Sparkles />} label="Animação" onClick={() => (stop(), setPanel({ name: "clipAnim" }))} />

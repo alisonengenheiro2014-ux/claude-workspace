@@ -16,6 +16,7 @@ import { animatedAt, mainZoom } from "./keyframes";
 import { displaySize, overlayAt, overlaysAt } from "./overlay";
 import { findItem, mainClips, setAnimated, setCaptionTransform } from "./timeline";
 import { haptic } from "../ui/haptic";
+import { editableOverlayAt } from "./playbackHit";
 
 const HANDLE = 14; // css px radius of the corner handle
 const SNAP = 8; // css px from the centre line where a dragged item snaps to it
@@ -147,8 +148,23 @@ export function TextOverlay({
 
   function onDown(e: PointerEvent) {
     const s = useEditor.getState();
-    if (s.playing) return;
     const p = toCanvas(e);
+    if (s.playing) {
+      // Tapping an on-screen caption or text while the preview is moving
+      // should pause and open the editor immediately. Never start a drag or
+      // capture a pointer while playback is running.
+      const doc = s.draft ?? s.doc;
+      const hit = editableOverlayAt(boxes.current, p.x, p.y, dpr, (id) => {
+        const item = doc && findItem(doc, id);
+        return item?.clip.type === "caption" || item?.clip.type === "text";
+      });
+      if (hit) {
+        e.preventDefault();
+        e.stopPropagation();
+        onEdit(hit); // Editor pauses the player and opens the matching editor.
+      }
+      return;
+    }
     pointers.current.set(e.pointerId, p);
     canvas.current!.setPointerCapture(e.pointerId);
     const W = canvas.current!.width;
