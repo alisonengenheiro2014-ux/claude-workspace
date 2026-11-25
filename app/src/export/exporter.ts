@@ -32,8 +32,9 @@ import { applyEffects, effectsAt } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
+import { createSequentialTextTracks } from "./sequentialText";
 import { scheduleEnvelope, soundChain } from "../editor/audio";
-import { clipAt, durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionAt, transitionWindows } from "../editor/timeline";
+import { clipAt, durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionWindows } from "../editor/timeline";
 
 export interface ExportOptions {
   shortSide: 720 | 1080 | 1440 | 2160;
@@ -332,7 +333,15 @@ export async function exportTimeline(
   // layer mixed with a neighbour's still during a transition, then text.
   const layer = new OffscreenCanvas(width, height);
   const lctx = layer.getContext("2d")!;
+  // Precalculate transitions once, not for every video frame. The previous
+  // transitionAt(doc, tUs) regenerated all windows for ~18,000 frames in a
+  // 10-minute/30fps video.
   const windows = transitionWindows(doc);
+  const activeTexts = createSequentialTextTracks(doc.tracks);
+  const transitionAtFrame = (tUs: number) => {
+    const w = windows.find((w) => tUs >= w.startUs && tUs < w.endUs);
+    return w ? { ...w, p: (tUs - w.startUs) / (w.endUs - w.startUs) } : null;
+  };
 
   // A clip's frame at source time us, letterboxed to the output size.
   const makeStill = async (clip: MediaClip, us: number, localUs: number) => {
@@ -603,14 +612,14 @@ export async function exportTimeline(
         const emit = async () => {
           if (signal.aborted) throw new ExportCancelled();
           const tUs = Math.round(frame * frameS * 1e6);
-          const w = transitionAt(doc, tUs);
+          const w = transitionAtFrame(tUs);
           if (w && w.to.id === clip.id && prevStill) drawTransition(ctx, prevStill, layer, w.type, w.p, bg);
           else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
           else ctx.drawImage(layer, 0, 0);
           await drawOverlays(tUs);
           const fx = effectsAt(doc, tUs);
           if (fx) applyEffects(ctx, fx, bg);
-          for (const t of textsAt(doc.tracks, tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
+          for (const t of textsAt(activeTexts(tUs), tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
           if (frame === 0 && coverPic) ctx.drawImage(coverPic, 0, 0);
           await videoSource.add(frame * frameS, frameS);
           frame++;
