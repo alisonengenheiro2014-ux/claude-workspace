@@ -3,7 +3,32 @@
 
 let worker: Worker | null = null;
 let nextId = 1;
-const pending = new Map<number, { resolve: () => void; reject: (e: Error) => void; onProgress?: (p: number) => void }>();
+type PendingWrite = {
+  resolve: () => void;
+  reject: (e: Error) => void;
+  onProgress?: (p: number) => void;
+  timeout: ReturnType<typeof setTimeout>;
+};
+const pending = new Map<number, PendingWrite>();
+const WRITE_STALL_TIMEOUT_MS = 120_000;
+function failPending(reason: string) {
+  for (const [id, p] of pending) {
+    clearTimeout(p.timeout);
+    pending.delete(id);
+    p.reject(new Error(reason));
+  }
+  worker?.terminate();
+  worker = null;
+}
+function watchWrite(id: number, p: PendingWrite) {
+  clearTimeout(p.timeout);
+  p.timeout = setTimeout(() => {
+    if (!pending.has(id)) return;
+    // Do not leave the UI stuck indefinitely if the iOS OPFS worker hangs.
+    // Preserve all partially written files for recovery.
+    failPending("O armazenamento do iPhone parou de responder durante a cópia.");
+  }, WRITE_STALL_TIMEOUT_MS);
+}
 
 function getWorker() {
   if (!worker) {
@@ -11,15 +36,21 @@ function getWorker() {
     worker.onmessage = (e: MessageEvent<{ id: number; done?: boolean; error?: string; progress?: number }>) => {
       const p = pending.get(e.data.id);
       if (!p) return;
-      if (e.data.progress !== undefined) p.onProgress?.(e.data.progress);
-      else if (e.data.error) {
+      if (e.data.progress !== undefined) {
+        watchWrite(e.data.id, p);
+        p.onProgress?.(e.data.progress);
+      } else if (e.data.error) {
+        clearTimeout(p.timeout);
         pending.delete(e.data.id);
         p.reject(new Error(e.data.error));
       } else if (e.data.done) {
+        clearTimeout(p.timeout);
         pending.delete(e.data.id);
         p.resolve();
       }
     };
+    worker.onerror = () => failPending("Falha no processo de gravação local do iPhone.");
+    worker.onmessageerror = () => failPending("Não consegui ler a resposta do armazenamento local.");
   }
   return worker;
 }
@@ -27,8 +58,16 @@ function getWorker() {
 export function writeFile(path: string, file: Blob, onProgress?: (p: number) => void): Promise<void> {
   const id = nextId++;
   return new Promise((resolve, reject) => {
-    pending.set(id, { resolve, reject, onProgress });
-    getWorker().postMessage({ id, path, file });
+    const p: PendingWrite = { resolve, reject, onProgress, timeout: undefined as unknown as ReturnType<typeof setTimeout> };
+    pending.set(id, p);
+    watchWrite(id, p);
+    try {
+      getWorker().postMessage({ id, path, file });
+    } catch (error) {
+      clearTimeout(p.timeout);
+      pending.delete(id);
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 

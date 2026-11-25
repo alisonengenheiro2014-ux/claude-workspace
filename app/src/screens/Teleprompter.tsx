@@ -7,8 +7,10 @@ import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, RotateCcw, Smartph
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
+import { listSavedTakes, savedTakeFile, storeRecordedTake } from "../media/recordingVault";
+import type { RecordingRow } from "../data/db";
 import { navigate } from "../app/router";
-import { shareFile } from "../data/backup";
+
 import { createProject, loadProject, removeProject, saveDoc } from "../data/projects";
 import {
   loadScripts,
@@ -95,7 +97,39 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
   // the takes recorded so far (CapCut's segments) and where the text is:
   // both survive editing the script or watching the takes
   const [segments, setSegments] = useState<Segment[]>([]);
+  const [savedTakes, setSavedTakes] = useState<RecordingRow[]>([]);
+  const [recoverBusy, setRecoverBusy] = useState(false);
+  const [sessionId] = useState(() => crypto.randomUUID());
   const scroll = useRef(0);
+  useEffect(() => {
+    if (step !== "scripts") return;
+    let alive = true;
+    void listSavedTakes()
+      .then((records) => { if (alive) setSavedTakes(records); })
+      .catch((err) => toast("Não consegui consultar gravações locais: " + String(err), "error"));
+    return () => { alive = false; };
+  }, [step, segments.length]);
+  const recoverSession = async (id: string) => {
+    setRecoverBusy(true);
+    try {
+      const rows = savedTakes.filter((r) => r.sessionId === id)
+        .sort((a, b) => a.createdAt - b.createdAt);
+      const recovered: Segment[] = [];
+      for (const row of rows) {
+        const file = await savedTakeFile(row);
+        if (file) recovered.push({
+          file, seconds: row.seconds, scrollStart: row.scrollStart,
+          horizontal: row.horizontal, durable: row.status === "ready" && file.size === row.sizeBytes,
+        });
+      }
+      if (!recovered.length) throw new Error("Nenhum arquivo recuperável nesta sessão.");
+      if (recovered.length !== rows.length) toast("Alguns trechos não estão disponíveis.", "error");
+      setScript(scripts.find((x) => x.id === rows[0].scriptId) ?? null);
+      setSegments(recovered);
+      setStep("review");
+    } catch (err) { toast(err instanceof Error ? err.message : String(err), "error"); }
+    finally { setRecoverBusy(false); }
+  };
   const back = () => navigate(projectId ? `/p/${projectId}` : "/");
 
   function persist(next: Script) {
@@ -127,6 +161,27 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
           </Button>
           {scripts.length === 0 && <p className="py-8 text-center text-sm text-text-muted">Escreva ou cole o texto que você vai falar. Não tem limite de tamanho.</p>}
           <p className="order-last pt-4 text-center text-[11px] text-text-subtle">Versão {VERSION}</p>
+          {savedTakes.length > 0 && (
+            <section className="rounded-lg border border-[#86efac]/50 bg-surface-2 p-3" aria-label="Gravações recuperáveis">
+              <h2 className="text-base font-semibold">Gravações recuperáveis no iPhone</h2>
+              <p className="mb-2 text-xs text-text-muted">Originais independentes dos projetos, sem envio à VPS.</p>
+              {Array.from(new Set(savedTakes.map((r) => r.sessionId))).map((id) => {
+                const group = savedTakes.filter((r) => r.sessionId === id);
+                const secs = group.reduce((sum, t) => sum + t.seconds, 0);
+                const complete = group.filter((t) => t.status === "ready").length;
+                return (
+                  <button key={id} type="button" disabled={recoverBusy}
+                    onClick={() => void recoverSession(id)}
+                    className="mb-2 w-full rounded-md border border-border-input bg-bg px-3 py-3 text-left text-sm disabled:opacity-50">
+                    <strong>Recuperar {group.length} trecho(s) · {mmss(secs)}</strong>
+                    <span className="block text-xs text-text-muted">
+                      {new Date(group[0].createdAt).toLocaleString("pt-BR")} · {complete} arquivo(s) completo(s)
+                    </span>
+                  </button>
+                );
+              })}
+            </section>
+          )}
           <ul className="flex flex-col gap-2">
             {scripts.map((s) => (
               <li key={s.id} className="flex items-center gap-2 rounded-md bg-surface-2 p-3">
@@ -224,7 +279,7 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
       <Review
         takes={segments.map((g) => g.file)}
         toProject={!!projectId}
-        onBack={() => setStep("camera")}
+        onBack={() => setStep(script ? "camera" : "scripts")}
         onUse={async (onProgress) => {
           const id = await takesToProject(segments.map((g) => g.file), projectId, toast, onProgress);
           if (id) navigate(`/p/${id}`);
@@ -240,14 +295,36 @@ export function Teleprompter({ projectId }: { projectId?: string }) {
         setSettings={setSettings}
         scroll={scroll}
         segments={segments}
-        onSegment={(g) => setSegments((list) => [...list, g])}
+        onSegment={async (g) => {
+          let durable = false;
+          try {
+            await storeRecordedTake({ ...g, sessionId, scriptId: script.id });
+            durable = true;
+          } catch (error) {
+            toast(error instanceof Error ? error.message : String(error), "error");
+          }
+          setSegments((list) => [...list, { ...g, durable }]);
+          return durable;
+        }}
+        onRetryLast={async () => {
+          const last = segments[segments.length - 1];
+          if (!last || last.durable) return true;
+          try {
+            await storeRecordedTake({ ...last, sessionId, scriptId: script.id });
+            setSegments((old) => old.map((g, i) => i === old.length - 1 ? { ...g, durable: true } : g));
+            return true;
+          } catch (err) {
+            toast(err instanceof Error ? err.message : String(err), "error");
+            return false;
+          }
+        }}
         onDropLast={() => {
           const last = segments[segments.length - 1];
           if (last) scroll.current = last.scrollStart; // the text goes back to where that take began
           setSegments((list) => list.slice(0, -1));
         }}
         onClose={() => {
-          if (segments.length && !confirm(`Descartar ${segments.length === 1 ? "o trecho gravado" : `os ${segments.length} trechos gravados`}?`)) return;
+          if (segments.length && !confirm("Sair? Os originais guardados continuam em Gravações recuperáveis. Trechos não salvos podem ser perdidos.")) return;
           setSegments([]);
           scroll.current = 0;
           setStep("scripts");
@@ -266,6 +343,7 @@ interface Segment {
   seconds: number;
   scrollStart: number;
   horizontal: boolean; // the format it was recorded in: the next takes keep it
+  durable?: boolean;
 }
 
 // The takes go into a project, in order, one clip each: appended to the
@@ -312,14 +390,19 @@ function Review({
   const [recordedInfo, setRecordedInfo] = useState("");
   const [copyProgress, setCopyProgress] = useState(0);
   const [copyError, setCopyError] = useState<string | null>(null);
+  const [saveInfo, setSaveInfo] = useState<string | null>(null);
   useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls]);
   return (
     <main className="pt-safe pb-safe flex h-full flex-col bg-[#000]">
       <div className="flex items-center justify-center gap-3 py-2">
         {takes.length > 1 && (
-          <span className="text-xs text-[rgba(255,255,255,.75)]">
-            Trecho {i + 1} de {takes.length}
-          </span>
+          <>
+            <button type="button" className="rounded-lg px-4 py-2 text-[#fff] disabled:opacity-30" disabled={i === 0} onClick={() => { setI(i - 1); setSaveInfo(null); setCopyError(null); }} aria-label="Trecho anterior">◀</button>
+            <span className="text-sm font-semibold text-[#fff]">
+              Trecho {i + 1} de {takes.length}
+            </span>
+            <button type="button" className="rounded-lg px-4 py-2 text-[#fff] disabled:opacity-30" disabled={i >= takes.length - 1} onClick={() => { setI(i + 1); setSaveInfo(null); setCopyError(null); }} aria-label="Próximo trecho">▶</button>
+          </>
         )}
       </div>
       <video
@@ -348,52 +431,73 @@ function Review({
         )}
         {copyError && (
           <p role="alert" className="rounded-md border border-[#ffb3ad] p-2 text-sm text-[#ffb3ad]">
-            {copyError} Não feche o teleprompter: use “Salvar no iPhone” para preservar o vídeo original.
+            {copyError} Não feche o teleprompter: tente salvar os trechos individualmente.
           </p>
         )}
+        {saveInfo && (
+          <p role="status" className="rounded-md border border-[#86efac]/50 p-2 text-sm text-[#bbf7d0]">{saveInfo}</p>
+        )}
         <div className="flex gap-2">
-        <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>
-          Voltar a gravar
-        </Button>
-        <Button variant="secondary" className="flex-1" onClick={() => void shareFiles(takes)} disabled={busy}>
-          Salvar no iPhone
-        </Button>
-        <Button
-          variant="primary"
-          className="flex-1"
-          loading={busy}
-          onClick={() => {
-            setCopyError(null);
-            setCopyProgress(0);
-            setBusy(true);
-            void onUse(setCopyProgress)
-              .catch((err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)))
-              .finally(() => setBusy(false));
-          }}
-        >
-          {toProject ? "Usar no projeto" : "Editar vídeo"}
-        </Button>
+          <Button
+            variant="secondary"
+            className="flex-1"
+            disabled={busy}
+            onClick={() => {
+              // Must be invoked synchronously from a real tap. NEVER await
+              // before navigator.share(): iOS revokes transient activation.
+              setSaveInfo(null);
+              setCopyError(null);
+              void shareSingleRecording(takes[i])
+                .then(() => setSaveInfo("Compartilhamento encerrado. Confira se o trecho aparece no app Arquivos antes de sair."))
+                .catch((e: unknown) => setCopyError(
+                  e instanceof Error ? "O iPhone não abriu o compartilhamento: " + e.message :
+                  "O iPhone não abriu o compartilhamento."
+                ));
+            }}
+          >
+            Salvar trecho {i + 1}
+          </Button>
+          <a
+            href={urls[i]}
+            download={takes[i].name}
+            className="flex flex-1 items-center justify-center rounded-lg border border-border-input bg-surface-2 p-3 text-center text-sm text-text"
+            onClick={() => setSaveInfo("Verifique no app Arquivos se o download apareceu. Não feche o teleprompter antes de confirmar.")}
+          >Baixar trecho {i + 1}</a>
+        </div>
+        <div className="flex gap-2">
+          <Button variant="ghost" className="flex-1" onClick={onBack} disabled={busy}>Voltar a gravar</Button>
+          <Button
+            variant="primary"
+            className="flex-1"
+            loading={busy}
+            onClick={() => {
+              setCopyError(null);
+              setCopyProgress(0);
+              setBusy(true);
+              void onUse(setCopyProgress)
+                .catch((err: unknown) => setCopyError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setBusy(false));
+            }}
+          >
+            {toProject ? "Usar no projeto" : "Editar vídeo"}
+          </Button>
         </div>
         <p className="text-xs text-[rgba(255,255,255,.6)]">
-          Para vídeos longos, salve também uma cópia em Arquivos. A edição só abre depois que o original estiver completamente guardado neste aparelho.
+          Faça o salvamento de cada trecho separadamente, usando ◀ e ▶. Confirme no app Arquivos que cada arquivo foi recebido. Nunca feche o PWA enquanto o original não estiver seguro.
         </p>
       </div>
     </main>
   );
 }
 
-// all the takes in one share sheet when the phone allows, else one by one
-async function shareFiles(files: File[]) {
+// The iOS Web Share API needs a fresh tap for EACH file. Do not try
+// eleven videos in one call, or run sequential share() calls after awaits.
+function shareSingleRecording(file: File): Promise<void> {
   const nav = navigator as Navigator & { canShare?: (d: ShareData) => boolean };
-  if (files.length > 1 && nav.canShare?.({ files })) {
-    try {
-      await nav.share({ files });
-      return;
-    } catch (err) {
-      if (err instanceof DOMException && err.name === "AbortError") return;
-    }
+  if (!nav.share || !nav.canShare?.({ files: [file] })) {
+    return Promise.reject(new Error("Formato indisponível para compartilhar. Use Baixar trecho."));
   }
-  for (const f of files) await shareFile(f);
+  return nav.share({ files: [file], title: file.name });
 }
 
 // The iOS motion axes have a stable device reference. Never learn and save
@@ -472,6 +576,7 @@ function CameraPrompter({
   scroll,
   segments,
   onSegment,
+  onRetryLast,
   onDropLast,
   onClose,
   onEdit,
@@ -482,7 +587,8 @@ function CameraPrompter({
   setSettings: (p: Partial<PrompterSettings>) => void;
   scroll: { current: number }; // where the text is, kept by the parent
   segments: Segment[];
-  onSegment: (g: Segment) => void;
+  onSegment: (g: Segment) => Promise<boolean>;
+  onRetryLast: () => Promise<boolean>;
   onDropLast: () => void;
   onClose: () => void;
   onEdit: () => void;
@@ -537,6 +643,7 @@ function CameraPrompter({
   const wantHorizontal = settings.format === "auto" ? pose === "left" || pose === "right" : settings.format === "horizontal";
   const [take, setTake] = useState<boolean | null>(null); // the format of the take being recorded
   const [finishing, setFinishing] = useState(false); // stopped, the take not handed over yet
+  const [saveWarning, setSaveWarning] = useState<string | null>(null);
   const locked = recording || finishing || segments.length > 0;
   const horizontal = segments[0]?.horizontal ?? (recording || finishing ? (take ?? wantHorizontal) : wantHorizontal);
   const sensedSide: PrompterSettings["side"] = pose === "left" || pose === "right" ? pose : (lastSide ?? settings.side);
@@ -976,13 +1083,17 @@ function CameraPrompter({
     const t0 = performance.now();
     r.ondataavailable = (e) => e.data.size && own.push(e.data);
     r.onstop = () => {
-      r.stream.getVideoTracks().forEach((t) => t.stop()); // the canvas capture, not the camera
+      r.stream.getVideoTracks().forEach((t) => t.stop());
       const seconds = (performance.now() - t0) / 1000;
       const mime = r.mimeType || type || "video/mp4";
       const ext = mime.includes("webm") ? "webm" : "mp4";
       const stamp = new Date().toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" }).replace(/[/:]/g, "-").replace(", ", " ");
-      onSegment({ file: new File(own, `Teleprompter ${stamp} (${n}).${ext}`, { type: mime.split(";")[0] }), seconds, scrollStart, horizontal: h });
-      setFinishing(false);
+      const file = new File(own, "Teleprompter " + stamp + " (" + n + ")." + ext, { type: mime.split(";")[0] });
+      setSaveWarning(null);
+      void onSegment({ file, seconds, scrollStart, horizontal: h })
+        .then((durable) => setSaveWarning(durable ? null : "Este trecho está somente na memória. Tente salvar o original antes de gravar novamente."))
+        .catch((err: unknown) => setSaveWarning("Falha ao guardar a gravação: " + String(err)))
+        .finally(() => setFinishing(false));
     };
     r.start(1000);
     recorder.current = r;
@@ -1011,6 +1122,11 @@ function CameraPrompter({
 
   function onRecord() {
     setArm(false);
+    if (finishing) return;
+    if (!recording && segments.some((g) => g.durable === false)) {
+      toast("Um trecho ainda não foi salvo. Use Tentar salvar original antes de continuar.", "error");
+      return;
+    }
     if (recording) {
       setFinishing(true);
       setRecording(false);
@@ -1296,6 +1412,21 @@ function CameraPrompter({
             ? `${recording ? "● " : ""}${formatTime((segments.reduce((t, g) => t + g.seconds, 0) + (recording ? elapsed : 0)) * 1e6)}${segments.length ? ` · ${segments.length + (recording ? 1 : 0)} trecho${segments.length + (recording ? 1 : 0) > 1 ? "s" : ""}` : ""}`
             : `${wpmOf(settings.speed)} palavras/min · ~${mmss(readingSeconds(script.text, settings.speed))}`}
         </span>
+        {finishing && (
+          <span className="rounded-md bg-[rgba(0,0,0,.85)] px-3 py-2 text-xs text-[#fff]" role="status">
+            Guardando original no iPhone… Não feche o aplicativo.
+          </span>
+        )}
+        {saveWarning && (
+          <div className="flex items-center gap-2 rounded-lg bg-[rgba(0,0,0,.9)] p-2 text-xs text-[#ffb3ad]" role="alert">
+            <span className="flex-1">{saveWarning}</span>
+            <button type="button" disabled={finishing} onClick={() => {
+              setFinishing(true);
+              void onRetryLast().then((ok) => setSaveWarning(ok ? null : "O original ainda não foi salvo."))
+                .finally(() => setFinishing(false));
+            }} className="shrink-0 rounded-md bg-[#fff] p-2 font-semibold text-[#000]">Tentar salvar original</button>
+          </div>
+        )}
         {arm && <span className="text-xs text-[#fff]">Toque de novo para apagar o último trecho (o texto volta para onde ele começou)</span>}
         <div className="flex w-full items-center justify-between">
           <RoundButton label="Fechar teleprompter" caption="Fechar" onClick={onClose} disabled={recording}>
@@ -1318,12 +1449,12 @@ function CameraPrompter({
             type="button"
             aria-label={recording ? "Pausar gravação" : segments.length ? "Continuar gravando" : "Gravar"}
             onClick={onRecord}
-            disabled={!cam || !size}
+            disabled={!cam || !size || finishing}
             className="flex size-20 items-center justify-center rounded-full border-4 border-[#fff] disabled:opacity-40"
           >
             <span className={cn("block transition-all", recording ? "size-8 rounded-md" : "size-16 rounded-full")} style={{ background: REC }} />
           </button>
-          <RoundButton label="Concluir" caption="Concluir" onClick={onDone} disabled={recording || !segments.length} accent>
+          <RoundButton label="Concluir" caption="Concluir" onClick={onDone} disabled={recording || finishing || !segments.length} accent>
             <Check className="size-6" />
           </RoundButton>
           <RoundButton label="Virar câmera" caption="Virar câmera" onClick={flip}>

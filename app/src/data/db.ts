@@ -60,6 +60,24 @@ export interface AssetRow {
   updatedAt: number;
 }
 
+// Durable originals recorded by the Teleprompter, separate from project
+// assets and never deleted merely because a project is removed.
+export interface RecordingRow {
+  id: Id;
+  sessionId: Id;
+  scriptId: Id;
+  opfsPath: string;
+  name: string;
+  mime: string;
+  sizeBytes: number;
+  seconds: number;
+  scrollStart: number;
+  horizontal: boolean;
+  status: "saving" | "ready" | "error";
+  error: string | null;
+  createdAt: number;
+}
+
 export type DerivativeKind = "thumbs" | "waveform" | "proxy";
 
 export interface DerivativeRow {
@@ -124,6 +142,7 @@ export class EditorDB extends Dexie {
   exports!: Table<ExportRow, Id>;
   history!: Table<HistoryRow, Id>;
   undo!: Table<UndoRow, Id>;
+  recordings!: Table<RecordingRow, Id>;
 
   constructor() {
     super("editor");
@@ -140,6 +159,7 @@ export class EditorDB extends Dexie {
       assets: "id, projectId, [projectId+kind], status, opfsPath",
     });
     this.version(3).stores({ undo: "projectId" });
+    this.version(4).stores({ recordings: "id, sessionId, scriptId, createdAt, status" });
   }
 }
 
