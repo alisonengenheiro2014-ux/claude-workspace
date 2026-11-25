@@ -3,7 +3,7 @@
 // Recording starts after a countdown and the text scrolls at reading pace;
 // tap it to pause, drag it to move. The take is watched, redone, saved to the
 // phone or used in a project (a new one, or appended to the one it came from).
-import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
+import { Camera, Check, ChevronLeft, Delete, FlipHorizontal2, RotateCcw, Smartphone, Pencil, Plus, Settings2, SwitchCamera, Trash2, X, Zap, ZapOff } from "lucide-react";
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
 import { runImport } from "../app/importFlow";
 import { waitForAssetsDurable } from "../media/import";
@@ -27,6 +27,9 @@ import {
   pictureTurn,
   poseOf,
   displayPose,
+  advanceStablePose,
+  initialStablePose,
+  oppositeSide,
   type Pose,
   type PrompterSettings,
   type Script,
@@ -393,19 +396,10 @@ async function shareFiles(files: File[]) {
   for (const f of files) await shareFile(f);
 }
 
-// How the phone is held, from the motion sensor (as the iPhone's own camera
-// does): upright, or on its side with the top to the left or the right, so
-// the format follows the phone and the text and the buttons always face
-// whoever holds it, either hand. Which sign gravity has differs between
-// browsers, so it is learnt from the phone held upright and kept.
-const MOTION_SIGN = "prompter-motion-sign";
-function readSign() {
-  try {
-    return Number(localStorage.getItem(MOTION_SIGN)) || 0;
-  } catch {
-    return 0;
-  }
-}
+// The iOS motion axes have a stable device reference. Never learn and save
+// the sign from a single "portrait" sample: if the phone was upside down,
+// that writes an inverted reference that then flips both landscape sides.
+// Legacy "prompter-motion-sign" values are intentionally ignored.
 const needsAsking = () =>
   typeof (globalThis as unknown as { DeviceMotionEvent?: { requestPermission?: unknown } }).DeviceMotionEvent?.requestPermission === "function";
 // The iPhone asks once, and only from a finished tap (click, not touch down);
@@ -448,9 +442,10 @@ function usePose() {
     };
   }, []);
   useEffect(() => {
-    let sign = readSign();
     const ios = /iPhone|iPad/.test(navigator.userAgent);
+    const sign = ios ? -1 : 1;
     let got = false;
+    let stable = initialStablePose();
     const on = (e: DeviceMotionEvent) => {
       const g = e.accelerationIncludingGravity;
       if (!g || g.x == null || g.y == null) return;
@@ -458,16 +453,9 @@ function usePose() {
         got = true;
         setHeard(true);
       }
-      if (Math.abs(g.y) > 7 && Math.abs(g.x) < 3 && Math.sign(g.y) !== sign) {
-        sign = Math.sign(g.y); // upright: this browser's sign for "up"
-        try {
-          localStorage.setItem(MOTION_SIGN, String(sign));
-        } catch {
-          // kept for this visit
-        }
-      }
-      const p = poseOf(g.x, g.y, sign || (ios ? -1 : 1)); // WebKit reports the opposite sign
-      if (p) setPose(p);
+      const next = advanceStablePose(stable, poseOf(g.x, g.y, sign), performance.now());
+      if (next.confirmed !== stable.confirmed && next.confirmed) setPose(next.confirmed);
+      stable = next;
     };
     window.addEventListener("devicemotion", on);
     return () => window.removeEventListener("devicemotion", on);
@@ -541,6 +529,8 @@ function CameraPrompter({
   // stays (all the takes have one shape); the side still follows the phone.
   const { pose, heard, enable } = usePose();
   const [lastSide, setLastSide] = useState<PrompterSettings["side"] | null>(null);
+  const [sideOverride, setSideOverride] = useState<PrompterSettings["side"] | null>(null);
+  const [recordSide, setRecordSide] = useState<PrompterSettings["side"] | null>(null);
   useEffect(() => {
     if (pose === "left" || pose === "right") setLastSide(pose);
   }, [pose]);
@@ -549,7 +539,11 @@ function CameraPrompter({
   const [finishing, setFinishing] = useState(false); // stopped, the take not handed over yet
   const locked = recording || finishing || segments.length > 0;
   const horizontal = segments[0]?.horizontal ?? (recording || finishing ? (take ?? wantHorizontal) : wantHorizontal);
-  const side: PrompterSettings["side"] = pose === "left" || pose === "right" ? pose : (lastSide ?? settings.side);
+  const sensedSide: PrompterSettings["side"] = pose === "left" || pose === "right" ? pose : (lastSide ?? settings.side);
+  // A deliberate correction always wins until this camera session ends.
+  // While recording, never flip either the UI or the recorded canvas by 180°.
+  const side: PrompterSettings["side"] =
+    (recording || finishing) && recordSide ? recordSide : (sideOverride ?? sensedSide);
   // the camera's picture as the phone hands it, and the frame made from it
   const [src, setSrc] = useState<{ w: number; h: number } | null>(null);
   // the camera whose picture is on screen: on "Virar câmera" the old one
@@ -975,6 +969,7 @@ function CameraPrompter({
     });
     const scrollStart = scroll.current; // the next take carries on where the text is
     const h = horizontal; // this take's format, kept until it is handed over
+    setRecordSide(side); // lock the side through this take and finalization
     setTake(h);
     const n = segments.length + 1;
     const own: Blob[] = [];
@@ -1242,6 +1237,16 @@ function CameraPrompter({
         )}
           </div>
         )}
+        {horizontal && (
+          <RoundButton
+            label="Corrigir orientação: girar tela 180 graus"
+            caption="Girar tela"
+            onClick={() => setSideOverride(oppositeSide(side))}
+            disabled={recording || finishing}
+          >
+            <RotateCcw className="size-5" />
+          </RoundButton>
+        )}
         {!heard && needsAsking() && settings.format === "auto" && !recording && (
           <RoundButton label="Ativar giro automático" caption="Ativar giro" onClick={enable}>
             <Smartphone className="size-5" />
@@ -1458,8 +1463,8 @@ function CameraPrompter({
             ]}
             onChange={(v) => setSettings({ format: v as PrompterSettings["format"] })}
           />
-          {!heard && horizontal && (
-            // no motion sensor: say which way the phone lies
+          {horizontal && (
+            // manual fallback for the case where the iPhone's orientation sensor is ambiguous
             <Choice
               label="Topo do celular"
               value={settings.side}
@@ -1467,7 +1472,11 @@ function CameraPrompter({
                 ["left", "À esquerda"],
                 ["right", "À direita"],
               ]}
-              onChange={(v) => setSettings({ side: v as PrompterSettings["side"] })}
+              onChange={(v) => {
+                const nextSide = v as PrompterSettings["side"];
+                setSettings({ side: nextSide });
+                setSideOverride(nextSide);
+              }}
             />
           )}
           <Button variant="secondary" icon={<FlipHorizontal2 aria-hidden className="size-4" />} onClick={() => setSettings({ mirror: !settings.mirror })}>

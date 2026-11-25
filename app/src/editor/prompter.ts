@@ -159,3 +159,26 @@ export function displayPose(angle: number | null, width: number, height: number)
   if (width > height * 1.1) return "right";
   return "portrait";
 }
+
+// Avoid an upside-down or shaky frame when Safari momentarily reads an
+// opposite gravity axis: a new pose must remain stable for 400ms.
+export interface StablePoseState {
+  confirmed: Pose | null;
+  pending: Pose | null;
+  pendingSince: number;
+}
+export const initialStablePose = (): StablePoseState => ({
+  confirmed: null, pending: null, pendingSince: 0,
+});
+export function advanceStablePose(state: StablePoseState, candidate: Pose | null, atMs: number): StablePoseState {
+  if (candidate === null || candidate === state.confirmed)
+    return { ...state, pending: null };
+  if (state.pending !== candidate)
+    return { ...state, pending: candidate, pendingSince: atMs };
+  if (atMs - state.pendingSince < 400)
+    return state;
+  return { confirmed: candidate, pending: null, pendingSince: atMs };
+}
+export function oppositeSide(side: PrompterSettings["side"]): PrompterSettings["side"] {
+  return side === "left" ? "right" : "left";
+}
