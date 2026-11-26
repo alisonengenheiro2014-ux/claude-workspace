@@ -12,6 +12,7 @@ export type AsrRequest = {
   audio: Float32Array; // 16 kHz mono, timeline-aligned
   language: string | null; // "portuguese", "english"... null = detect
   model: AsrModel;
+  startWindow?: number; // resume at next completed 28-second window
   gpu?: boolean;
   // tests only: load the model and runtime from this server instead of the internet
   local?: { modelPath: string; wasmPath: string };
@@ -22,6 +23,7 @@ export type AsrMessage =
   | { type: "download"; loaded: number; total: number }
   | { type: "progress"; fraction: number }
   | { type: "segment"; start: number; end: number; text: string }
+  | { type: "window-done"; nextWindow: number; totalWindows: number }
   | { type: "done" }
   | { type: "error"; message: string };
 
@@ -119,7 +121,7 @@ function windows(audio: Float32Array): [number, number][] {
 }
 
 self.onmessage = async (e: MessageEvent<AsrRequest>) => {
-  const { audio, language, model, local, gpu = false } = e.data;
+  const { audio, language, model, local, gpu = false, startWindow = 0 } = e.data;
   try {
     // free a model loaded before, so two never sit in memory together
     if (cached && cached.key !== `${model}:${gpu}:${local?.modelPath ?? ""}`) {
@@ -129,7 +131,7 @@ self.onmessage = async (e: MessageEvent<AsrRequest>) => {
     const { asr, device } = await load(model, local, gpu);
     post({ type: "status", stage: "transcribing", device });
     const parts = windows(audio);
-    for (let i = 0; i < parts.length; i++) {
+    for (let i = Math.max(0, Math.min(startWindow, parts.length)); i < parts.length; i++) {
       const [a, b] = parts[i];
       const out = await asr(audio.subarray(a, b), {
         return_timestamps: true,
@@ -145,6 +147,9 @@ self.onmessage = async (e: MessageEvent<AsrRequest>) => {
         const end = offset + (en ?? (b - a) / SR);
         post({ type: "segment", start, end: Math.max(start + 0.2, end), text });
       }
+      // A commit boundary: all preceding segments have been delivered.
+      // The main thread persists these words before the next expensive window.
+      post({ type: "window-done", nextWindow: i + 1, totalWindows: parts.length });
       post({ type: "progress", fraction: (i + 1) / parts.length });
     }
     post({ type: "done" });

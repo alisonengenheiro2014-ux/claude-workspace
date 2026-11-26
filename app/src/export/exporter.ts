@@ -21,7 +21,7 @@ import {
 } from "mediabunny";
 import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
-import { clearDir, openStreamFile, readFile } from "../data/opfs";
+import { openStreamFile, readFile } from "../data/opfs";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
 import { cropPlacement, overlayAt, overlaysAt } from "../editor/overlay";
@@ -246,6 +246,8 @@ export async function exportTimeline(
   await loadFonts();
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = "high"; // best browser interpolation for digital upscale
   const bg = doc.canvas.background.type === "color" ? doc.canvas.background.color : "#000000";
   // a photo background: decoded once for the whole export
   let bgImage: ImageBitmap | null = null;
@@ -328,11 +330,15 @@ export async function exportTimeline(
   };
   const inputs = new Map<Id, Input>();
 
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, "-");
+  // Unique output names avoid overwriting a previous completed video when
+  // two export attempts start within the same second.
+  const stamp = new Date().toISOString().replace(/[:T.]/g, "-") + "-" + crypto.randomUUID().slice(0, 8);
   // Each clip draws into `layer`; the output frame is the layer, or the
   // layer mixed with a neighbour's still during a transition, then text.
   const layer = new OffscreenCanvas(width, height);
   const lctx = layer.getContext("2d")!;
+  lctx.imageSmoothingEnabled = true;
+  lctx.imageSmoothingQuality = "high";
   // Precalculate transitions once, not for every video frame. The previous
   // transitionAt(doc, tUs) regenerated all windows for ~18,000 frames in a
   // 10-minute/30fps video.
@@ -540,10 +546,16 @@ export async function exportTimeline(
   const name = `video-${stamp}.mp4`;
   let stream: WritableStream | null = null;
   try {
-    await clearDir("exports");
+    // Never erase an earlier completed export when starting another.
     stream = await openStreamFile(`exports/${name}`);
   } catch {
     stream = null;
+  }
+  // A 4K export cannot be buffered safely in one JS ArrayBuffer on iPhone.
+  // If OPFS is inaccessible, fail without risking termination of the editor.
+  if (!stream && estimateBytes(totalUs, width, height, opts) > 120_000_000) {
+    throw new Error("Não foi possível abrir o armazenamento local para esta exportação grande. " +
+      "O arquivo original permanece seguro. Tente uma resolução menor depois de verificar o espaço livre.");
   }
   const output = new Output({
     // with a stream: the index goes at the end (fast start would need the whole file in memory)

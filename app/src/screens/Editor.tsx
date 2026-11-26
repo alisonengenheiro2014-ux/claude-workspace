@@ -61,6 +61,7 @@ import { TextSheet, type TextTab } from "./TextSheet";
 import { AudioMenu, FadeSheet, RecordSheet, SfxSheet } from "./AudioSheets";
 import { TransitionSheet } from "./TransitionSheet";
 import { CaptionSheet, takeCrashedCaptionRun, type CaptionTab } from "./CaptionSheet";
+import { projectHasCaptionCheckpoint } from "../captions/checkpoint";
 import { audio, peaksOf } from "../editor/audio";
 import {
   addAudio,
@@ -367,18 +368,15 @@ export function Editor({ projectId }: { projectId: Id }) {
       // the last caption run never finished: iOS closed the app (memory)
       const crashed = takeCrashedCaptionRun();
       if (crashed) {
-        try {
-          const prefs = JSON.parse(localStorage.getItem("caption-prefs") ?? "{}");
-          localStorage.setItem("caption-prefs", JSON.stringify({ ...prefs, model: "tiny" }));
-        } catch {
-          // keep the old choice
+        if (projectHasCaptionCheckpoint(projectId)) {
+          toast("Legendas interrompidas. Abra Legendas automáticas e toque em Retomar para continuar dos blocos salvos.");
+        } else {
+          try {
+            const prefs = JSON.parse(localStorage.getItem("caption-prefs") ?? "{}");
+            if (crashed.model === "base") localStorage.setItem("caption-prefs", JSON.stringify({ ...prefs, model: "tiny" }));
+          } catch { /* keep previous prefs */ }
+          toast("Geração de legendas interrompida pelo iPhone. Tente novamente; um modelo menor pode usar menos memória.", "error");
         }
-        toast(
-          crashed.model === "base"
-            ? "O iPhone fechou o app ao gerar as legendas (falta de memória). Mudei para a qualidade Mais rápida; tente de novo."
-            : "O iPhone fechou o app ao gerar as legendas (falta de memória). Feche outros apps e tente de novo, ou use um trecho menor.",
-          "error",
-        );
       }
       const took = takeImport(projectId);
       const first = [...useEditor.getState().assets.values()].find((a) => a.kind === "video");

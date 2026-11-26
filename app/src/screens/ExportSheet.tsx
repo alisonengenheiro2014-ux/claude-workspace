@@ -5,7 +5,8 @@ import { useEditor } from "../editor/store";
 import { durationOf, frameSize, mainClips } from "../editor/timeline";
 import { assetFile, isPending, remainingAssetFile } from "../media/import";
 import { shareFile } from "../data/backup";
-import { estimateBytes, ExportCancelled, exportTimeline, type ExportOptions } from "../export/exporter";
+import { estimateBytes, ExportCancelled, exportTimeline, pickCodecs, videoBitrate, type ExportOptions } from "../export/exporter";
+import { loadCompletedExport, rememberCompletedExport } from "../export/completedExport";
 import { Button } from "../ui/Button";
 import { cn } from "../ui/cn";
 import { ProgressRing } from "../ui/Progress";
@@ -101,7 +102,17 @@ export function ExportSheet({
 }) {
   const toast = useToast();
   const doc = useEditor((s) => s.doc);
+  const projectId = useEditor((s) => s.projectId);
   const assets = useEditor((s) => s.assets);
+  const [checkingCodec, setCheckingCodec] = useState(false);
+  const [recoverableExport, setRecoverableExport] = useState<File | null>(null);
+  useEffect(() => {
+    if (!open || !projectId) return;
+    let alive = true;
+    void loadCompletedExport(projectId).then((file) => { if (alive) setRecoverableExport(file); })
+      .catch(() => { /* no recoverable export */ });
+    return () => { alive = false; };
+  }, [open, projectId]);
   const [phase, setPhase] = useState<Phase>({ name: "settings" });
   const abort = useRef<AbortController | null>(null);
   // Keep an OPFS-backed File ready for the share button. iOS needs the
@@ -180,6 +191,43 @@ export function ExportSheet({
       toast("O vídeo ainda está sendo guardado no iPhone. Aguarde a cópia terminar antes de exportar; você já pode salvar o original.", "error");
       return;
     }
+    if (options.shortSide > maxShort) {
+      if (!confirm("O original tem no máximo " + (maxShort || "desconhecida") +
+        " linhas no lado menor. Exportar em " + options.shortSide +
+        "p amplia os pixels mas não cria detalhes novos. Continuar?")) return;
+    }
+    if (options.shortSide >= 2160 && totalUs > 60_000_000 &&
+      !confirm("4K em vídeos longos pode consumir muita memória e tempo. " +
+        "Salve o original antes de continuar. Quer tentar mesmo assim?")) return;
+    const dimensions = frameSize(doc, assets, options.shortSide);
+    // Refuse a predictable disk-full failure before decoding thousands of
+    // frames. This never deletes OPFS originals, recovery ZIPs or old exports.
+    const estimated = estimateBytes(totalUs, dimensions.width, dimensions.height, options);
+    try {
+      const quota = await navigator.storage?.estimate?.();
+      if (quota?.quota && quota?.usage !== undefined &&
+        quota.quota - quota.usage < estimated * 1.15 + 60_000_000) {
+        toast("Espaço insuficiente no iPhone para gerar esta exportação. " +
+          "Você precisa de aproximadamente " + formatBytes(estimated * 1.15 + 60_000_000) +
+          " livres. Não apague os vídeos originais.", "error");
+        return;
+      }
+    } catch { /* Safari may not report quota */ }
+    setCheckingCodec(true);
+    try {
+      const codecs = await pickCodecs(
+        dimensions.width, dimensions.height,
+        videoBitrate(dimensions.width, dimensions.height, options.fps, options.quality),
+      );
+      if (!codecs.video) {
+        toast("Este iPhone não suporta codificar " + dimensions.width +
+          "×" + dimensions.height + ". Tente 1080p ou 2K.", "error");
+        return;
+      }
+    } catch (error) {
+      toast("Não consegui verificar o codificador: " + String(error), "error");
+      return;
+    } finally { setCheckingCodec(false); }
     await useEditor.getState().flush();
     const ctl = new AbortController();
     abort.current = ctl;
@@ -202,6 +250,10 @@ export function ExportSheet({
           }),
         ctl.signal,
       );
+      if (projectId) {
+        const saved = await rememberCompletedExport(projectId, result.file);
+        if (saved) setRecoverableExport(result.file);
+      }
       setPhase({ name: "done", file: result.file });
     } catch (err) {
       if (err instanceof ExportCancelled) {
@@ -258,8 +310,9 @@ export function ExportSheet({
             onChange={(shortSide) => onOptionsChange({ ...options, shortSide })}
             options={RESOLUTIONS.map((r) => ({
               ...r,
-              disabled: r.value > 1080 && r.value > maxShort,
-              note: r.value > maxShort ? "Nenhuma mídia do projeto tem essa resolução" : undefined,
+              note: r.value > maxShort
+                ? "Ampliação digital: não cria detalhes originais"
+                : undefined,
             }))}
           />
           <Choice
@@ -273,9 +326,29 @@ export function ExportSheet({
             {size.width}×{size.height} · cerca de {formatBytes(estimate)}
             {options.shortSide > 1080 && " · em 2K e 4K a exportação demora bem mais"}
           </p>
-          <Button variant="primary" size="lg" disabled={totalUs === 0} onClick={() => void run()}>
-            Exportar vídeo
+          {maxShort > 0 && options.shortSide > maxShort && (
+            <p className="rounded-md border border-[#fbbf24]/50 p-3 text-xs">
+              Upscale: fonte até {maxShort}p → arquivo {options.shortSide}p.
+              A ampliação não recupera detalhes novos. Para um 4K realmente mais nítido,
+              grave originalmente em 4K e escolha Qualidade Máxima.
+            </p>
+          )}
+          <Button variant="primary" size="lg" disabled={totalUs === 0 || checkingCodec} loading={checkingCodec} onClick={() => void run()}>
+            {checkingCodec ? "Verificando codificador…" : "Exportar vídeo"}
           </Button>
+          {recoverableExport && (
+            <div className="rounded-lg border border-accent/50 bg-surface-2 p-3">
+              <p className="text-sm font-semibold">Última exportação concluída</p>
+              <p className="my-2 text-xs text-text-muted">
+                {recoverableExport.name} · {formatBytes(recoverableExport.size)}.
+                O arquivo continua no armazenamento deste iPhone.
+              </p>
+              <Button variant="secondary" icon={<Share className="size-4" />}
+                onClick={() => void share(recoverableExport)}>
+                Recuperar vídeo exportado
+              </Button>
+            </div>
+          )}
           {originalAsset && (
             <div className="flex flex-col gap-2 rounded-lg border border-border p-3">
               <p className="text-sm font-semibold">Proteger a gravação</p>
@@ -326,7 +399,11 @@ export function ExportSheet({
             {phase.stage}
           </p>
           <p className="font-mono text-xs text-text-muted tabular-nums">{timeLeft(phase.fraction, phase.startedAt)}</p>
-          <p className="text-xs text-text-muted">Mantenha o app aberto e a tela ligada até terminar.</p>
+          <p className="text-xs text-text-muted">
+            O iOS pode pausar a exportação ao abrir outro app.
+            Se o PWA continuar ativo, ela retoma ao voltar. Arquivos já
+            finalizados ficam disponíveis em Última exportação concluída.
+          </p>
           <Button variant="ghost" onClick={() => abort.current?.abort()}>
             Cancelar
           </Button>

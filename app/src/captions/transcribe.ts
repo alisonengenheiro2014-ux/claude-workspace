@@ -7,6 +7,10 @@ import { durationOf, type SpeechSegment, type SpeechWord } from "../editor/timel
 import { alignWords, envelope } from "./align";
 import { mixAudio } from "../export/exporter";
 import type { AsrMessage, AsrModel, AsrRequest } from "./asr.worker";
+import {
+  inspectCaptionCheckpoint, saveCaptionCheckpoint,
+  type CaptionRun,
+} from "./checkpoint";
 
 export type CaptionSource = "video" | "audio" | "all";
 
@@ -14,6 +18,7 @@ export interface TranscribeOptions {
   source: CaptionSource;
   language: string | null;
   model: AsrModel;
+  projectId?: Id; // optional: durable Whisper resume on this iPhone
 }
 
 export type TranscribeEvent =
@@ -49,6 +54,10 @@ export async function transcribe(
 ): Promise<SpeechWord[]> {
   onEvent({ stage: "mixing" });
   const totalUs = durationOf(doc);
+  const checkpointRun: CaptionRun | null = opts.projectId
+    ? { projectId: opts.projectId, doc, assets, language: opts.language, source: opts.source, model: opts.model }
+    : null;
+  const resumed = checkpointRun ? inspectCaptionCheckpoint(checkpointRun) : null;
   const inputs = new Map<Id, Input>();
   let mixed: AudioBuffer | null;
   try {
@@ -72,14 +81,30 @@ export async function transcribe(
   // loudness per 10 ms, kept here: the audio itself is handed to the worker
   const env = envelope(audio);
 
+  if (signal.aborted) throw new DOMException("cancelled", "AbortError");
   const w = getWorker();
   let device: "webgpu" | "wasm" = "wasm";
   return new Promise<SpeechWord[]>((resolve, reject) => {
-    const segments: SpeechSegment[] = [];
+    const segments: SpeechSegment[] = resumed ? resumed.segments.slice() : [];
+    if (resumed) onEvent({ stage: "transcribing", fraction: resumed.nextWindow / resumed.totalWindows, device });
+    let settled = false;
+    const finish = (error?: Error, words?: SpeechWord[]) => {
+      if (settled) return;
+      settled = true;
+      signal.removeEventListener("abort", onAbort);
+      w.onerror = null;
+      if (error) reject(error);
+      else resolve(words ?? []);
+    };
     const onAbort = () => {
       w.terminate();
       worker = null;
-      reject(new DOMException("cancelled", "AbortError"));
+      finish(new DOMException("cancelled", "AbortError"));
+    };
+    w.onerror = () => {
+      w.terminate();
+      worker = null;
+      finish(new Error("O processamento das legendas foi interrompido. Reabra Legendas e toque em Retomar."));
     };
     signal.addEventListener("abort", onAbort, { once: true });
     w.onmessage = (e: MessageEvent<AsrMessage>) => {
@@ -90,16 +115,22 @@ export async function transcribe(
       } else if (m.type === "download") onEvent({ stage: "download", loaded: m.loaded, total: m.total });
       else if (m.type === "progress") onEvent({ stage: "transcribing", fraction: m.fraction, device });
       else if (m.type === "segment") segments.push({ start: m.start, end: m.end, text: m.text });
-      else if (m.type === "done") {
-        signal.removeEventListener("abort", onAbort);
-        if (!segments.length) reject(new NoSpeechError("Não encontrei fala nesse som."));
-        else resolve(alignWords(segments.sort((a, b) => a.start - b.start), env));
+      else if (m.type === "window-done") {
+        // Persist only after a complete window: no duplicated half-processed
+        // words when Safari suspends or closes the web application.
+        if (checkpointRun) saveCaptionCheckpoint(checkpointRun, m.nextWindow, m.totalWindows, segments);
+      } else if (m.type === "done") {
+        if (!segments.length) finish(new NoSpeechError("Não encontrei fala nesse som."));
+        else finish(undefined, alignWords(segments.sort((a, b) => a.start - b.start), env));
       } else if (m.type === "error") {
-        signal.removeEventListener("abort", onAbort);
-        reject(new Error(m.message));
+        finish(new Error(m.message));
       }
     };
-    const req: AsrRequest = { type: "run", audio, language: opts.language, model: opts.model, local: localOverride() };
-    w.postMessage(req, [audio.buffer]);
+    const req: AsrRequest = {
+      type: "run", audio, language: opts.language, model: opts.model,
+      startWindow: resumed?.nextWindow ?? 0, local: localOverride(),
+    };
+    try { w.postMessage(req, [audio.buffer]); }
+    catch (error) { finish(error instanceof Error ? error : new Error(String(error))); }
   });
 }

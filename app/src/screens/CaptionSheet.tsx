@@ -1,8 +1,9 @@
 // S10 Legendas automáticas: generate captions from speech on the iPhone,
 // then fix words, timing and style for all of them at once.
 import { Captions, Check, ChevronDown, ChevronRight, Languages, ScanText, Trash2 } from "lucide-react";
-import { useRef, useState, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import { NoSpeechError, transcribe, type CaptionSource, type TranscribeEvent } from "../captions/transcribe";
+import { clearCaptionCheckpoint, inspectCaptionCheckpoint, checkpointPercent } from "../captions/checkpoint";
 import type { AsrModel } from "../captions/asr.worker";
 import type { TextStyle } from "../data/db";
 import { useEditor } from "../editor/store";
@@ -194,7 +195,13 @@ export function CaptionSheet({
 }) {
   const toast = useToast();
   const doc = useEditor((s) => s.draft ?? s.doc);
+  const projectId = useEditor((s) => s.projectId);
+  const assets = useEditor((s) => s.assets);
   const [prefs, setPrefs] = useState<Prefs>(loadPrefs);
+  const resumeInfo = useMemo(() => projectId && doc ? inspectCaptionCheckpoint({
+    projectId, doc, assets, language: prefs.language || null,
+    source: prefs.source, model: prefs.model,
+  }) : null, [projectId, doc, assets, prefs.language, prefs.source, prefs.model]);
   const [run, setRun] = useState<Run>(null);
   const abort = useRef<AbortController | null>(null);
   // pages inside the generate view
@@ -230,19 +237,24 @@ export function CaptionSheet({
       const words = await transcribe(
         s.doc,
         s.assets,
-        { source: prefs.source, language: prefs.language || null, model: prefs.model },
+        { projectId: s.projectId ?? undefined, source: prefs.source, language: prefs.language || null, model: prefs.model },
         (e) => setRun(describe(e)),
         ctl.signal,
       );
       const now = useEditor.getState();
       const next = setCaptions(now.doc!, words, prefs.preset);
       now.commit(next, "Legendas automáticas");
+      if (s.projectId) clearCaptionCheckpoint(s.projectId);
       toast(`${captionTrack(next)?.items.length ?? 0} legendas criadas`);
       setPage("main");
       onClose();
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") toast("Legendas canceladas");
-      else if (err instanceof NoSpeechError) toast(err.message, "error");
+      else if (err instanceof NoSpeechError) {
+        // A completed run with no speech has nothing useful to resume.
+        if (s.projectId) clearCaptionCheckpoint(s.projectId);
+        toast(err.message, "error");
+      }
       else {
         console.error(err);
         toast(`Não foi possível gerar as legendas: ${err instanceof Error ? err.message : err}`, "error");
@@ -299,6 +311,14 @@ export function CaptionSheet({
         )}
       </div>
       {track && <p className="text-xs text-text-muted">Gerar de novo substitui as legendas atuais.</p>}
+      {resumeInfo && !run && (
+        <p role="status" className="rounded-md border border-accent/50 bg-surface-2 p-3 text-xs">
+          Uma geração anterior foi interrompida em {checkpointPercent(resumeInfo)}%.
+          Os blocos concluídos estão salvos no iPhone. Toque em Retomar para
+          continuar sem repetir o reconhecimento já concluído.
+          O áudio precisará ser preparado novamente.
+        </p>
+      )}
       {run ? (
         <div className="flex flex-col gap-2" aria-live="polite">
           <p className="text-sm">{run.label}</p>
@@ -307,14 +327,17 @@ export function CaptionSheet({
           ) : (
             <div aria-busy className="h-1 w-full animate-pulse rounded-pill bg-surface-3" />
           )}
-          <p className="text-xs text-text-muted">Mantenha o app aberto.</p>
+          <p className="text-xs text-text-muted">
+            Ao usar outro aplicativo, o iOS pode pausar ou interromper a tarefa.
+            Os blocos já concluídos ficam salvos para retomar quando você voltar.
+          </p>
           <Button variant="ghost" onClick={() => abort.current?.abort()}>
             Cancelar
           </Button>
         </div>
       ) : (
         <Button variant="primary" size="lg" onClick={() => void generate()}>
-          Gerar legendas automáticas
+          {resumeInfo ? "Retomar legendas (" + checkpointPercent(resumeInfo) + "%)" : "Gerar legendas automáticas"}
         </Button>
       )}
     </div>
