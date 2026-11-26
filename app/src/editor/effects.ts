@@ -67,6 +67,21 @@ export function effectsAt(doc: TimelineDoc, tUs: Us): FxFrame | null {
   return f;
 }
 
+// Evaluate only clips already known to be active. The exporter provides this
+// small set via a sequential index rather than scanning entire effect lanes
+// for every video frame. Keep output identical to effectsAt().
+export function effectsFromActive(clips: readonly EffectClip[], tUs: Us): FxFrame | null {
+  let f: FxFrame | null = null;
+  for (const c of clips) {
+    if (tUs < c.startUs || tUs >= c.startUs + c.durationUs) continue;
+    const e = effectOf(c.effectId);
+    if (!e) continue;
+    f ??= { ...NO_FX, look: { ...NEUTRAL } };
+    e.apply(f, (tUs - c.startUs) / 1e6, (tUs - c.startUs) / Math.max(1, c.durationUs));
+  }
+  return f;
+}
+
 // ---- preview ----
 
 export function fxCss(f: FxFrame | null, W: number) {

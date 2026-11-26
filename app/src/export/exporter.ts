@@ -19,20 +19,21 @@ import {
   type VideoCodec,
   type VideoSample,
 } from "mediabunny";
-import type { AssetRow, Id, MediaClip, TimelineDoc } from "../data/db";
+import type { AssetRow, Clip, EffectClip, Id, MediaClip, TimelineDoc } from "../data/db";
 import { assetFile } from "../media/import";
 import { openStreamFile, readFile } from "../data/opfs";
 import { containRect, drawFrame, frameBgOf, plainShape, shapedDraw, shapeOf, type Shape } from "../editor/frame";
 import { applyLook, isNeutral, lookOf } from "../editor/look";
-import { cropPlacement, overlayAt, overlaysAt } from "../editor/overlay";
+import { cropPlacement, overlayAt } from "../editor/overlay";
 import { blendOf } from "../editor/blend";
 import { keyImage } from "../editor/chroma";
 import { drawMask } from "../editor/mask";
-import { applyEffects, effectsAt } from "../editor/effects";
+import { applyEffects, effectsAt, effectsFromActive } from "../editor/effects";
 import { isZoomed, mainZoom } from "../editor/keyframes";
 import { drawText, loadFonts, textsAt, type TextBox } from "../editor/text";
 import { drawTransition } from "../editor/transitions";
 import { createSequentialTextTracks } from "./sequentialText";
+import { createSequentialTrackIndex, transitionRequiresLayer } from "./frameIndex";
 import { scheduleEnvelope, soundChain } from "../editor/audio";
 import { clipAt, durationOf, frameSize, mainClips, offsetForSource, sourceTimeUs, speedAt, transitionWindows } from "../editor/timeline";
 
@@ -344,6 +345,15 @@ export async function exportTimeline(
   // 10-minute/30fps video.
   const windows = transitionWindows(doc);
   const activeTexts = createSequentialTextTracks(doc.tracks);
+  const activeOverlayClips = createSequentialTrackIndex(
+    doc.tracks, "overlay", (c: Clip): c is MediaClip => c.type === "media",
+  );
+  const activeEffectClips = createSequentialTrackIndex(
+    doc.tracks, "effect", (c: Clip): c is EffectClip => c.type === "effect",
+  );
+  const hasEffectLane = doc.tracks.some((t) => t.kind === "effect" && !t.hidden && t.items.length > 0);
+  const effectAtFrame = (tUs: number) =>
+    hasEffectLane ? effectsFromActive(activeEffectClips(tUs), tUs) : null;
   const transitionAtFrame = (tUs: number) => {
     const w = windows.find((w) => tUs >= w.startUs && tUs < w.endUs);
     return w ? { ...w, p: (tUs - w.startUs) / (w.endUs - w.startUs) } : null;
@@ -386,7 +396,7 @@ export async function exportTimeline(
     return x.value;
   };
   const drawOverlays = async (tUs: number) => {
-    const live = overlaysAt(doc, tUs);
+    const live = activeOverlayClips(tUs);
     for (const [id, r] of readers)
       if (!live.some((c) => c.id === id)) {
         readers.delete(id);
@@ -618,18 +628,33 @@ export async function exportTimeline(
       const zoomAt = (f: number) => mainZoom(clip, (f / opts.fps) * 1e6 - clip.startUs);
       // the clip's filter and adjustments, on its picture only
       const look = lookOf(clip);
-      const paint = (r: { x: number; y: number; w: number; h: number } | null) => r && applyLook(lctx, r, look);
+      const needsLook = !isNeutral(look); // calculate once per clip, not for every frame
+      const paint = (
+        dest: OffscreenCanvasRenderingContext2D,
+        r: { x: number; y: number; w: number; h: number } | null,
+      ) => { if (r && needsLook) applyLook(dest, r, look); };
 
-      // text and other overlays go on top of whatever the clip drew
-        const emit = async () => {
+      // Most frames have NO transition. Draw those directly on the final
+      // canvas to avoid a second 1080p/4K full-frame copy every frame.
+      // A transition frame keeps the original intermediate layer, preserving
+      // the exact transition and all clip-specific look adjustments.
+      const drawingContext = () => {
+        const tUs = Math.round(frame * frameS * 1e6);
+        const w = transitionAtFrame(tUs);
+        return transitionRequiresLayer(w, clip.id, !!prevStill, !!nextStill) ? lctx : ctx;
+      };
+
+      // Text and other overlays go on top of whatever the clip drew.
+        const emit = async (source: OffscreenCanvasRenderingContext2D) => {
           if (signal.aborted) throw new ExportCancelled();
           const tUs = Math.round(frame * frameS * 1e6);
           const w = transitionAtFrame(tUs);
           if (w && w.to.id === clip.id && prevStill) drawTransition(ctx, prevStill, layer, w.type, w.p, bg);
           else if (w && w.from.id === clip.id && nextStill) drawTransition(ctx, layer, nextStill, w.type, w.p, bg);
-          else ctx.drawImage(layer, 0, 0);
+          else if (source === lctx) ctx.drawImage(layer, 0, 0);
+          // else: already painted directly to ctx; no redundant large copy.
           await drawOverlays(tUs);
-          const fx = effectsAt(doc, tUs);
+          const fx = effectAtFrame(tUs);
           if (fx) applyEffects(ctx, fx, bg);
           for (const t of textsAt(activeTexts(tUs), tUs)) drawText(ctx, t, width, height, tUs - t.startUs);
           if (frame === 0 && coverPic) ctx.drawImage(coverPic, 0, 0);
@@ -640,8 +665,9 @@ export async function exportTimeline(
 
         if (!asset) {
           for (let f = first; f < last; f++) {
-            drawFrame(lctx, fbg, () => null);
-            await emit();
+            const dest = drawingContext();
+            drawFrame(dest, fbg, () => null);
+            await emit(dest);
           }
         } else if (asset.kind === "image" || clip.freeze) {
           // a photo, or a video frame held (freeze frame)
@@ -660,8 +686,9 @@ export async function exportTimeline(
           const shape = shapeOf(clip);
           try {
             for (let f = first; f < last; f++) {
-              paint(drawFrame(lctx, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shape), clip.mask), zoomAt(f)) : () => null));
-              await emit();
+              const dest = drawingContext();
+              paint(dest, drawFrame(dest, fbg, pic ? zoomed(masked(shapedDraw(pic, pic.width, pic.height, shape), clip.mask), zoomAt(f)) : () => null));
+              await emit(dest);
             }
           } finally {
             if (pic instanceof ImageBitmap) pic.close();
@@ -697,8 +724,9 @@ export async function exportTimeline(
                 current = next;
                 next = ended ? null : await pull();
               }
-              paint(drawFrame(lctx, fbg, current ? zoomed(masked(sampleDraw(current, shape), clip.mask), zoomAt(f)) : () => null));
-              await emit();
+              const dest = drawingContext();
+              paint(dest, drawFrame(dest, fbg, current ? zoomed(masked(sampleDraw(current, shape), clip.mask), zoomAt(f)) : () => null));
+              await emit(dest);
             }
           } catch (err) {
             if (err instanceof ExportCancelled) throw err;
